@@ -9,6 +9,7 @@ function manualRefresh() {
 
 function hourlyRefresh() {
   withRunLock_('hourlyRefresh', function () {
+    assertCrmReady_();
     logInfo_('hourlyRefresh', 'START');
 
     // 1) Meta / Dolphin — сегодня
@@ -30,6 +31,7 @@ function hourlyRefresh() {
 
 function dailyFinalization() {
   withRunLock_('dailyFinalization', function () {
+    assertCrmReady_();
     logInfo_('dailyFinalization', 'START');
 
     // Финально подтягиваем актуальную структуру и вчерашний FB.
@@ -64,6 +66,7 @@ function refreshStructureOnly() {
 }
 
 function installTriggers() {
+  assertCrmReady_();
   const handlers = new Set([
     'hourlyRefresh',
     'dailyFinalization'
@@ -88,4 +91,25 @@ function installTriggers() {
     .create();
 
   logInfo_('installTriggers', 'Triggers installed');
+}
+
+/** Read-only readiness gate: deployment never starts imports or installs triggers. */
+function assertCrmReady_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss || ss.getId() !== '1OybSL2WmQAsibfvNqmvy9A0rTXCQJ02ghbX2NeFxfYM') {
+    throw new Error('CRM target spreadsheet mismatch');
+  }
+  const all = ss.getSheetByName(SHEETS.ALL);
+  if (all && all.getLastRow() > 0) {
+    const headers = getAllHeaders_();
+    const actual = all.getRange(1, 1, 1, Math.max(all.getLastColumn(), headers.length)).getValues()[0];
+    if (actual.length !== headers.length || actual.some(function (v, i) { return v !== headers[i]; })) {
+      throw new Error('CRM ALL migration required. Existing history has NOT been changed.');
+    }
+  }
+  getRequiredScriptProperty_(SCRIPT_PROPERTIES.DOLPHIN_TOKEN);
+  getRequiredScriptProperty_(SCRIPT_PROPERTIES.KEITARO_KEY);
+  if (PropertiesService.getScriptProperties().getProperty('CRM_PIPELINE_VERIFIED') !== 'true') {
+    throw new Error('Live source mapping and pipeline verification required before scheduled runs');
+  }
 }

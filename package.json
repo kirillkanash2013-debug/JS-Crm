@@ -1,0 +1,10 @@
+{
+  "name": "js-crm",
+  "private": true,
+  "scripts": {
+    "test": "node scripts/verify.mjs"
+  },
+  "devDependencies": {
+    "@google/clasp": "3.4.1"
+  }
+}

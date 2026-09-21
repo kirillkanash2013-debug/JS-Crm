@@ -1,0 +1,7 @@
+node_modules/
+.clasprc*
+.env*
+credentials*.json
+client_secret*.json
+remote-backup/
+remote-verify/
