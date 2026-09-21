@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {google} from 'googleapis';
 const root=process.cwd();
 const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
 if(JSON.parse(fs.readFileSync('.clasp.json')).scriptId!==target) throw Error('Wrong target');
@@ -40,24 +39,6 @@ function run(args,cwd=root) {
   try{return execFileSync(clasp,args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});}
   catch {throw Error(`clasp ${args[0]} failed; private response suppressed. Check Google authorization/API access.`);}
 }
-async function runLive(functionName) {
-  const token=auth.tokens.default;
-  const oauth=new google.auth.OAuth2(token.client_id,token.client_secret);
-  oauth.setCredentials({
-    refresh_token:token.refresh_token,
-    access_token:token.access_token
-  });
-  const api=google.script({version:'v1',auth:oauth});
-  const {data}=await api.scripts.run({
-    scriptId:target,
-    requestBody:{function:functionName,devMode:true}
-  });
-  if(data.error) throw Error(`Apps Script ${functionName} failed: ${data.error.message||'runtime error'}`);
-  if(!data.response || !Object.prototype.hasOwnProperty.call(data.response,'result')) {
-    throw Error(`Apps Script ${functionName} returned no result`);
-  }
-  return data.response.result;
-}
 const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'crm-deploy-'));
 try {
   fs.writeFileSync(authPath,JSON.stringify(auth),{mode:0o600});
@@ -77,14 +58,7 @@ try {
   }
   const extra=fs.readdirSync(scratch).filter(x=>/\.(js|gs|html)$/.test(x)&&!expected.includes(x));
   if(extra.length)throw Error('Unexpected remote modules after deployment');
-  // Keep an API executable available so CI can run safe live diagnostics
-  // without requiring an interactive browser session.
-  run(['deploy','--description','CRM CI live diagnostics']);
-  const smoke=await runLive('testSourceMappings');
-  const pipeline=await runLive('testCampaignPipeline');
-  console.log('Verified Apps Script source readback and live source mappings.');
-  console.log(JSON.stringify(smoke));
-  console.log(JSON.stringify(pipeline));
+  console.log('Verified Apps Script source readback. Live execution requires owner authorization.');
 } finally {
   fs.rmSync(authPath,{force:true});
   fs.rmSync(scratch,{recursive:true,force:true});
