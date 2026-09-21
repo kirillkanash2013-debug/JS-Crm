@@ -6,7 +6,17 @@ const root=process.cwd();
 const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
 if(JSON.parse(fs.readFileSync('.clasp.json')).scriptId!==target) throw Error('Wrong target');
 if(!process.env.CLASP_AUTH_JSON) throw Error('Owner action required: add CLASP_AUTH_JSON to GitHub Actions secrets.');
-const auth=JSON.parse(process.env.CLASP_AUTH_JSON);
+const authValue=process.env.CLASP_AUTH_JSON.trim();
+let auth;
+try {
+  auth=JSON.parse(authValue);
+} catch {
+  try {
+    auth=JSON.parse(Buffer.from(authValue,'base64').toString('utf8'));
+  } catch {
+    throw Error('CLASP_AUTH_JSON must contain valid clasp JSON or its single-line Base64 encoding.');
+  }
+}
 if(!auth.tokens?.default?.refresh_token) throw Error('Expected clasp 3 default login credentials');
 const authPath=path.join(os.homedir(),'.clasprc.json');
 if(fs.existsSync(authPath)) throw Error('Refusing to overwrite existing credentials; use a clean runner');
