@@ -20,6 +20,39 @@ function testApiConnections() {
   return result;
 }
 
+/**
+ * Read-only live schema check. It validates the endpoints used by the real
+ * pipeline and logs only counts/field names, never tokens or full records.
+ */
+function testSourceMappings() {
+  const today = getToday_();
+  const socials = getFbSocials_();
+  const businesses = getBusinesses_(today);
+  const campaigns = getCampaigns_(today);
+  const keitaroRaw = getKeitaroReport_(today, today);
+  const keitaroRows = normalizeKeitaroReportRows_(keitaroRaw);
+
+  const result = {
+    date: today,
+    dolphin: {
+      socials: socials.length,
+      businesses: businesses.length,
+      campaigns: campaigns.length,
+      socialFields: getObjectKeys_(socials[0]),
+      businessFields: getObjectKeys_(businesses[0]),
+      campaignFields: getObjectKeys_(campaigns[0])
+    },
+    keitaro: {
+      rows: keitaroRows.length,
+      rowFields: getObjectKeys_(keitaroRows[0])
+    },
+    checkedAt: new Date().toISOString()
+  };
+
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function hourlyRefresh() {
   withRunLock_('hourlyRefresh', function () {
     assertCrmReady_();

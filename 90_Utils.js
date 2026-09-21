@@ -193,6 +193,12 @@ function pick_(obj, keys) {
   return '';
 }
 
+function getObjectKeys_(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.keys(value).sort()
+    : [];
+}
+
 function withRunLock_(name, fn) {
   const lock = LockService.getScriptLock();
 
