@@ -1,0 +1,13 @@
+**/**
+!appsscript.json
+!00_Main.js
+!10_Config.js
+!20_Dolphin_API.js
+!21_Dolphin_DB.js
+!30_Keitaro_API.js
+!31_Keitaro_DB.js
+!40_Structure.js
+!50_All.js
+!60_Control.js
+!70_Telegram.js
+!90_Utils.js

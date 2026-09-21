@@ -15,7 +15,7 @@ function parseJsonResponseOrThrow_(response, label) {
   const text = response.getContentText();
 
   if (code < 200 || code >= 300) {
-    throw new Error(label + ' -> HTTP ' + code + ': ' + text);
+    throw new Error(label + ' -> HTTP ' + code);
   }
 
   if (!text) return {};
@@ -23,7 +23,7 @@ function parseJsonResponseOrThrow_(response, label) {
   try {
     return JSON.parse(text);
   } catch (e) {
-    throw new Error(label + ' -> invalid JSON: ' + text.slice(0, 1000));
+    throw new Error(label + ' -> invalid JSON');
   }
 }
 
@@ -81,6 +81,12 @@ function appendRows_(sheet, rows, options) {
 }
 
 function ensureHeaders_(sheet, headers) {
+  if (sheet.getLastRow() > 0) {
+    const actual = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), headers.length)).getValues()[0];
+    if (actual.length !== headers.length || actual.some(function (v, i) { return v !== headers[i]; })) {
+      throw new Error('Schema mismatch: ' + sheet.getName() + '. Migration required; existing data preserved.');
+    }
+  }
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   }
