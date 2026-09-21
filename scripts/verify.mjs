@@ -27,4 +27,8 @@ ctx.SpreadsheetApp={getActiveSpreadsheet:()=>({getId:()=> '1OybSL2WmQAsibfvNqmvy
 assert.throws(()=>ctx.assertCrmReady_(),/migration required/);
 assert.equal(writes,0);
 assert.throws(()=>ctx.parseJsonResponseOrThrow_({getResponseCode:()=>401,getContentText:()=> 'secret must never be logged'},'API'),e=>!e.message.includes('secret'));
+const kt=ctx.mapKeitaroCampaignRow_({sub_id_1:'Kirill',sub_id_3:'Campaign',sub_id_4:'123',clicks:100,campaign_unique_clicks:40,conversions:20,sales:5,sale_revenue:250},'2026-09-21','now');
+assert.equal(kt[4],'123');
+assert.deepEqual(Array.from(kt.slice(5,10)),[100,40,20,5,250]);
+assert.equal(kt[10],'SUB4');
 console.log(`PASS: ${files.length} modules; unique entry points; target, secret scan, history protection, error redaction`);

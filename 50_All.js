@@ -29,9 +29,9 @@ function finalizeAllYesterday_() {
   const sheet = getOrCreateSheet_(SHEETS.ALL);
   ensureHeaders_(sheet, getAllHeaders_());
 
-  const existing = buildExistingKeySet_(sheet, [1, 4]);
+  const existing = buildExistingKeySet_(sheet, [1, 3, 4]);
   const toAppend = rows.filter(function (row) {
-    return !existing.has(String(row[0]) + '|' + String(row[3]));
+    return !existing.has(String(row[0]) + '|' + String(row[2]) + '|' + String(row[3]));
   });
 
   appendRows_(sheet, toAppend, {
@@ -66,7 +66,7 @@ function buildAllRowsFromSheets_(fbSheet, ktSheet) {
     : [];
 
   const ktRows = ktSheet.getLastRow() > 1
-    ? ktSheet.getRange(2, 1, ktSheet.getLastRow() - 1, 14).getValues()
+    ? ktSheet.getRange(2, 1, ktSheet.getLastRow() - 1, 12).getValues()
     : [];
 
   return buildAllRowsFromArrays_(fbRows, ktRows);
@@ -78,14 +78,14 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
   const byName = {};
 
   ktRows.forEach(function (row) {
-    const campaignName = String(row[4] || '');
-    const campaignId = String(row[5] || '');
+    const campaignName = String(row[3] || '');
+    const campaignId = String(row[4] || '');
 
     const metrics = {
-      inst: num_(row[10]),   // временно conversions -> Inst
-      reg: 0,
-      ftd: num_(row[11]),    // временно sales -> FTD
-      revenue: num_(row[12])
+      inst: num_(row[6]),
+      reg: num_(row[7]),
+      ftd: num_(row[8]),
+      revenue: num_(row[9])
     };
 
     if (campaignId) byId[campaignId] = mergeMetrics_(byId[campaignId], metrics);

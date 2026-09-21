@@ -188,7 +188,7 @@ function appendFbHistory_(campaigns, context, date) {
   const sheet = getOrCreateSheet_(SHEETS.FB_HISTORY);
   ensureHeaders_(sheet, headers);
 
-  const existing = buildExistingKeySet_(sheet, [1, 6]);
+  const existing = buildExistingKeySet_(sheet, [1, 5, 6]);
   const cabMap = buildCabMap_(context.cabs);
   const finalizedAt = getCurrentTimestamp_();
   const rows = [];
@@ -198,10 +198,9 @@ function appendFbHistory_(campaigns, context, date) {
     if (spend <= 0) return;
 
     const campaignId = String(campaign.campaign_id || campaign.id || '');
-    const key = date + '|' + campaignId;
-    if (existing.has(key)) return;
-
     const accountId = String(campaign.account_id || '');
+    const key = date + '|' + accountId + '|' + campaignId;
+    if (existing.has(key)) return;
     const cab = cabMap[accountId] || campaign.cab || {};
     const social = getSocialMetaFromCab_(cab, context.socials);
 
