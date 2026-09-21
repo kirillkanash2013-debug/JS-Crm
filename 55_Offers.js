@@ -2,7 +2,7 @@
 
 function rebuildOffersToday() {
   const source = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
-  const headers = ['GEO', 'Offer', 'Inst', 'Reg', 'Dep', 'Revenue', 'uEPC'];
+  const headers = ['GEO', 'Offer ID', 'Offer', 'Inst', 'Reg', 'Dep', 'Revenue', 'uEPC'];
   const groups = {};
   const errors = [];
 
@@ -11,7 +11,8 @@ function rebuildOffersToday() {
     const rows = source.getRange(2, 1, source.getLastRow() - 1, width).getValues();
     rows.forEach(function (row) {
       const campaign = String(row[3] || '');
-      const offer = String(row[11] || '').trim();
+      const offerId = String(row[11] || '').trim();
+      const offer = String(row[12] || '').trim();
       // New traffic normally carries GEO in the campaign name. Older traffic
       // may still contain a literal {sub3}, so the offer name is the safe
       // secondary source for the operational offer dashboard.
@@ -23,8 +24,8 @@ function rebuildOffersToday() {
         ]);
         return;
       }
-      const key = geo + '|' + offer;
-      const item = groups[key] || {geo: geo, offer: offer, inst: 0, reg: 0, dep: 0, revenue: 0};
+      const key = geo + '|' + (offerId || offer);
+      const item = groups[key] || {geo: geo, offerId: offerId, offer: offer, inst: 0, reg: 0, dep: 0, revenue: 0};
       item.inst += num_(row[6]);
       item.reg += num_(row[7]);
       item.dep += num_(row[8]);
@@ -35,14 +36,14 @@ function rebuildOffersToday() {
 
   const result = Object.keys(groups).map(function (key) {
     const item = groups[key];
-    return [item.geo, item.offer, item.inst, item.reg, item.dep, item.revenue,
+    return [item.geo, item.offerId, item.offer, item.inst, item.reg, item.dep, item.revenue,
       safeDiv_(item.revenue, item.inst)];
   }).sort(function (a, b) {
-    return String(a[0]).localeCompare(String(b[0])) || num_(b[6]) - num_(a[6]);
+    return String(a[0]).localeCompare(String(b[0])) || num_(b[7]) - num_(a[7]);
   });
 
   writeDbSheet_(SHEETS.OFFERS_TODAY, headers, result, {
-    numberColumns: [3, 4, 5, 6, 7]
+    textColumns: [2], numberColumns: [4, 5, 6, 7, 8]
   });
   writeParsingErrors_(errors);
   return result;
@@ -85,6 +86,6 @@ function getOffersToday(geo) {
   const sheet = getOrCreateSheet_(SHEETS.OFFERS_TODAY);
   if (sheet.getLastRow() < 2) return [];
   const filterGeo = String(geo || '').trim().toUpperCase();
-  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues()
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues()
     .filter(function (row) { return !filterGeo || String(row[0]).toUpperCase() === filterGeo; });
 }

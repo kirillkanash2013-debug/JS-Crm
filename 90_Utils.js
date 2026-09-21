@@ -48,11 +48,32 @@ function buildQueryString_(params) {
 }
 
 function getOrCreateSheet_(name) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getStorageSpreadsheetForSheet_(name);
   let sheet = ss.getSheetByName(name);
 
   if (!sheet) sheet = ss.insertSheet(name);
   return sheet;
+}
+
+function getStorageSpreadsheetForSheet_(name) {
+  const sheetName = String(name || '');
+  let id = STORAGE_SPREADSHEET_IDS.CRM;
+
+  if (sheetName === SHEETS.DB_CAMPAIGNS_TODAY || sheetName === SHEETS.FB_HISTORY ||
+      /^\[FB_History_/.test(sheetName)) {
+    id = STORAGE_SPREADSHEET_IDS.FB;
+  } else if (sheetName === SHEETS.DB_KEITARO_TODAY || sheetName === SHEETS.KEITARO_HISTORY ||
+      /^\[Keitaro_History_/.test(sheetName)) {
+    id = STORAGE_SPREADSHEET_IDS.KEITARO;
+  } else if ([SHEETS.DB_SOCIALS, SHEETS.DB_BMS, SHEETS.DB_CABS,
+      SHEETS.DB_STRUCTURE_HISTORY, SHEETS.AGENTS].includes(sheetName) ||
+      /^\[(ACCOUNT_EVENTS|ACCOUNTS_HISTORY)_/.test(sheetName)) {
+    id = STORAGE_SPREADSHEET_IDS.ACCOUNTS;
+  } else if (sheetName === SHEETS.LOG) {
+    id = STORAGE_SPREADSHEET_IDS.LOGS;
+  }
+
+  return SpreadsheetApp.openById(id);
 }
 
 function writeDbSheet_(name, headers, rows, options) {

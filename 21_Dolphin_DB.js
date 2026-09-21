@@ -171,7 +171,7 @@ function writeCabsDb_(cabs, socials, updatedAt) {
 }
 
 function readCabSnapshot_() {
-  const sheet = SpreadsheetApp.getActive().getSheetByName(SHEETS.DB_CABS);
+  const sheet = getStorageSpreadsheetForSheet_(SHEETS.DB_CABS).getSheetByName(SHEETS.DB_CABS);
   const result = {};
   if (!sheet || sheet.getLastRow() < 2) return result;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -201,7 +201,7 @@ function historicalSpendSinceFirstSeen_(accountId, firstSeen) {
   const firstDate = String(firstSeen || '').slice(0, 10);
   let total = 0;
   [SHEETS.FB_HISTORY, SHEETS.DB_CAMPAIGNS_TODAY].forEach(function (sheetName) {
-    const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+    const sheet = getStorageSpreadsheetForSheet_(sheetName).getSheetByName(sheetName);
     if (!sheet || sheet.getLastRow() < 2) return;
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     const dateIndex = headers.indexOf('Дата');
@@ -327,7 +327,7 @@ function appendFbHistory_(campaigns, context, date) {
 }
 
 function readFrozenPolicySpend_() {
-  const sheet = SpreadsheetApp.getActive().getSheetByName(SHEETS.DB_CABS);
+  const sheet = getStorageSpreadsheetForSheet_(SHEETS.DB_CABS).getSheetByName(SHEETS.DB_CABS);
   const result = {};
   if (!sheet || sheet.getLastRow() < 2) return result;
 

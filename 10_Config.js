@@ -52,3 +52,13 @@ const SCRIPT_PROPERTIES = Object.freeze({
   TELEGRAM_BOT_TOKEN: 'TELEGRAM_BOT_TOKEN',
   TELEGRAM_CHAT_ID: 'TELEGRAM_CHAT_ID'
 });
+
+// Non-secret storage targets. Raw databases live outside the CRM dashboard.
+// API tokens remain only in Script Properties.
+const STORAGE_SPREADSHEET_IDS = Object.freeze({
+  CRM: '1OybSL2WmQAsibfvNqmvy9A0rTXCQJ02ghbX2NeFxfYM',
+  FB: '1K1jWjsjWAHni1G4ctU1n39hccPNfTvfqcPgYKsT20Yc',
+  KEITARO: '12U5rlCh3zXsD-0ABNRRUH1sm34vN2HCO4R1K5CBuUPU',
+  ACCOUNTS: '17UCocPcoStjoPDxDQJiDyc2lHZG5FCIcwr6SjYeJYKA',
+  LOGS: '1j1-f_kB8gTBkd3DKgDhY3EHVsdJ1ZhL0Tk1IxaRRa7M'
+});

@@ -27,11 +27,13 @@ ctx.SpreadsheetApp={getActiveSpreadsheet:()=>({getId:()=> '1OybSL2WmQAsibfvNqmvy
 assert.throws(()=>ctx.assertCrmReady_(),/migration required/);
 assert.equal(writes,0);
 assert.throws(()=>ctx.parseJsonResponseOrThrow_({getResponseCode:()=>401,getContentText:()=> 'secret must never be logged'},'API'),e=>!e.message.includes('secret'));
-const kt=ctx.mapKeitaroCampaignRow_({sub_id_1:'Kirill',sub_id_3:'Campaign',sub_id_4:'123',clicks:100,campaign_unique_clicks:40,conversions:20,sales:5,sale_revenue:250},'2026-09-21','now');
+const kt=ctx.mapKeitaroCampaignRow_({sub_id_1:'Kirill',sub_id_3:'Campaign',sub_id_4:'123',offer:{id:6013,name:'Pinco TJ'},clicks:100,campaign_unique_clicks:40,conversions:20,sales:5,sale_revenue:250},'2026-09-21','now');
 assert.equal(kt[4],'123');
 assert.deepEqual(Array.from(kt.slice(5,10)),[100,40,20,5,250]);
-assert.equal(kt[12],6.25);
-assert.equal(kt[13],'SUB4');
+assert.equal(kt[11],'6013');
+assert.equal(kt[12],'Pinco TJ');
+assert.equal(kt[13],6.25);
+assert.equal(kt[14],'SUB4');
 assert.equal(ctx.parseGeoFromCampaign_('KG+AZ+TJ Kirill | Apps Heroes iOS'),'KG+AZ+TJ');
 assert.equal(ctx.parseGeoFromCampaign_('PWA UZ Kirill'),'UZ');
 assert.equal(ctx.parseGeoFromCampaign_("[Riddick's Partners] Boostwin AZ | Wheel 2 | Azamat"),'AZ');

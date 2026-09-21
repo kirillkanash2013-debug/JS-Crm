@@ -2,7 +2,7 @@
 
 function getKeitaroHeaders_() {
   return ['Дата', 'Updated At', 'Agent', 'Campaign Name', 'FB Campaign ID',
-    'Clicks', 'Inst', 'Reg', 'FTD', 'Revenue', 'Source', 'Offer', 'uEPC',
+    'Clicks', 'Inst', 'Reg', 'FTD', 'Revenue', 'Source', 'Offer ID', 'Offer', 'uEPC',
     'ID Source', 'Raw JSON'];
 }
 
@@ -21,6 +21,8 @@ function mapKeitaroCampaignRow_(row, date, timestamp) {
   const inst = num_(pick_(row, ['campaign_unique_clicks', 'unique_clicks']));
   const revenue = num_(pick_(row, ['sale_revenue', 'revenue']));
   const directUepc = pick_(row, ['uepc', 'u_epc']);
+  const offerValue = pick_(row, ['offer']);
+  const offerId = String(pick_(row, ['offer_id', 'offerId']) || getDimensionId_(offerValue));
   return [date, timestamp, pick_(row, ['sub_id_1', 'sub1']),
     pick_(row, ['sub_id_3', 'sub3']), campaignId,
     num_(pick_(row, ['clicks'])),
@@ -29,7 +31,8 @@ function mapKeitaroCampaignRow_(row, date, timestamp) {
     num_(pick_(row, ['sales'])),
     revenue,
     getDimensionLabel_(pick_(row, ['source', 'traffic_source', 'affiliate_network'])),
-    getDimensionLabel_(pick_(row, ['offer', 'offer_name'])),
+    offerId,
+    getDimensionLabel_(offerValue || pick_(row, ['offer_name'])),
     directUepc === '' || directUepc === null || directUepc === undefined
       ? safeDiv_(revenue, inst)
       : num_(directUepc),
@@ -40,21 +43,21 @@ function writeKeitaroTodayDb_(reportRows, date) {
   const timestamp = getCurrentTimestamp_();
   const rows = reportRows.map(function (row) { return mapKeitaroCampaignRow_(row, date, timestamp); });
   writeDbSheet_(SHEETS.DB_KEITARO_TODAY, getKeitaroHeaders_(), rows, {
-    textColumns: [5], numberColumns: [6, 7, 8, 9, 10, 13]
+    textColumns: [5, 12], numberColumns: [6, 7, 8, 9, 10, 14]
   });
 }
 
 function appendKeitaroHistory_(reportRows, date) {
   const sheet = getOrCreateSheet_(SHEETS.KEITARO_HISTORY);
   ensureHeaders_(sheet, getKeitaroHeaders_());
-  const existing = buildExistingKeySet_(sheet, [1, 5, 4, 12]);
+  const existing = buildExistingKeySet_(sheet, [1, 5, 4, 13]);
   const timestamp = getCurrentTimestamp_();
   const rows = reportRows.map(function (row) {
     return mapKeitaroCampaignRow_(row, date, timestamp);
   }).filter(function (row) {
-    return !existing.has(String(row[0]) + '|' + String(row[4]) + '|' + String(row[3]) + '|' + String(row[11]));
+    return !existing.has(String(row[0]) + '|' + String(row[4]) + '|' + String(row[3]) + '|' + String(row[12]));
   });
-  appendRows_(sheet, rows, {textColumns: [5], numberColumns: [6, 7, 8, 9, 10, 13]});
+  appendRows_(sheet, rows, {textColumns: [5, 12], numberColumns: [6, 7, 8, 9, 10, 14]});
 }
 
 /** Test-only: seeds only today's temporary DB; the next refresh replaces it. */
@@ -80,7 +83,7 @@ function seedTestCampaignIds() {
     if (currentId && !/^\{[^}]+\}$/.test(currentId)) return;
     const realId = fbByName[normalizeJoinName_(row[3])];
     row[4] = realId || ('TEST-KT-' + String(index + 1));
-    row[13] = realId ? 'TEST_NAME_MATCH' : 'TEST_SEED';
+    row[14] = realId ? 'TEST_NAME_MATCH' : 'TEST_SEED';
     seeded++;
   });
   kt.getRange(2, 1, values.length, width).setValues(values);
@@ -92,6 +95,11 @@ function getDimensionLabel_(value) {
   if (value === null || value === undefined) return '';
   if (typeof value !== 'object') return String(value);
   return String(pick_(value, ['name', 'title', 'value', 'id']) || '');
+}
+
+function getDimensionId_(value) {
+  if (!value || typeof value !== 'object') return '';
+  return String(pick_(value, ['id', 'offer_id', 'value_id']) || '');
 }
 
 function normalizeJoinName_(value) {

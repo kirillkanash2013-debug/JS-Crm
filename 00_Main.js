@@ -46,6 +46,35 @@ function finalizeYesterday() {
   return dailyFinalization();
 }
 
+/** One-time safe copy of legacy raw tabs from CRM into source-specific files. */
+function migrateLegacyStorage() {
+  return withRunLock_('migrateLegacyStorage', function () {
+    assertTargetSpreadsheet_();
+    const central = SpreadsheetApp.openById(STORAGE_SPREADSHEET_IDS.CRM);
+    const names = [
+      SHEETS.DB_CAMPAIGNS_TODAY, SHEETS.FB_HISTORY,
+      SHEETS.DB_KEITARO_TODAY, SHEETS.KEITARO_HISTORY,
+      SHEETS.DB_SOCIALS, SHEETS.DB_BMS, SHEETS.DB_CABS,
+      SHEETS.DB_STRUCTURE_HISTORY, SHEETS.AGENTS, SHEETS.LOG
+    ];
+    const copied = [];
+
+    names.forEach(function (name) {
+      const source = central.getSheetByName(name);
+      if (!source || source.getLastRow() < 1 || source.getLastColumn() < 1) return;
+      const target = getOrCreateSheet_(name);
+      const values = source.getRange(1, 1, source.getLastRow(), source.getLastColumn()).getValues();
+      target.clearContents();
+      target.getRange(1, 1, values.length, values[0].length).setValues(values);
+      copied.push({sheet: name, rows: Math.max(values.length - 1, 0)});
+    });
+
+    logInfo_('migrateLegacyStorage', JSON.stringify(copied));
+    console.log(JSON.stringify({copied: copied, checkedAt: new Date().toISOString()}));
+    return copied;
+  });
+}
+
 /** Safe smoke test: reads both APIs and never writes sheets or installs triggers. */
 function testApiConnections() {
   const socials = getFbSocials_();
