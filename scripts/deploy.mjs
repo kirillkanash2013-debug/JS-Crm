@@ -62,8 +62,10 @@ try {
   // without requiring an interactive browser session.
   run(['deploy','--description','CRM CI live diagnostics']);
   const smoke=run(['run','testSourceMappings','--dev']);
+  const pipeline=run(['run','testCampaignPipeline','--dev']);
   console.log('Verified Apps Script source readback and live source mappings.');
   console.log(smoke.trim());
+  console.log(pipeline.trim());
 } finally {
   fs.rmSync(authPath,{force:true});
   fs.rmSync(scratch,{recursive:true,force:true});
