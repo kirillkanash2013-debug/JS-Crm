@@ -169,6 +169,11 @@ function sumColumnByHeader_(sheetName, header) {
     }, 0);
 }
 
+function countDataRows_(sheetName) {
+  const sheet = getOrCreateSheet_(sheetName);
+  return Math.max(sheet.getLastRow() - 1, 0);
+}
+
 function num_(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;

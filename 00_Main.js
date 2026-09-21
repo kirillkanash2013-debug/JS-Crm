@@ -53,6 +53,35 @@ function testSourceMappings() {
   return result;
 }
 
+/**
+ * End-to-end test for today's campaign-level pipeline.
+ * It never touches closed-day history or the legacy ALL sheet.
+ */
+function testCampaignPipeline() {
+  return withRunLock_('testCampaignPipeline', function () {
+    assertTargetSpreadsheet_();
+    getRequiredScriptProperty_(SCRIPT_PROPERTIES.DOLPHIN_TOKEN);
+    getRequiredScriptProperty_(SCRIPT_PROPERTIES.KEITARO_KEY);
+
+    const fbContext = refreshDolphinCurrentState_();
+    refreshFbToday_(fbContext);
+    refreshKeitaroToday_();
+    const seed = seedTestCampaignIds();
+    rebuildAllToday_();
+    runTodayControl_();
+
+    const result = {
+      fbCampaigns: countDataRows_(SHEETS.DB_CAMPAIGNS_TODAY),
+      keitaroCampaigns: countDataRows_(SHEETS.DB_KEITARO_TODAY),
+      allToday: countDataRows_(SHEETS.ALL_TODAY),
+      seededIds: seed.seeded,
+      checkedAt: new Date().toISOString()
+    };
+    console.log(JSON.stringify(result));
+    return result;
+  });
+}
+
 function hourlyRefresh() {
   withRunLock_('hourlyRefresh', function () {
     assertCrmReady_();
@@ -141,10 +170,8 @@ function installTriggers() {
 
 /** Read-only readiness gate: deployment never starts imports or installs triggers. */
 function assertCrmReady_() {
+  assertTargetSpreadsheet_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss || ss.getId() !== '1OybSL2WmQAsibfvNqmvy9A0rTXCQJ02ghbX2NeFxfYM') {
-    throw new Error('CRM target spreadsheet mismatch');
-  }
   const all = ss.getSheetByName(SHEETS.ALL);
   if (all && all.getLastRow() > 0) {
     const headers = getAllHeaders_();
@@ -157,5 +184,12 @@ function assertCrmReady_() {
   getRequiredScriptProperty_(SCRIPT_PROPERTIES.KEITARO_KEY);
   if (PropertiesService.getScriptProperties().getProperty('CRM_PIPELINE_VERIFIED') !== 'true') {
     throw new Error('Live source mapping and pipeline verification required before scheduled runs');
+  }
+}
+
+function assertTargetSpreadsheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss || ss.getId() !== '1OybSL2WmQAsibfvNqmvy9A0rTXCQJ02ghbX2NeFxfYM') {
+    throw new Error('CRM target spreadsheet mismatch');
   }
 }
