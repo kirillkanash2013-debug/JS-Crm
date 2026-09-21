@@ -115,6 +115,7 @@ function testCampaignPipeline() {
       keitaroCampaigns: countDataRows_(SHEETS.DB_KEITARO_TODAY),
       allToday: countDataRows_(SHEETS.ALL_TODAY),
       offersToday: countDataRows_(SHEETS.OFFERS_TODAY),
+      accountsToday: countDataRows_(SHEETS.DB_CABS),
       seededIds: seed.seeded,
       checkedAt: new Date().toISOString()
     };

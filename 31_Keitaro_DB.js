@@ -74,7 +74,10 @@ function seedTestCampaignIds() {
   const values = kt.getRange(2, 1, kt.getLastRow() - 1, width).getValues();
   let seeded = 0;
   values.forEach(function (row, index) {
-    if (String(row[4] || '')) return;
+    const currentId = String(row[4] || '').trim();
+    // Keitaro can return an unexpanded macro such as {Sub_id_4}. It is not a
+    // real Campaign ID and must be replaced in this temporary test snapshot.
+    if (currentId && !/^\{[^}]+\}$/.test(currentId)) return;
     const realId = fbByName[normalizeJoinName_(row[3])];
     row[4] = realId || ('TEST-KT-' + String(index + 1));
     row[13] = realId ? 'TEST_NAME_MATCH' : 'TEST_SEED';

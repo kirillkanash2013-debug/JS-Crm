@@ -245,7 +245,7 @@ function getStatusColor_(status) {
   if (['ACTIVE', 'OK', 'COMPLETED'].includes(status)) return '#d9ead3';
   if (['SELFIE', 'CHECKPOINT'].includes(status)) return '#f9cb9c';
   if (status === 'POLICY') return '#f4cccc';
-  if (['DISABLED', 'BLOCKED', 'CLOSED'].includes(status)) return '#ea9999';
+  if (['DISABLED', 'BLOCKED', 'CLOSED', 'NO_ACCESS'].includes(status)) return '#ea9999';
   if (status.includes('PENDING') || status.includes('REVIEW') || status === 'UNSETTLED') return '#fff2cc';
   if (['ERROR', 'UNKNOWN'].includes(status)) return '#d9d9d9';
   return '#ffffff';

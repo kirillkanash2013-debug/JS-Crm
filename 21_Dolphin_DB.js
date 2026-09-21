@@ -90,19 +90,34 @@ function writeCabsDb_(cabs, socials, updatedAt) {
     'Spend 6M',
     'Policy Spend Frozen',
     'Last Sync',
-    'Updated At'
+    'Updated At',
+    'FIRST_SEEN_DATE',
+    'START_BASELINE_SPEND',
+    'OUR_LIFETIME_SPEND',
+    'MISSING_SINCE',
+    'Note'
   ];
 
+  const previous = readCabSnapshot_();
   const oldFrozenSpend = readFrozenPolicySpend_();
   const rows = [];
+  const currentIds = new Set();
 
   cabs.forEach(function (cab) {
     const accountId = getCabAccountId_(cab);
     if (!accountId) return;
+    currentIds.add(accountId);
 
     const social = getSocialMetaFromCab_(cab, socials);
     const cabStatus = getCabStatus_(cab);
     const sixMonthSpend = getCabSixMonthSpend_(cab);
+    const old = previous[accountId] || {};
+    const firstSeen = old.FIRST_SEEN_DATE || updatedAt;
+    const baseline = hasValue_(old.START_BASELINE_SPEND)
+      ? num_(old.START_BASELINE_SPEND)
+      : sixMonthSpend;
+    const fallbackSpend = historicalSpendSinceFirstSeen_(accountId, firstSeen);
+    const ourLifetimeSpend = calculateOurLifetimeSpend_(sixMonthSpend, baseline, fallbackSpend);
 
     let frozen = oldFrozenSpend[accountId] || '';
     if (!frozen && cabStatus === 'POLICY' && sixMonthSpend > 0) {
@@ -122,14 +137,103 @@ function writeCabsDb_(cabs, socials, updatedAt) {
       sixMonthSpend,
       frozen,
       String(cab.last_sync_date || ''),
-      updatedAt
+      updatedAt,
+      firstSeen,
+      baseline,
+      ourLifetimeSpend,
+      '',
+      ''
     ]);
+  });
+
+  // An account disappearing from Dolphin must not erase its last known state.
+  // Keep it visible, mark NO_ACCESS and archive the transition once.
+  Object.keys(previous).forEach(function (accountId) {
+    if (currentIds.has(accountId)) return;
+    const old = previous[accountId];
+    const missingSince = old.MISSING_SINCE || updatedAt;
+    const missing = headers.map(function (header) { return old[header] === undefined ? '' : old[header]; });
+    missing[8] = 'NO_ACCESS';
+    missing[12] = updatedAt;
+    missing[16] = missingSince;
+    missing[17] = 'Missing from current Dolphin snapshot; last known spend preserved.';
+    rows.push(missing);
+
+    if (String(old['Cab Status'] || '') !== 'NO_ACCESS') {
+      recordMissingAccount_(headers, missing, old['Cab Status'], updatedAt);
+    }
   });
 
   writeDbSheet_(SHEETS.DB_CABS, headers, rows, {
     textColumns: [1, 3, 6],
-    numberColumns: [10, 11]
+    numberColumns: [10, 11, 15, 16]
   });
+}
+
+function readCabSnapshot_() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(SHEETS.DB_CABS);
+  const result = {};
+  if (!sheet || sheet.getLastRow() < 2) return result;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().forEach(function (row) {
+    const item = {};
+    headers.forEach(function (header, index) { item[String(header)] = row[index]; });
+    const accountId = String(item['Account ID'] || '');
+    if (accountId) result[accountId] = item;
+  });
+  return result;
+}
+
+function hasValue_(value) {
+  return value !== '' && value !== null && value !== undefined;
+}
+
+function calculateOurLifetimeSpend_(currentCumulative, baseline, historicalFallback) {
+  const current = Number(currentCumulative);
+  const start = Number(baseline);
+  if (Number.isFinite(current) && Number.isFinite(start) && current >= start) {
+    return round2_(current - start);
+  }
+  return round2_(historicalFallback);
+}
+
+function historicalSpendSinceFirstSeen_(accountId, firstSeen) {
+  const firstDate = String(firstSeen || '').slice(0, 10);
+  let total = 0;
+  [SHEETS.FB_HISTORY, SHEETS.DB_CAMPAIGNS_TODAY].forEach(function (sheetName) {
+    const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const dateIndex = headers.indexOf('Дата');
+    const accountIndex = headers.indexOf('Account ID');
+    const spendIndex = headers.indexOf('Spend');
+    if (dateIndex < 0 || accountIndex < 0 || spendIndex < 0) return;
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().forEach(function (row) {
+      const date = String(row[dateIndex] || '').slice(0, 10);
+      if (String(row[accountIndex] || '') === String(accountId) && (!firstDate || date >= firstDate)) {
+        total += num_(row[spendIndex]);
+      }
+    });
+  });
+  return total;
+}
+
+function recordMissingAccount_(headers, row, oldStatus, detectedAt) {
+  const suffix = String(detectedAt || getCurrentTimestamp_()).slice(0, 7).replace('-', '_');
+  const events = getOrCreateSheet_('[ACCOUNT_EVENTS_' + suffix + ']');
+  const eventHeaders = ['Event At', 'Entity Type', 'Entity ID', 'Event', 'Old Status', 'New Status', 'Spend Day', 'OUR_LIFETIME_SPEND', 'Note'];
+  ensureHeaders_(events, eventHeaders);
+  appendRows_(events, [[
+    detectedAt, 'ACCOUNT', row[0], 'MISSING_FROM_SOURCE', oldStatus || '', 'NO_ACCESS',
+    historicalSpendSinceFirstSeen_(row[0], String(row[13] || '')), row[15], row[17]
+  ]], {textColumns: [3]});
+
+  const history = getOrCreateSheet_('[ACCOUNTS_HISTORY_' + suffix + ']');
+  ensureHeaders_(history, headers);
+  appendRows_(history, [row], {textColumns: [1, 3, 6], numberColumns: [10, 11, 15, 16]});
+
+  appendCrmError_('ACCOUNTS', 'ACCOUNT_MISSING', String(row[0] || ''), String(row[1] || ''),
+    'Account disappeared; last known spend preserved.', 'Check Dolphin/BM access');
 }
 
 function writeFbCampaignsTodayDb_(campaigns, context) {

@@ -11,8 +11,11 @@ function rebuildOffersToday() {
     const rows = source.getRange(2, 1, source.getLastRow() - 1, width).getValues();
     rows.forEach(function (row) {
       const campaign = String(row[3] || '');
-      const geo = parseGeoFromCampaign_(campaign);
       const offer = String(row[11] || '').trim();
+      // New traffic normally carries GEO in the campaign name. Older traffic
+      // may still contain a literal {sub3}, so the offer name is the safe
+      // secondary source for the operational offer dashboard.
+      const geo = parseGeoFromCampaign_(campaign) || parseGeoFromCampaign_(offer);
       if (!geo || !offer) {
         errors.push([
           getCurrentTimestamp_(), 'OFFERS_TODAY', !geo ? 'UNKNOWN_GEO' : 'UNKNOWN_OFFER',
@@ -59,7 +62,22 @@ function parseGeoFromCampaign_(campaignName) {
 function writeParsingErrors_(rows) {
   const headers = ['Detected At', 'Module', 'Error Type', 'Campaign ID',
     'Campaign Name', 'Original Value', 'Correction', 'Status'];
-  writeDbSheet_(SHEETS.ERRORS, headers, rows || [], {textColumns: [4]});
+  const sheet = getOrCreateSheet_(SHEETS.ERRORS);
+  let preserved = [];
+  if (sheet.getLastRow() > 1 && sheet.getLastColumn() >= headers.length) {
+    preserved = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
+      .filter(function (row) { return String(row[1] || '') !== 'OFFERS_TODAY'; });
+  }
+  writeDbSheet_(SHEETS.ERRORS, headers, preserved.concat(rows || []), {textColumns: [4]});
+}
+
+function appendCrmError_(module, type, entityId, entityName, message, correction) {
+  const headers = ['Detected At', 'Module', 'Error Type', 'Campaign ID',
+    'Campaign Name', 'Original Value', 'Correction', 'Status'];
+  const sheet = getOrCreateSheet_(SHEETS.ERRORS);
+  if (sheet.getLastRow() === 0) ensureHeaders_(sheet, headers);
+  appendRows_(sheet, [[getCurrentTimestamp_(), module, type, entityId, entityName,
+    message, correction || '', 'OPEN']], {textColumns: [4]});
 }
 
 /** Read-only helper for the future Telegram /offers command. */

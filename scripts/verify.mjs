@@ -34,4 +34,7 @@ assert.equal(kt[12],6.25);
 assert.equal(kt[13],'SUB4');
 assert.equal(ctx.parseGeoFromCampaign_('KG+AZ+TJ Kirill | Apps Heroes iOS'),'KG+AZ+TJ');
 assert.equal(ctx.parseGeoFromCampaign_('PWA UZ Kirill'),'UZ');
+assert.equal(ctx.parseGeoFromCampaign_("[Riddick's Partners] Boostwin AZ | Wheel 2 | Azamat"),'AZ');
+assert.equal(ctx.calculateOurLifetimeSpend_(125,100,7),25);
+assert.equal(ctx.calculateOurLifetimeSpend_(90,100,7),7);
 console.log(`PASS: ${files.length} modules; unique entry points; target, secret scan, history protection, error redaction`);
