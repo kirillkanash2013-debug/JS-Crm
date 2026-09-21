@@ -7,16 +7,30 @@ const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
 if(JSON.parse(fs.readFileSync('.clasp.json')).scriptId!==target) throw Error('Wrong target');
 if(!process.env.CLASP_AUTH_JSON) throw Error('Owner action required: add CLASP_AUTH_JSON to GitHub Actions secrets.');
 const authValue=process.env.CLASP_AUTH_JSON.trim();
-let auth;
-try {
-  auth=JSON.parse(authValue);
-} catch {
-  try {
-    auth=JSON.parse(Buffer.from(authValue,'base64').toString('utf8'));
-  } catch {
-    throw Error('CLASP_AUTH_JSON must contain valid clasp JSON or its single-line Base64 encoding.');
+function parseAuth(value) {
+  const attempts=[value];
+  const firstBrace=value.indexOf('{');
+  const lastBrace=value.lastIndexOf('}');
+  if(firstBrace>=0&&lastBrace>firstBrace) attempts.push(value.slice(firstBrace,lastBrace+1));
+
+  const compact=value.replace(/\s+/g,'');
+  attempts.push(Buffer.from(compact,'base64').toString('utf8'));
+
+  const encodedCandidates=value.match(/[A-Za-z0-9+/_=-]{100,}/g)||[];
+  encodedCandidates.sort((a,b)=>b.length-a.length).forEach(candidate=>{
+    const normalized=candidate.replace(/-/g,'+').replace(/_/g,'/');
+    attempts.push(Buffer.from(normalized,'base64').toString('utf8'));
+  });
+
+  for(const candidate of attempts) {
+    try {
+      const parsed=JSON.parse(candidate);
+      if(parsed?.tokens?.default?.refresh_token) return parsed;
+    } catch {}
   }
+  throw Error('CLASP_AUTH_JSON must contain valid clasp JSON or its Base64 encoding.');
 }
+const auth=parseAuth(authValue);
 if(!auth.tokens?.default?.refresh_token) throw Error('Expected clasp 3 default login credentials');
 const authPath=path.join(os.homedir(),'.clasprc.json');
 if(fs.existsSync(authPath)) throw Error('Refusing to overwrite existing credentials; use a clean runner');
