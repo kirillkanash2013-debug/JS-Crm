@@ -30,6 +30,17 @@ function updateKeitaroToday() {
   refreshKeitaroToday_();
 }
 
+/** Fast Keitaro-only refresh for the operational offer dashboard. */
+function refreshOffersToday() {
+  return withRunLock_('refreshOffersToday', function () {
+    assertTargetSpreadsheet_();
+    refreshKeitaroToday_();
+    const rows = rebuildOffersToday();
+    console.log(JSON.stringify({offersToday: rows.length, checkedAt: new Date().toISOString()}));
+    return rows.length;
+  });
+}
+
 function updateAccountsToday(context) {
   const current = context || refreshDolphinCurrentState_();
   writeCurrentDolphinDatabases_(current);
