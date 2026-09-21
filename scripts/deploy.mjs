@@ -58,7 +58,12 @@ try {
   }
   const extra=fs.readdirSync(scratch).filter(x=>/\.(js|gs|html)$/.test(x)&&!expected.includes(x));
   if(extra.length)throw Error('Unexpected remote modules after deployment');
-  console.log('Verified Apps Script source readback. No functions run and no triggers installed.');
+  // Keep an API executable available so CI can run safe live diagnostics
+  // without requiring an interactive browser session.
+  run(['deploy','--description','CRM CI live diagnostics']);
+  const smoke=run(['run','testSourceMappings','--dev']);
+  console.log('Verified Apps Script source readback and live source mappings.');
+  console.log(smoke.trim());
 } finally {
   fs.rmSync(authPath,{force:true});
   fs.rmSync(scratch,{recursive:true,force:true});
