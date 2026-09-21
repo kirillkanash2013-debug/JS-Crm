@@ -7,6 +7,19 @@ function manualRefresh() {
   hourlyRefresh();
 }
 
+/** Safe smoke test: reads both APIs and never writes sheets or installs triggers. */
+function testApiConnections() {
+  const socials = getFbSocials_();
+  const keitaroCampaigns = getKeitaroCampaigns_();
+  const result = {
+    dolphin: { ok: true, socials: Array.isArray(socials) ? socials.length : 0 },
+    keitaro: { ok: true, campaigns: Array.isArray(keitaroCampaigns) ? keitaroCampaigns.length : 0 },
+    checkedAt: new Date().toISOString()
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function hourlyRefresh() {
   withRunLock_('hourlyRefresh', function () {
     assertCrmReady_();
