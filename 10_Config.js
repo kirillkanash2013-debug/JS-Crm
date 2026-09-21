@@ -15,7 +15,8 @@ const CONFIG = Object.freeze({
   DOLPHIN_SYNC_MAX_ATTEMPTS: 20,
   PAGE_SIZE: 100,
 
-  STRUCTURE_AGENTS: ['Farm', 'Fun', '2B']
+  STRUCTURE_AGENTS: ['Farm', 'Fun', '2B'],
+  GEO_TOKEN_PATTERN: '^[A-Z]{2}(?:\\+[A-Z]{2})*$'
 });
 
 const SHEETS = Object.freeze({
@@ -34,6 +35,9 @@ const SHEETS = Object.freeze({
   ALL_TODAY: 'ALL Сегодня',
   ALL: 'ALL',
   CONTROL: 'Контроль',
+  OFFERS_TODAY: 'OFFERS_TODAY',
+  VARIABLES: 'VARIABLES',
+  ERRORS: 'ERRORS',
   LOG: '[LOG]',
 
   FARM: 'Farm',

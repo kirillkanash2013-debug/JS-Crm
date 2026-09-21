@@ -61,7 +61,7 @@ function getKeitaroReport_(dateFrom, dateTo) {
       to: dateTo,
       timezone: CONFIG.TIMEZONE
     },
-    columns: ['sub_id_1', 'sub_id_3', 'sub_id_4'],
+    columns: ['sub_id_1', 'sub_id_3', 'sub_id_4', 'offer'],
     metrics: [
       'clicks',
       'campaign_unique_clicks',
@@ -69,7 +69,7 @@ function getKeitaroReport_(dateFrom, dateTo) {
       'sales',
       'sale_revenue'
     ],
-    grouping: ['sub_id_1', 'sub_id_3', 'sub_id_4'],
+    grouping: ['sub_id_1', 'sub_id_3', 'sub_id_4', 'offer'],
     filters: []
   };
 

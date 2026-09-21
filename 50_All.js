@@ -66,7 +66,7 @@ function buildAllRowsFromSheets_(fbSheet, ktSheet) {
     : [];
 
   const ktRows = ktSheet.getLastRow() > 1
-    ? ktSheet.getRange(2, 1, ktSheet.getLastRow() - 1, 12).getValues()
+    ? ktSheet.getRange(2, 1, ktSheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues()
     : [];
 
   return buildAllRowsFromArrays_(fbRows, ktRows);

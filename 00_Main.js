@@ -4,7 +4,46 @@
  */
 
 function manualRefresh() {
-  hourlyRefresh();
+  return updateToday();
+}
+
+/** Public manual refresh. It never finalizes yesterday. */
+function updateToday() {
+  return withRunLock_('updateToday', function () {
+    assertTargetSpreadsheet_();
+    logInfo_('updateToday', 'START');
+    const fbContext = updateFbToday();
+    updateKeitaroToday();
+    updateAccountsToday(fbContext);
+    rebuildTodayDashboard();
+    logInfo_('updateToday', 'DONE');
+  });
+}
+
+function updateFbToday() {
+  const context = refreshDolphinCurrentState_();
+  refreshFbToday_(context);
+  return context;
+}
+
+function updateKeitaroToday() {
+  refreshKeitaroToday_();
+}
+
+function updateAccountsToday(context) {
+  const current = context || refreshDolphinCurrentState_();
+  writeCurrentDolphinDatabases_(current);
+  return current;
+}
+
+function rebuildTodayDashboard() {
+  rebuildAllToday_();
+  rebuildOffersToday();
+  runTodayControl_();
+}
+
+function finalizeYesterday() {
+  return dailyFinalization();
 }
 
 /** Safe smoke test: reads both APIs and never writes sheets or installs triggers. */
@@ -68,12 +107,14 @@ function testCampaignPipeline() {
     refreshKeitaroToday_();
     const seed = seedTestCampaignIds();
     rebuildAllToday_();
+    rebuildOffersToday();
     runTodayControl_();
 
     const result = {
       fbCampaigns: countDataRows_(SHEETS.DB_CAMPAIGNS_TODAY),
       keitaroCampaigns: countDataRows_(SHEETS.DB_KEITARO_TODAY),
       allToday: countDataRows_(SHEETS.ALL_TODAY),
+      offersToday: countDataRows_(SHEETS.OFFERS_TODAY),
       seededIds: seed.seeded,
       checkedAt: new Date().toISOString()
     };
@@ -96,6 +137,7 @@ function hourlyRefresh() {
 
     // 3) Текущий ALL
     rebuildAllToday_();
+    rebuildOffersToday();
 
     // 4) Быстрые проверки
     runTodayControl_();
