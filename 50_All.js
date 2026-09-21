@@ -1,0 +1,163 @@
+/**
+ * ALL Сегодня и финальный ALL.
+ *
+ * Базовый join:
+ *   новые данные -> FB Campaign ID == Keitaro sub4
+ * fallback для старых данных -> Campaign Name
+ */
+
+function rebuildAllToday_() {
+  const fbSheet = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
+  const ktSheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+
+  const rows = buildAllRowsFromSheets_(fbSheet, ktSheet);
+
+  writeDbSheet_(SHEETS.ALL_TODAY, getAllHeaders_(), rows, {
+    textColumns: [3, 4, 5],
+    numberColumns: [6, 7, 8, 9, 10, 11, 12, 13]
+  });
+}
+
+function finalizeAllYesterday_() {
+  const date = getYesterday_();
+
+  const fbRows = filterSheetRowsByDate_(SHEETS.FB_HISTORY, date);
+  const ktRows = filterSheetRowsByDate_(SHEETS.KEITARO_HISTORY, date);
+
+  const rows = buildAllRowsFromArrays_(fbRows, ktRows);
+
+  const sheet = getOrCreateSheet_(SHEETS.ALL);
+  ensureHeaders_(sheet, getAllHeaders_());
+
+  const existing = buildExistingKeySet_(sheet, [1, 4]);
+  const toAppend = rows.filter(function (row) {
+    return !existing.has(String(row[0]) + '|' + String(row[3]));
+  });
+
+  appendRows_(sheet, toAppend, {
+    textColumns: [3, 4, 5],
+    numberColumns: [6, 7, 8, 9, 10, 11, 12, 13]
+  });
+}
+
+function getAllHeaders_() {
+  return [
+    'Дата',
+    'Agent',
+    'Account ID',
+    'Campaign ID',
+    'Campaign',
+    'Spend',
+    'Inst',
+    'Reg',
+    'FTD',
+    'Revenue',
+    'CPI',
+    'CPR',
+    'CPD',
+    'ROI',
+    'Join Type'
+  ];
+}
+
+function buildAllRowsFromSheets_(fbSheet, ktSheet) {
+  const fbRows = fbSheet.getLastRow() > 1
+    ? fbSheet.getRange(2, 1, fbSheet.getLastRow() - 1, 8).getValues()
+    : [];
+
+  const ktRows = ktSheet.getLastRow() > 1
+    ? ktSheet.getRange(2, 1, ktSheet.getLastRow() - 1, 14).getValues()
+    : [];
+
+  return buildAllRowsFromArrays_(fbRows, ktRows);
+}
+
+function buildAllRowsFromArrays_(fbRows, ktRows) {
+  // Keitaro: key by FB Campaign ID, fallback by campaign name.
+  const byId = {};
+  const byName = {};
+
+  ktRows.forEach(function (row) {
+    const campaignName = String(row[4] || '');
+    const campaignId = String(row[5] || '');
+
+    const metrics = {
+      inst: num_(row[10]),   // временно conversions -> Inst
+      reg: 0,
+      ftd: num_(row[11]),    // временно sales -> FTD
+      revenue: num_(row[12])
+    };
+
+    if (campaignId) byId[campaignId] = mergeMetrics_(byId[campaignId], metrics);
+    if (campaignName) byName[campaignName] = mergeMetrics_(byName[campaignName], metrics);
+  });
+
+  const agentMapByAccount = getAccountAgentMap_();
+
+  return fbRows.map(function (row) {
+    const date = row[0];
+    const accountId = String(row[4] || '');
+    const campaignId = String(row[5] || '');
+    const campaignName = String(row[6] || '');
+    const spend = num_(row[7]);
+
+    let metrics = campaignId && byId[campaignId] ? byId[campaignId] : null;
+    let joinType = metrics ? 'Campaign ID' : '';
+
+    if (!metrics && campaignName && byName[campaignName]) {
+      metrics = byName[campaignName];
+      joinType = 'Campaign Name fallback';
+    }
+
+    metrics = metrics || { inst: 0, reg: 0, ftd: 0, revenue: 0 };
+
+    const cpi = safeDiv_(spend, metrics.inst);
+    const cpr = safeDiv_(spend, metrics.reg);
+    const cpd = safeDiv_(spend, metrics.ftd);
+    const roi = spend > 0 ? ((metrics.revenue - spend) / spend) * 100 : 0;
+
+    return [
+      date,
+      agentMapByAccount[accountId] || '',
+      accountId,
+      campaignId,
+      campaignName,
+      spend,
+      metrics.inst,
+      metrics.reg,
+      metrics.ftd,
+      metrics.revenue,
+      cpi,
+      cpr,
+      cpd,
+      roi,
+      joinType
+    ];
+  });
+}
+
+function getAccountAgentMap_() {
+  const result = {};
+  const cabSheet = getOrCreateSheet_(SHEETS.DB_CABS);
+  const agentMap = getAgentMap_();
+
+  if (cabSheet.getLastRow() < 2) return result;
+
+  cabSheet.getRange(2, 1, cabSheet.getLastRow() - 1, 3).getValues().forEach(function (row) {
+    const accountId = String(row[0] || '');
+    const socialId = String(row[2] || '');
+    if (accountId) result[accountId] = agentMap[socialId] || 'НЕ ОПРЕДЕЛЕН';
+  });
+
+  return result;
+}
+
+function mergeMetrics_(a, b) {
+  a = a || { inst: 0, reg: 0, ftd: 0, revenue: 0 };
+  return {
+    inst: num_(a.inst) + num_(b.inst),
+    reg: num_(a.reg) + num_(b.reg),
+    ftd: num_(a.ftd) + num_(b.ftd),
+    revenue: num_(a.revenue) + num_(b.revenue)
+  };
+}
