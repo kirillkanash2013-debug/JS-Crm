@@ -12,6 +12,11 @@ function writeCurrentDolphinDatabases_(context) {
 
 function refreshFbToday_(context) {
   const campaigns = getCampaigns_(getToday_());
+  const previous = getStorageSpreadsheetForSheet_(SHEETS.DB_CAMPAIGNS_TODAY)
+    .getSheetByName(SHEETS.DB_CAMPAIGNS_TODAY);
+  if (!campaigns.length && previous && previous.getLastRow() > 1) {
+    throw new Error('Dolphin вернул пустой список кампаний при непустой текущей базе; данные сохранены без изменений');
+  }
   writeFbCampaignsTodayDb_(campaigns, context);
 }
 
@@ -99,6 +104,9 @@ function writeCabsDb_(cabs, socials, updatedAt) {
   ];
 
   const previous = readCabSnapshot_();
+  if (!cabs.length && Object.keys(previous).length) {
+    throw new Error('Dolphin вернул пустой список кабинетов при непустой базе; NO_ACCESS не применён');
+  }
   const oldFrozenSpend = readFrozenPolicySpend_();
   const rows = [];
   const currentIds = new Set();
@@ -144,6 +152,10 @@ function writeCabsDb_(cabs, socials, updatedAt) {
       '',
       ''
     ]);
+
+    if (String(old['Cab Status'] || '') === 'NO_ACCESS') {
+      recordAccountReturn_(headers, rows[rows.length - 1], updatedAt);
+    }
   });
 
   // An account disappearing from Dolphin must not erase its last known state.
@@ -191,10 +203,13 @@ function hasValue_(value) {
 function calculateOurLifetimeSpend_(currentCumulative, baseline, historicalFallback) {
   const current = Number(currentCumulative);
   const start = Number(baseline);
+  const history = Math.max(0, num_(historicalFallback));
   if (Number.isFinite(current) && Number.isFinite(start) && current >= start) {
-    return round2_(current - start);
+    // Spend 6M is a rolling window and eventually decreases. Closed-day
+    // history is monotonic, so never let the derived lifetime value fall.
+    return round2_(Math.max(current - start, history));
   }
-  return round2_(historicalFallback);
+  return round2_(history);
 }
 
 function historicalSpendSinceFirstSeen_(accountId, firstSeen) {
@@ -225,7 +240,7 @@ function recordMissingAccount_(headers, row, oldStatus, detectedAt) {
   ensureHeaders_(events, eventHeaders);
   appendRows_(events, [[
     detectedAt, 'ACCOUNT', row[0], 'MISSING_FROM_SOURCE', oldStatus || '', 'NO_ACCESS',
-    historicalSpendSinceFirstSeen_(row[0], String(row[13] || '')), row[15], row[17]
+    getLatestDailySpendForAccount_(row[0]), row[15], row[17]
   ]], {textColumns: [3]});
 
   const history = getOrCreateSheet_('[ACCOUNTS_HISTORY_' + suffix + ']');
@@ -234,6 +249,48 @@ function recordMissingAccount_(headers, row, oldStatus, detectedAt) {
 
   appendCrmError_('ACCOUNTS', 'ACCOUNT_MISSING', String(row[0] || ''), String(row[1] || ''),
     'Account disappeared; last known spend preserved.', 'Check Dolphin/BM access');
+}
+
+function recordAccountReturn_(headers, row, detectedAt) {
+  const suffix = String(detectedAt || getCurrentTimestamp_()).slice(0, 7).replace('-', '_');
+  const events = getOrCreateSheet_('[ACCOUNT_EVENTS_' + suffix + ']');
+  const eventHeaders = ['Event At', 'Entity Type', 'Entity ID', 'Event', 'Old Status', 'New Status', 'Spend Day', 'OUR_LIFETIME_SPEND', 'Note'];
+  ensureHeaders_(events, eventHeaders);
+  appendRows_(events, [[
+    detectedAt, 'ACCOUNT', row[0], 'RETURNED_TO_SOURCE', 'NO_ACCESS', row[8],
+    getLatestDailySpendForAccount_(row[0]), row[15], 'Account returned after source access loss.'
+  ]], {textColumns: [3]});
+
+  const history = getOrCreateSheet_('[ACCOUNTS_HISTORY_' + suffix + ']');
+  ensureHeaders_(history, headers);
+  appendRows_(history, [row], {textColumns: [1, 3, 6], numberColumns: [10, 11, 15, 16]});
+}
+
+function getLatestDailySpendForAccount_(accountId) {
+  let latestDate = '';
+  let latestSpend = 0;
+  [SHEETS.FB_HISTORY, SHEETS.DB_CAMPAIGNS_TODAY].forEach(function (sheetName) {
+    const sheet = getStorageSpreadsheetForSheet_(sheetName).getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const dateIndex = headers.indexOf('Дата');
+    const accountIndex = headers.indexOf('Account ID');
+    const spendIndex = headers.indexOf('Spend');
+    if (dateIndex < 0 || accountIndex < 0 || spendIndex < 0) return;
+    const totals = {};
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().forEach(function (row) {
+      if (String(row[accountIndex] || '') !== String(accountId)) return;
+      const date = String(row[dateIndex] || '').slice(0, 10);
+      totals[date] = num_(totals[date]) + num_(row[spendIndex]);
+    });
+    Object.keys(totals).forEach(function (date) {
+      if (date >= latestDate) {
+        latestDate = date;
+        latestSpend = totals[date];
+      }
+    });
+  });
+  return round2_(latestSpend);
 }
 
 function writeFbCampaignsTodayDb_(campaigns, context) {
@@ -256,7 +313,7 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
   campaigns.forEach(function (campaign) {
     const spend = getCampaignSpend_(campaign);
 
-    const accountId = String(campaign.account_id || '');
+    const accountId = getCampaignAccountId_(campaign);
     const cab = cabMap[accountId] || campaign.cab || {};
     const social = getSocialMetaFromCab_(cab, context.socials);
 
@@ -289,15 +346,11 @@ function appendFbHistory_(campaigns, context, date) {
     'Account ID',
     'Campaign ID',
     'Campaign',
-    'Spend',
-    'Campaign Status Raw',
-    'Campaign Status'
+    'Spend'
   ];
 
   const sheet = getOrCreateSheet_(SHEETS.FB_HISTORY);
-  ensureAdditiveHeaders_(sheet, headers);
-
-  const existing = buildExistingKeySet_(sheet, [1, 5, 6]);
+  ensureHeadersRemovingTrailing_(sheet, headers, ['Campaign Status Raw', 'Campaign Status']);
   const cabMap = buildCabMap_(context.cabs);
   const finalizedAt = getCurrentTimestamp_();
   const rows = [];
@@ -307,9 +360,7 @@ function appendFbHistory_(campaigns, context, date) {
     if (spend <= 0) return;
 
     const campaignId = String(campaign.campaign_id || campaign.id || '');
-    const accountId = String(campaign.account_id || '');
-    const key = date + '|' + accountId + '|' + campaignId;
-    if (existing.has(key)) return;
+    const accountId = getCampaignAccountId_(campaign);
     const cab = cabMap[accountId] || campaign.cab || {};
     const social = getSocialMetaFromCab_(cab, context.socials);
 
@@ -321,14 +372,12 @@ function appendFbHistory_(campaigns, context, date) {
       accountId,
       campaignId,
       String(campaign.name || ''),
-      spend,
-      getCampaignRawStatus_(campaign),
-      getCampaignStatus_(campaign)
+      spend
     ]);
   });
 
-  appendRows_(sheet, rows, {
-    textColumns: [3, 5, 6, 9, 10],
+  replaceRowsByDate_(sheet, headers, date, rows, {
+    textColumns: [3, 5, 6],
     numberColumns: [8]
   });
 }
