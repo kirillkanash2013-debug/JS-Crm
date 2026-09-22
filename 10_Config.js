@@ -28,6 +28,8 @@ const SHEETS = Object.freeze({
 
   DB_KEITARO_TODAY: '[DB_Keitaro_Today]',
   KEITARO_HISTORY: '[Keitaro_History]',
+  DB_KEITARO_CONVERSIONS_TODAY: '[DB_Keitaro_Conversions_Today]',
+  KEITARO_CONVERSIONS_HISTORY: '[Keitaro_Conversions_History]',
 
   DB_STRUCTURE_HISTORY: '[DB_Structure_History]',
   AGENTS: 'Агенты',
