@@ -14,7 +14,6 @@ function updateToday() {
     logInfo_('updateToday', 'START');
     const fbContext = updateFbToday();
     updateKeitaroToday();
-    updateAccountsToday(fbContext);
     rebuildTodayDashboard();
     logInfo_('updateToday', 'DONE');
   });
@@ -217,8 +216,7 @@ function dailyFinalization() {
 
 function refreshStructureOnly() {
   withRunLock_('refreshStructureOnly', function () {
-    const fbContext = refreshDolphinCurrentState_();
-    writeCurrentDolphinDatabases_(fbContext);
+    refreshDolphinCurrentState_();
     refreshStructureFromDatabases_();
   });
 }
@@ -258,8 +256,14 @@ function assertCrmReady_() {
   const all = ss.getSheetByName(SHEETS.ALL);
   if (all && all.getLastRow() > 0) {
     const headers = getAllHeaders_();
-    const actual = all.getRange(1, 1, 1, Math.max(all.getLastColumn(), headers.length)).getValues()[0];
-    if (actual.length !== headers.length || actual.some(function (v, i) { return v !== headers[i]; })) {
+    const legacyWithStatuses = headers.concat(['Campaign Status Raw', 'Campaign Status']);
+    const actual = all.getRange(1, 1, 1, all.getLastColumn()).getValues()[0];
+    const matches = [headers, legacyWithStatuses].some(function (allowed) {
+      return actual.length === allowed.length && actual.every(function (value, index) {
+        return value === allowed[index];
+      });
+    });
+    if (!matches) {
       throw new Error('CRM ALL migration required. Existing history has NOT been changed.');
     }
   }
