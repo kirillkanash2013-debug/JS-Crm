@@ -30,7 +30,7 @@ function mapKeitaroCampaignRow_(row, date, timestamp) {
     directUepc === '' || directUepc === null || directUepc === undefined
       ? safeDiv_(revenue, inst)
       : num_(directUepc),
-    campaignId ? 'SUB4' : 'MISSING', JSON.stringify(row),
+    isValidCampaignId_(campaignId) ? 'SUB4' : 'MISSING', JSON.stringify(row),
     String(pick_(row, ['campaign_id']) || getDimensionId_(pick_(row, ['campaign']))),
     getDimensionLabel_(pick_(row, ['campaign']))];
 }
