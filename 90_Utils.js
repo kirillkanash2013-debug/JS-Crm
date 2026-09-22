@@ -139,6 +139,29 @@ function ensureAdditiveHeaders_(sheet, headers) {
   }
 }
 
+function ensureHeadersRemovingTrailing_(sheet, headers, removableHeaders) {
+  if (sheet.getLastRow() > 0 && sheet.getLastColumn() === headers.length + removableHeaders.length) {
+    const actual = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const expected = headers.concat(removableHeaders);
+    const exact = actual.every(function (value, index) { return value === expected[index]; });
+    if (exact) sheet.deleteColumns(headers.length + 1, removableHeaders.length);
+  }
+  ensureHeaders_(sheet, headers);
+}
+
+function replaceRowsByDate_(sheet, headers, date, newRows, options) {
+  ensureHeaders_(sheet, headers);
+  let retained = [];
+  if (sheet.getLastRow() > 1) {
+    retained = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
+      .filter(function (row) { return normalizeDateKey_(row[0]) !== normalizeDateKey_(date); });
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
+  }
+  const combined = retained.concat(newRows || []);
+  if (combined.length) sheet.getRange(2, 1, combined.length, headers.length).setValues(combined);
+  applyColumnFormats_(sheet, options || {});
+}
+
 function applyColumnFormats_(sheet, options) {
   (options.textColumns || []).forEach(function (column) {
     sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1).setNumberFormat('@');
@@ -197,8 +220,15 @@ function filterSheetRowsByDate_(sheetName, date) {
     sheet.getLastRow() - 1,
     sheet.getLastColumn()
   ).getValues().filter(function (row) {
-    return String(row[0] || '') === String(date);
+    return normalizeDateKey_(row[0]) === normalizeDateKey_(date);
   });
+}
+
+function normalizeDateKey_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+  }
+  return String(value || '').slice(0, 10);
 }
 
 function sumColumnByHeader_(sheetName, header) {
@@ -420,7 +450,25 @@ function getCabSixMonthSpend_(cab) {
 }
 
 function getCampaignSpend_(campaign) {
-  return Number(campaign && campaign.stats && campaign.stats.spend) || 0;
+  const candidates = [
+    campaign && campaign.stats && campaign.stats.spend,
+    campaign && campaign.statsTotal && campaign.statsTotal.spend,
+    campaign && campaign.statistics && campaign.statistics.spend,
+    campaign && campaign.spend
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    if (candidates[i] === undefined || candidates[i] === null || candidates[i] === '') continue;
+    const value = Number(candidates[i]);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function getCampaignAccountId_(campaign) {
+  return String(
+    campaign && (campaign.account_id || campaign.ad_account_id ||
+      (campaign.cab && (campaign.cab.account_id || campaign.cab.ad_account_id || campaign.cab.id))) || ''
+  );
 }
 
 function getCampaignRawStatus_(campaign) {
