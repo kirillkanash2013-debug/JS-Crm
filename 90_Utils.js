@@ -113,6 +113,32 @@ function ensureHeaders_(sheet, headers) {
   }
 }
 
+/**
+ * Safe append-only schema migration. Existing columns and rows are preserved;
+ * only new trailing headers may be added.
+ */
+function ensureAdditiveHeaders_(sheet, headers) {
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    return;
+  }
+
+  const currentWidth = sheet.getLastColumn();
+  const actual = sheet.getRange(1, 1, 1, currentWidth).getValues()[0];
+  const prefixMatches = actual.every(function (value, index) {
+    return value === headers[index];
+  });
+
+  if (!prefixMatches || currentWidth > headers.length) {
+    throw new Error('Schema mismatch: ' + sheet.getName() + '. Migration required; existing data preserved.');
+  }
+
+  if (currentWidth < headers.length) {
+    sheet.getRange(1, currentWidth + 1, 1, headers.length - currentWidth)
+      .setValues([headers.slice(currentWidth)]);
+  }
+}
+
 function applyColumnFormats_(sheet, options) {
   (options.textColumns || []).forEach(function (column) {
     sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1).setNumberFormat('@');
@@ -395,6 +421,34 @@ function getCabSixMonthSpend_(cab) {
 
 function getCampaignSpend_(campaign) {
   return Number(campaign && campaign.stats && campaign.stats.spend) || 0;
+}
+
+function getCampaignRawStatus_(campaign) {
+  if (!campaign) return '';
+
+  const candidates = [
+    campaign.status,
+    campaign.effective_status,
+    campaign.configured_status,
+    campaign.campaign_status,
+    campaign.state
+  ];
+
+  for (let i = 0; i < candidates.length; i++) {
+    if (candidates[i] !== undefined && candidates[i] !== null && String(candidates[i]) !== '') {
+      return String(candidates[i]).toUpperCase();
+    }
+  }
+
+  return '';
+}
+
+function getCampaignStatus_(campaign) {
+  const raw = getCampaignRawStatus_(campaign);
+  if (raw === 'ACTIVE') return 'ACTIVE';
+  if (['PAUSED', 'DELETED', 'ARCHIVED', 'DISABLED', 'BAN'].includes(raw)) return 'DISABLED';
+  if (['TOKEN_ERROR', 'WITH_ISSUES', 'ERROR', 'UNSETTLED'].includes(raw)) return 'ERROR';
+  return 'UNKNOWN';
 }
 
 function buildCabMap_(cabs) {
