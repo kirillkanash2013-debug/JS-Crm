@@ -7,19 +7,29 @@ function ensureAgentsFromSocials_(socials) {
   const headers = ['Social ID', 'Соц', 'Agent'];
 
   const oldMap = {};
+  const oldNames = {};
   if (sheet.getLastRow() > 1) {
     sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().forEach(function (row) {
       const id = String(row[0] || '');
-      if (id) oldMap[id] = String(row[2] || '');
+      if (id) {
+        oldNames[id] = String(row[1] || '');
+        oldMap[id] = String(row[2] || '');
+      }
     });
   }
 
+  const currentIds = new Set();
   const rows = socials.map(function (social) {
     const id = getSocialId_(social);
+    currentIds.add(id);
     const name = String(social.name || social.fb_name || '');
     const agent = oldMap[id] || inferAgentFromName_(name);
 
     return [id, name, agent];
+  });
+
+  Object.keys(oldMap).forEach(function (id) {
+    if (!currentIds.has(id)) rows.push([id, oldNames[id], oldMap[id]]);
   });
 
   writeDbSheet_(SHEETS.AGENTS, headers, rows, {
@@ -107,6 +117,14 @@ function updateStructureHistoryFromCurrentDb_() {
     const agent = agentMap[socialId] || 'НЕ ОПРЕДЕЛЕН';
 
     const key = structureKey_(agent, socialId, bmId, accountId);
+
+    if (cabStatus === 'NO_ACCESS') {
+      if (index[key] !== undefined) {
+        historyRows[index[key]][9] = 'NO_ACCESS';
+        historyRows[index[key]][13] = 'NO';
+      }
+      return;
+    }
 
     if (index[key] !== undefined) {
       const i = index[key];
