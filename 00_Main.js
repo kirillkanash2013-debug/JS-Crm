@@ -26,20 +26,14 @@ function updateFbToday() {
 }
 
 function updateKeitaroToday() {
-  const date = getToday_();
-  const reportRows = normalizeKeitaroReportRows_(getKeitaroReport_(date, date));
-  const conversionRows = getKeitaroConversions_(date, date);
-  const campaigns = getKeitaroCampaigns_();
-  writeKeitaroTodayDb_(reportRows, date, campaigns);
-  writeKeitaroConversionsTodayDb_(conversionRows, date);
-  return {campaigns: reportRows.length, conversions: conversionRows.length};
+  refreshKeitaroToday_();
 }
 
 /** Fast Keitaro-only refresh for the operational offer dashboard. */
 function refreshOffersToday() {
   return withRunLock_('refreshOffersToday', function () {
     assertTargetSpreadsheet_();
-    updateKeitaroToday();
+    refreshKeitaroToday_();
     const rows = rebuildOffersToday();
     console.log(JSON.stringify({offersToday: rows.length, checkedAt: new Date().toISOString()}));
     return rows.length;
@@ -70,7 +64,6 @@ function migrateLegacyStorage() {
     const names = [
       SHEETS.DB_CAMPAIGNS_TODAY, SHEETS.FB_HISTORY,
       SHEETS.DB_KEITARO_TODAY, SHEETS.KEITARO_HISTORY,
-      SHEETS.DB_KEITARO_CONVERSIONS_TODAY, SHEETS.KEITARO_CONVERSIONS_HISTORY,
       SHEETS.DB_SOCIALS, SHEETS.DB_BMS, SHEETS.DB_CABS,
       SHEETS.DB_STRUCTURE_HISTORY, SHEETS.AGENTS, SHEETS.LOG
     ];
@@ -150,7 +143,7 @@ function testCampaignPipeline() {
 
     const fbContext = refreshDolphinCurrentState_();
     refreshFbToday_(fbContext);
-    updateKeitaroToday();
+    refreshKeitaroToday_();
     const seed = seedTestCampaignIds();
     rebuildAllToday_();
     rebuildOffersToday();
@@ -180,7 +173,7 @@ function hourlyRefresh() {
     refreshFbToday_(fbContext);
 
     // 2) Keitaro — сегодня
-    updateKeitaroToday();
+    refreshKeitaroToday_();
 
     // 3) Текущий ALL
     rebuildAllToday_();
@@ -203,12 +196,7 @@ function dailyFinalization() {
     finalizeFacebookYesterday_(fbContext);
 
     // Финализируем Keitaro за вчера.
-    const keitaroDate = getYesterday_();
-    const keitaroReportRows = normalizeKeitaroReportRows_(
-      getKeitaroReport_(keitaroDate, keitaroDate));
-    const keitaroConversionRows = getKeitaroConversions_(keitaroDate, keitaroDate);
-    appendKeitaroHistory_(keitaroReportRows, keitaroDate);
-    replaceKeitaroConversionsHistory_(keitaroConversionRows, keitaroDate);
+    finalizeKeitaroYesterday_();
 
     // Фиксируем вчерашний ALL.
     finalizeAllYesterday_();
