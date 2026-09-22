@@ -201,7 +201,10 @@ function resolveCurrentCabs_(fromDate, toDate, businesses) {
   const candidates = {};
 
   getAllCabs_(fromDate, toDate).forEach(function (cab) {
-    addCabCandidate_(candidates, cab, '', '', '', bmMap);
+    // The unfiltered list proves that the account exists, but it is not an
+    // authoritative source of current BM membership. Nested BM data may be
+    // stale after an account is removed from a BM.
+    addCabCandidate_(candidates, cab, '', '', '', bmMap, false);
   });
 
   businesses.forEach(function (bm) {
@@ -215,7 +218,8 @@ function resolveCurrentCabs_(fromDate, toDate, businesses) {
         bmId,
         getBusinessName_(bm),
         getBusinessStatus_(bm),
-        bmMap
+        bmMap,
+        true
       );
     });
   });
@@ -225,7 +229,7 @@ function resolveCurrentCabs_(fromDate, toDate, businesses) {
   });
 }
 
-function addCabCandidate_(candidateMap, cab, resolvedBmId, resolvedBmName, resolvedBmStatus, bmMap) {
+function addCabCandidate_(candidateMap, cab, resolvedBmId, resolvedBmName, resolvedBmStatus, bmMap, trustInternalBm) {
   const accountId = getCabAccountId_(cab);
   if (!accountId) return;
 
@@ -235,7 +239,7 @@ function addCabCandidate_(candidateMap, cab, resolvedBmId, resolvedBmName, resol
   let bmName = resolvedBmName || '';
   let bmStatus = resolvedBmStatus || '';
 
-  if (internalBm.id) {
+  if (trustInternalBm && internalBm.id) {
     bmId = internalBm.id;
     bmName = internalBm.name || (bmMap[internalBm.id] ? bmMap[internalBm.id].name : '');
     bmStatus = bmMap[internalBm.id] ? bmMap[internalBm.id].status : bmStatus;
@@ -246,8 +250,8 @@ function addCabCandidate_(candidateMap, cab, resolvedBmId, resolvedBmName, resol
   cab._resolved_bm_status = bmStatus;
 
   let score = 0;
-  if (internalBm.id && resolvedBmId && internalBm.id === resolvedBmId) score += 100;
-  else if (internalBm.id) score += 80;
+  if (trustInternalBm && internalBm.id && resolvedBmId && internalBm.id === resolvedBmId) score += 100;
+  else if (trustInternalBm && internalBm.id) score += 80;
   else if (resolvedBmId) score += 50;
 
   if (Array.isArray(cab.accounts) && cab.accounts.length) score += 10;
