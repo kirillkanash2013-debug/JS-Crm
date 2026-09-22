@@ -255,7 +255,6 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
 
   campaigns.forEach(function (campaign) {
     const spend = getCampaignSpend_(campaign);
-    if (spend <= 0) return;
 
     const accountId = String(campaign.account_id || '');
     const cab = cabMap[accountId] || campaign.cab || {};
