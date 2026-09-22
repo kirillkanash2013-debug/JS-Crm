@@ -3,17 +3,11 @@
 function getKeitaroHeaders_() {
   return ['Дата', 'Updated At', 'Agent', 'Campaign Name', 'FB Campaign ID',
     'Clicks', 'Inst', 'Reg', 'FTD', 'Revenue', 'Source', 'Offer ID', 'Offer', 'uEPC',
-    'ID Source', 'Raw JSON'];
+    'ID Source', 'Raw JSON', 'Keitaro Campaign ID', 'Keitaro Campaign'];
 }
 
-function refreshKeitaroToday_() {
-  const date = getToday_();
-  writeKeitaroTodayDb_(normalizeKeitaroReportRows_(getKeitaroReport_(date, date)), date);
-}
-
-function finalizeKeitaroYesterday_() {
-  const date = getYesterday_();
-  appendKeitaroHistory_(normalizeKeitaroReportRows_(getKeitaroReport_(date, date)), date);
+function getKeitaroTodayHeaders_() {
+  return getKeitaroHeaders_().concat(['Keitaro Campaign Status']);
 }
 
 function mapKeitaroCampaignRow_(row, date, timestamp) {
@@ -36,33 +30,99 @@ function mapKeitaroCampaignRow_(row, date, timestamp) {
     directUepc === '' || directUepc === null || directUepc === undefined
       ? safeDiv_(revenue, inst)
       : num_(directUepc),
-    campaignId ? 'SUB4' : 'MISSING', JSON.stringify(row)];
+    campaignId ? 'SUB4' : 'MISSING', JSON.stringify(row),
+    String(pick_(row, ['campaign_id']) || getDimensionId_(pick_(row, ['campaign']))),
+    getDimensionLabel_(pick_(row, ['campaign']))];
 }
 
-function writeKeitaroTodayDb_(reportRows, date) {
+function getKeitaroConversionHeaders_() {
+  return ['Дата', 'Updated At', 'Conversion ID', 'Keitaro SubID',
+    'Keitaro Campaign ID', 'Keitaro Campaign', 'FB Campaign ID',
+    'Agent', 'Ad Name', 'FB Campaign Name', 'Adset ID', 'Adset Name',
+    'Offer ID', 'Offer', 'Affiliate Network', 'Country', 'Source', 'OS',
+    'Revenue', 'Status', 'Original Status', 'Previous Status', 'TID',
+    'Click At', 'Postback At', 'Sale At', 'Sale Period', 'Raw JSON'];
+}
+
+function mapKeitaroConversionRow_(row, date, timestamp) {
+  return [date, timestamp,
+    String(pick_(row, ['conversion_id', 'id']) || ''),
+    String(pick_(row, ['sub_id', 'subid']) || ''),
+    String(pick_(row, ['campaign_id']) || getDimensionId_(pick_(row, ['campaign']))),
+    getDimensionLabel_(pick_(row, ['campaign', 'campaign_name'])),
+    String(pick_(row, ['sub_id_4', 'sub4']) || ''),
+    pick_(row, ['sub_id_1', 'sub1']), pick_(row, ['sub_id_2', 'sub2']),
+    pick_(row, ['sub_id_3', 'sub3']), String(pick_(row, ['sub_id_5', 'sub5']) || ''),
+    pick_(row, ['sub_id_6', 'sub6']),
+    String(pick_(row, ['offer_id']) || getDimensionId_(pick_(row, ['offer']))),
+    getDimensionLabel_(pick_(row, ['offer', 'offer_name'])),
+    getDimensionLabel_(pick_(row, ['affiliate_network'])),
+    getDimensionLabel_(pick_(row, ['country_code', 'country'])),
+    getDimensionLabel_(pick_(row, ['source'])), getDimensionLabel_(pick_(row, ['os'])),
+    num_(pick_(row, ['revenue'])), pick_(row, ['status']),
+    pick_(row, ['original_status']), pick_(row, ['previous_status']),
+    String(pick_(row, ['tid']) || ''), pick_(row, ['click_datetime']),
+    pick_(row, ['postback_datetime']), pick_(row, ['sale_datetime']),
+    pick_(row, ['sale_period']), JSON.stringify(row)];
+}
+
+function getKeitaroConversionFormatOptions_() {
+  return {textColumns: [1, 2, 3, 4, 5, 7, 8, 10, 11, 13, 23, 24, 25, 26],
+    numberColumns: [19]};
+}
+
+function writeKeitaroConversionsTodayDb_(conversionRows, date) {
   const timestamp = getCurrentTimestamp_();
-  const rows = reportRows.map(function (row) { return mapKeitaroCampaignRow_(row, date, timestamp); });
-  writeDbSheet_(SHEETS.DB_KEITARO_TODAY, getKeitaroHeaders_(), rows, {
-    textColumns: [5, 12], numberColumns: [6, 7, 8, 9, 10, 14]
+  const rows = conversionRows.map(function (row) {
+    return mapKeitaroConversionRow_(row, date, timestamp);
+  });
+  writeDbSheet_(SHEETS.DB_KEITARO_CONVERSIONS_TODAY,
+    getKeitaroConversionHeaders_(), rows, getKeitaroConversionFormatOptions_());
+}
+
+function replaceKeitaroConversionsHistory_(conversionRows, date) {
+  const timestamp = getCurrentTimestamp_();
+  const rows = conversionRows.map(function (row) {
+    return mapKeitaroConversionRow_(row, date, timestamp);
+  });
+  const sheet = getOrCreateSheet_(SHEETS.KEITARO_CONVERSIONS_HISTORY);
+  replaceRowsByDate_(sheet, getKeitaroConversionHeaders_(), date, rows,
+    getKeitaroConversionFormatOptions_());
+}
+
+function writeKeitaroTodayDb_(reportRows, date, campaigns) {
+  const timestamp = getCurrentTimestamp_();
+  const statuses = {};
+  (campaigns || []).forEach(function (campaign) {
+    statuses[String(pick_(campaign, ['id', 'campaign_id']) || '')] =
+      String(pick_(campaign, ['state', 'status']) || 'UNKNOWN').toUpperCase();
+  });
+  const rows = reportRows.map(function (row) {
+    const mapped = mapKeitaroCampaignRow_(row, date, timestamp);
+    mapped.push(statuses[String(mapped[16])] || 'UNKNOWN');
+    return mapped;
+  });
+  writeDbSheet_(SHEETS.DB_KEITARO_TODAY, getKeitaroTodayHeaders_(), rows, {
+    textColumns: [5, 12, 17], numberColumns: [6, 7, 8, 9, 10, 14]
   });
 }
 
 function appendKeitaroHistory_(reportRows, date) {
   const sheet = getOrCreateSheet_(SHEETS.KEITARO_HISTORY);
-  ensureHeaders_(sheet, getKeitaroHeaders_());
+  ensureAdditiveHeaders_(sheet, getKeitaroHeaders_());
   const timestamp = getCurrentTimestamp_();
   const rows = reportRows.map(function (row) {
     return mapKeitaroCampaignRow_(row, date, timestamp);
   });
   replaceRowsByDate_(sheet, getKeitaroHeaders_(), date, rows,
-    {textColumns: [5, 12], numberColumns: [6, 7, 8, 9, 10, 14]});
+    {textColumns: [5, 12, 17], numberColumns: [6, 7, 8, 9, 10, 14]});
 }
 
 /** Test-only: seeds only today's temporary DB; the next refresh replaces it. */
 function seedTestCampaignIds() {
   const kt = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
   const fb = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
-  ensureHeaders_(kt, getKeitaroHeaders_());
+  ensureHeaders_(kt, getKeitaroTodayHeaders_());
   if (kt.getLastRow() < 2) throw new Error('Сначала обнови Keitaro Today');
   const fbByName = {};
   if (fb.getLastRow() > 1) {
@@ -71,7 +131,7 @@ function seedTestCampaignIds() {
       if (name && row[5]) fbByName[name] = String(row[5]);
     });
   }
-  const width = getKeitaroHeaders_().length;
+  const width = getKeitaroTodayHeaders_().length;
   const values = kt.getRange(2, 1, kt.getLastRow() - 1, width).getValues();
   let seeded = 0;
   values.forEach(function (row, index) {
