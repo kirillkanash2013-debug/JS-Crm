@@ -95,7 +95,11 @@ function getCampaigns_(date) {
     from_date: date,
     to_date: date,
     currency: CONFIG.CURRENCY,
-    'aggregateColumns[]': ['spend']
+    'aggregateColumns[]': ['spend'],
+    with_trashed: 1,
+    showArchivedCampaigns: 1,
+    showArchivedAdAccount: 0,
+    showAccountArchivedAdAccount: 0
   });
 }
 
