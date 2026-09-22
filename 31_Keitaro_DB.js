@@ -50,14 +50,12 @@ function writeKeitaroTodayDb_(reportRows, date) {
 function appendKeitaroHistory_(reportRows, date) {
   const sheet = getOrCreateSheet_(SHEETS.KEITARO_HISTORY);
   ensureHeaders_(sheet, getKeitaroHeaders_());
-  const existing = buildExistingKeySet_(sheet, [1, 5, 4, 13]);
   const timestamp = getCurrentTimestamp_();
   const rows = reportRows.map(function (row) {
     return mapKeitaroCampaignRow_(row, date, timestamp);
-  }).filter(function (row) {
-    return !existing.has(String(row[0]) + '|' + String(row[4]) + '|' + String(row[3]) + '|' + String(row[12]));
   });
-  appendRows_(sheet, rows, {textColumns: [5, 12], numberColumns: [6, 7, 8, 9, 10, 14]});
+  replaceRowsByDate_(sheet, getKeitaroHeaders_(), date, rows,
+    {textColumns: [5, 12], numberColumns: [6, 7, 8, 9, 10, 14]});
 }
 
 /** Test-only: seeds only today's temporary DB; the next refresh replaces it. */
