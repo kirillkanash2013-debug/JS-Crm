@@ -11,8 +11,7 @@ function rebuildAllToday_() {
   const ktSheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
 
   const rows = buildAllRowsFromSheets_(fbSheet, ktSheet, true).filter(function (row) {
-    return num_(row[5]) > 0 || num_(row[6]) > 0 || num_(row[7]) > 0 ||
-      num_(row[8]) > 0 || num_(row[9]) !== 0;
+    return num_(row[5]) > 0;
   });
 
   writeDbSheet_(SHEETS.ALL_TODAY, getAllTodayHeaders_(), rows, {
@@ -27,7 +26,9 @@ function finalizeAllYesterday_() {
   const fbRows = filterSheetRowsByDate_(SHEETS.FB_HISTORY, date);
   const ktRows = filterSheetRowsByDate_(SHEETS.KEITARO_HISTORY, date);
 
-  const rows = buildAllRowsFromArrays_(fbRows, ktRows, false);
+  const rows = buildAllRowsFromArrays_(fbRows, ktRows, false).filter(function (row) {
+    return num_(row[5]) > 0;
+  });
 
   const sheet = getOrCreateSheet_(SHEETS.ALL);
   const headers = getAllHistoryHeaders_();
