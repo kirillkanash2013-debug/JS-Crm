@@ -10,9 +10,12 @@ function rebuildAllToday_() {
   const fbSheet = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
   const ktSheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
 
-  const rows = buildAllRowsFromSheets_(fbSheet, ktSheet);
+  const rows = buildAllRowsFromSheets_(fbSheet, ktSheet, true).filter(function (row) {
+    return num_(row[5]) > 0 || num_(row[6]) > 0 || num_(row[7]) > 0 ||
+      num_(row[8]) > 0 || num_(row[9]) !== 0;
+  });
 
-  writeDbSheet_(SHEETS.ALL_TODAY, getAllHeaders_(), rows, {
+  writeDbSheet_(SHEETS.ALL_TODAY, getAllTodayHeaders_(), rows, {
     textColumns: [3, 4, 5],
     numberColumns: [6, 7, 8, 9, 10, 11, 12, 13]
   });
@@ -24,23 +27,18 @@ function finalizeAllYesterday_() {
   const fbRows = filterSheetRowsByDate_(SHEETS.FB_HISTORY, date);
   const ktRows = filterSheetRowsByDate_(SHEETS.KEITARO_HISTORY, date);
 
-  const rows = buildAllRowsFromArrays_(fbRows, ktRows);
+  const rows = buildAllRowsFromArrays_(fbRows, ktRows, false);
 
   const sheet = getOrCreateSheet_(SHEETS.ALL);
-  ensureAdditiveHeaders_(sheet, getAllHeaders_());
-
-  const existing = buildExistingKeySet_(sheet, [1, 3, 4]);
-  const toAppend = rows.filter(function (row) {
-    return !existing.has(String(row[0]) + '|' + String(row[2]) + '|' + String(row[3]));
-  });
-
-  appendRows_(sheet, toAppend, {
+  const headers = getAllHistoryHeaders_();
+  ensureHeadersRemovingTrailing_(sheet, headers, ['Campaign Status Raw', 'Campaign Status']);
+  replaceRowsByDate_(sheet, headers, date, rows, {
     textColumns: [3, 4, 5],
     numberColumns: [6, 7, 8, 9, 10, 11, 12, 13]
   });
 }
 
-function getAllHeaders_() {
+function getAllHistoryHeaders_() {
   return [
     'Дата',
     'Agent',
@@ -56,13 +54,20 @@ function getAllHeaders_() {
     'CPR',
     'CPD',
     'ROI',
-    'Join Type',
-    'Campaign Status Raw',
-    'Campaign Status'
+    'Join Type'
   ];
 }
 
-function buildAllRowsFromSheets_(fbSheet, ktSheet) {
+function getAllTodayHeaders_() {
+  return getAllHistoryHeaders_().concat(['Campaign Status Raw', 'Campaign Status']);
+}
+
+// Backward-compatible name used by readiness checks: ALL is closed history.
+function getAllHeaders_() {
+  return getAllHistoryHeaders_();
+}
+
+function buildAllRowsFromSheets_(fbSheet, ktSheet, includeStatus) {
   const fbRows = fbSheet.getLastRow() > 1
     ? fbSheet.getRange(2, 1, fbSheet.getLastRow() - 1, fbSheet.getLastColumn()).getValues()
     : [];
@@ -71,10 +76,10 @@ function buildAllRowsFromSheets_(fbSheet, ktSheet) {
     ? ktSheet.getRange(2, 1, ktSheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues()
     : [];
 
-  return buildAllRowsFromArrays_(fbRows, ktRows);
+  return buildAllRowsFromArrays_(fbRows, ktRows, includeStatus);
 }
 
-function buildAllRowsFromArrays_(fbRows, ktRows) {
+function buildAllRowsFromArrays_(fbRows, ktRows, includeStatus) {
   // Keitaro: key by FB Campaign ID, fallback by campaign name.
   const byId = {};
   const byName = {};
@@ -90,8 +95,12 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
       revenue: num_(row[9])
     };
 
-    if (campaignId) byId[campaignId] = mergeMetrics_(byId[campaignId], metrics);
-    if (campaignName) byName[campaignName] = mergeMetrics_(byName[campaignName], metrics);
+    if (isValidCampaignId_(campaignId)) byId[campaignId] = mergeMetrics_(byId[campaignId], metrics);
+    // Name fallback is only for legacy rows where Campaign ID was not sent.
+    const normalizedName = normalizeJoinName_(campaignName);
+    if (!isValidCampaignId_(campaignId) && normalizedName) {
+      byName[normalizedName] = mergeMetrics_(byName[normalizedName], metrics);
+    }
   });
 
   const agentMapByAccount = getAccountAgentMap_();
@@ -108,8 +117,9 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
     let metrics = campaignId && byId[campaignId] ? byId[campaignId] : null;
     let joinType = metrics ? 'Campaign ID' : '';
 
-    if (!metrics && campaignName && byName[campaignName]) {
-      metrics = byName[campaignName];
+    const normalizedName = normalizeJoinName_(campaignName);
+    if (!metrics && normalizedName && byName[normalizedName]) {
+      metrics = byName[normalizedName];
       joinType = 'Campaign Name fallback';
     }
 
@@ -120,7 +130,7 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
     const cpd = safeDiv_(spend, metrics.ftd);
     const roi = spend > 0 ? ((metrics.revenue - spend) / spend) * 100 : 0;
 
-    return [
+    const result = [
       date,
       agentMapByAccount[accountId] || '',
       accountId,
@@ -135,11 +145,16 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
       cpr,
       cpd,
       roi,
-      joinType,
-      campaignStatusRaw,
-      campaignStatus
+      joinType
     ];
+    if (includeStatus) result.push(campaignStatusRaw, campaignStatus);
+    return result;
   });
+}
+
+function isValidCampaignId_(value) {
+  const id = String(value || '').trim();
+  return Boolean(id) && !/^\{[^}]+\}$/.test(id);
 }
 
 function getAccountAgentMap_() {
