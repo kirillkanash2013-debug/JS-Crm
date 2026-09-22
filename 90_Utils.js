@@ -63,6 +63,8 @@ function getStorageSpreadsheetForSheet_(name) {
       /^\[FB_History_/.test(sheetName)) {
     id = STORAGE_SPREADSHEET_IDS.FB;
   } else if (sheetName === SHEETS.DB_KEITARO_TODAY || sheetName === SHEETS.KEITARO_HISTORY ||
+      sheetName === SHEETS.DB_KEITARO_CONVERSIONS_TODAY ||
+      sheetName === SHEETS.KEITARO_CONVERSIONS_HISTORY ||
       /^\[Keitaro_History_/.test(sheetName)) {
     id = STORAGE_SPREADSHEET_IDS.KEITARO;
   } else if ([SHEETS.DB_SOCIALS, SHEETS.DB_BMS, SHEETS.DB_CABS,
@@ -81,6 +83,7 @@ function writeDbSheet_(name, headers, rows, options) {
   const sheet = getOrCreateSheet_(name);
 
   sheet.clearContents();
+  applyColumnFormats_(sheet, options);
 
   if (headers && headers.length) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -97,6 +100,7 @@ function appendRows_(sheet, rows, options) {
   if (!rows || !rows.length) return;
 
   const start = sheet.getLastRow() + 1;
+  applyColumnFormats_(sheet, options || {});
   sheet.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
   applyColumnFormats_(sheet, options || {});
 }
@@ -151,6 +155,7 @@ function ensureHeadersRemovingTrailing_(sheet, headers, removableHeaders) {
 
 function replaceRowsByDate_(sheet, headers, date, newRows, options) {
   ensureHeaders_(sheet, headers);
+  applyColumnFormats_(sheet, options || {});
   let retained = [];
   if (sheet.getLastRow() > 1) {
     retained = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues()
@@ -169,6 +174,11 @@ function applyColumnFormats_(sheet, options) {
 
   (options.numberColumns || []).forEach(function (column) {
     sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1).setNumberFormat('0.00');
+  });
+
+  (options.dateTimeColumns || []).forEach(function (column) {
+    sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1)
+      .setNumberFormat('yyyy-mm-dd hh:mm:ss');
   });
 }
 
