@@ -245,7 +245,9 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
     'Account ID',
     'Campaign ID',
     'Campaign',
-    'Spend'
+    'Spend',
+    'Campaign Status Raw',
+    'Campaign Status'
   ];
 
   const cabMap = buildCabMap_(context.cabs);
@@ -267,12 +269,14 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
       accountId,
       String(campaign.campaign_id || campaign.id || ''),
       String(campaign.name || ''),
-      spend
+      spend,
+      getCampaignRawStatus_(campaign),
+      getCampaignStatus_(campaign)
     ]);
   });
 
   writeDbSheet_(SHEETS.DB_CAMPAIGNS_TODAY, headers, rows, {
-    textColumns: [3, 5, 6],
+    textColumns: [3, 5, 6, 9, 10],
     numberColumns: [8]
   });
 }
@@ -286,11 +290,13 @@ function appendFbHistory_(campaigns, context, date) {
     'Account ID',
     'Campaign ID',
     'Campaign',
-    'Spend'
+    'Spend',
+    'Campaign Status Raw',
+    'Campaign Status'
   ];
 
   const sheet = getOrCreateSheet_(SHEETS.FB_HISTORY);
-  ensureHeaders_(sheet, headers);
+  ensureAdditiveHeaders_(sheet, headers);
 
   const existing = buildExistingKeySet_(sheet, [1, 5, 6]);
   const cabMap = buildCabMap_(context.cabs);
@@ -316,12 +322,14 @@ function appendFbHistory_(campaigns, context, date) {
       accountId,
       campaignId,
       String(campaign.name || ''),
-      spend
+      spend,
+      getCampaignRawStatus_(campaign),
+      getCampaignStatus_(campaign)
     ]);
   });
 
   appendRows_(sheet, rows, {
-    textColumns: [3, 5, 6],
+    textColumns: [3, 5, 6, 9, 10],
     numberColumns: [8]
   });
 }
