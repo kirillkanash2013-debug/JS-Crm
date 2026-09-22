@@ -27,7 +27,7 @@ function finalizeAllYesterday_() {
   const rows = buildAllRowsFromArrays_(fbRows, ktRows);
 
   const sheet = getOrCreateSheet_(SHEETS.ALL);
-  ensureHeaders_(sheet, getAllHeaders_());
+  ensureAdditiveHeaders_(sheet, getAllHeaders_());
 
   const existing = buildExistingKeySet_(sheet, [1, 3, 4]);
   const toAppend = rows.filter(function (row) {
@@ -56,13 +56,15 @@ function getAllHeaders_() {
     'CPR',
     'CPD',
     'ROI',
-    'Join Type'
+    'Join Type',
+    'Campaign Status Raw',
+    'Campaign Status'
   ];
 }
 
 function buildAllRowsFromSheets_(fbSheet, ktSheet) {
   const fbRows = fbSheet.getLastRow() > 1
-    ? fbSheet.getRange(2, 1, fbSheet.getLastRow() - 1, 8).getValues()
+    ? fbSheet.getRange(2, 1, fbSheet.getLastRow() - 1, fbSheet.getLastColumn()).getValues()
     : [];
 
   const ktRows = ktSheet.getLastRow() > 1
@@ -100,6 +102,8 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
     const campaignId = String(row[5] || '');
     const campaignName = String(row[6] || '');
     const spend = num_(row[7]);
+    const campaignStatusRaw = String(row[8] || '');
+    const campaignStatus = String(row[9] || 'UNKNOWN');
 
     let metrics = campaignId && byId[campaignId] ? byId[campaignId] : null;
     let joinType = metrics ? 'Campaign ID' : '';
@@ -131,7 +135,9 @@ function buildAllRowsFromArrays_(fbRows, ktRows) {
       cpr,
       cpd,
       roi,
-      joinType
+      joinType,
+      campaignStatusRaw,
+      campaignStatus
     ];
   });
 }
