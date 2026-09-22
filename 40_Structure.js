@@ -160,7 +160,8 @@ function updateStructureHistoryFromCurrentDb_() {
 
   writeDbSheet_(SHEETS.DB_STRUCTURE_HISTORY, headers, historyRows, {
     textColumns: [2, 5, 8],
-    numberColumns: [11]
+    numberColumns: [11],
+    dateTimeColumns: [12, 13]
   });
 }
 
