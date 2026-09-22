@@ -35,6 +35,16 @@ function updateKeitaroToday() {
   return {campaigns: reportRows.length, conversions: conversionRows.length};
 }
 
+/** Public, Keitaro-only closed-day finalizer for safe manual recovery/testing. */
+function finalizeKeitaroYesterdayData() {
+  const date = getYesterday_();
+  const reportRows = normalizeKeitaroReportRows_(getKeitaroReport_(date, date));
+  const conversionRows = getKeitaroConversions_(date, date);
+  appendKeitaroHistory_(reportRows, date);
+  replaceKeitaroConversionsHistory_(conversionRows, date);
+  return {date: date, campaigns: reportRows.length, conversions: conversionRows.length};
+}
+
 /** Fast Keitaro-only refresh for the operational offer dashboard. */
 function refreshOffersToday() {
   return withRunLock_('refreshOffersToday', function () {
@@ -203,12 +213,7 @@ function dailyFinalization() {
     finalizeFacebookYesterday_(fbContext);
 
     // Финализируем Keitaro за вчера.
-    const keitaroDate = getYesterday_();
-    const keitaroReportRows = normalizeKeitaroReportRows_(
-      getKeitaroReport_(keitaroDate, keitaroDate));
-    const keitaroConversionRows = getKeitaroConversions_(keitaroDate, keitaroDate);
-    appendKeitaroHistory_(keitaroReportRows, keitaroDate);
-    replaceKeitaroConversionsHistory_(keitaroConversionRows, keitaroDate);
+    finalizeKeitaroYesterdayData();
 
     // Фиксируем вчерашний ALL.
     finalizeAllYesterday_();
