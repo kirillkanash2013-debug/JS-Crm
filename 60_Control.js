@@ -46,12 +46,19 @@ function checkDuplicateCampaigns_(sheetName) {
   }
 
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const idx = headers.indexOf('Campaign ID');
-  if (idx < 0) {
+  const dateIdx = headers.indexOf('Дата');
+  const accountIdx = headers.indexOf('Account ID');
+  const campaignIdx = headers.indexOf('Campaign ID');
+  if (dateIdx < 0 || accountIdx < 0 || campaignIdx < 0) {
     return [getCurrentTimestamp_(), 'Duplicate Campaign IDs', 'WARN', '', '', '', 'Campaign ID header not found'];
   }
 
-  const ids = sheet.getRange(2, idx + 1, sheet.getLastRow() - 1, 1).getValues().flat().map(String);
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const ids = values.filter(function (row) {
+    return String(row[campaignIdx] || '') !== '';
+  }).map(function (row) {
+    return [row[dateIdx], row[accountIdx], row[campaignIdx]].map(String).join('|');
+  });
   const seen = new Set();
   let duplicates = 0;
 
