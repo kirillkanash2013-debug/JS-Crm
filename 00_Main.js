@@ -65,6 +65,7 @@ function updateAccountsToday(context) {
 function rebuildTodayDashboard() {
   rebuildAllToday_();
   rebuildOffersToday();
+  rebuildGeoAnalysis_();
   runTodayControl_();
 }
 
@@ -164,6 +165,7 @@ function testCampaignPipeline() {
     const seed = seedTestCampaignIds();
     rebuildAllToday_();
     rebuildOffersToday();
+    rebuildGeoAnalysis_();
     runTodayControl_();
 
     const result = {
@@ -217,6 +219,7 @@ function dailyFinalization() {
 
     // Фиксируем вчерашний ALL.
     finalizeAllYesterday_();
+    rebuildGeoAnalysis_();
 
     // Структура и контроль.
     refreshStructureFromDatabases_();
