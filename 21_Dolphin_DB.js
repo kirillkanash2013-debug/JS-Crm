@@ -3,10 +3,10 @@
  */
 
 function writeCurrentDolphinDatabases_(context) {
-  ensureAgentsFromSocials_(context.socials);
   writeSocialsDb_(context.socials, context.updatedAt);
   writeBmsDb_(context.businesses, context.socials, context.updatedAt);
   writeCabsDb_(context.cabs, context.socials, context.updatedAt);
+  ensureAgentsFromSocials_(context.socials);
   updateStructureHistoryFromCurrentDb_();
 }
 
