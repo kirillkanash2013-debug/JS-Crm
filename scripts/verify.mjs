@@ -49,7 +49,9 @@ assert.equal(ctx.parseGeoFromCampaign_('KG+AZ+TJ Kirill | Apps Heroes iOS'),'KG+
 assert.equal(ctx.parseGeoFromCampaign_('PWA UZ Kirill'),'UZ');
 assert.equal(ctx.parseGeoFromCampaign_("[Riddick's Partners] Boostwin AZ | Wheel 2 | Azamat"),'AZ');
 const geoGroups={};
-ctx.addGeoAggregate_(geoGroups,'Сегодня','2026-09-24','KG','Farm',['2026-09-24','Farm','acc','cmp','KG Test',100,20,10,2,150]);
+ctx.addGeoAggregate_(geoGroups,'Сегодня','2026-09-24','KG','Farm',{
+  spend:100,inst:20,reg:10,ftd:2,revenue:150,campaign:'KG Test'
+});
 assert.equal(geoGroups['Сегодня|2026-09-24|KG|Farm'].spend,100);
 assert.equal(geoGroups['Сегодня|2026-09-24|KG|Farm'].campaigns.size,1);
 assert.equal(ctx.calculateOurLifetimeSpend_(125,100,7),25);
