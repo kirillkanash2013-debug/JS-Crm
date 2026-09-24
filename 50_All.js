@@ -20,6 +20,67 @@ function rebuildAllToday_() {
   });
 }
 
+function rebuildGeoAnalysis_() {
+  const headers = [
+    'Период', 'Дата', 'GEO', 'Agent', 'Spend', 'Inst', 'Reg', 'FTD', 'Revenue',
+    'CPI', 'CPR', 'CPD', 'ROI', 'Кампаний'
+  ];
+  const sources = [
+    {sheet: getOrCreateSheet_(SHEETS.ALL_TODAY), period: 'Сегодня'},
+    {sheet: getOrCreateSheet_(SHEETS.ALL), period: 'История'}
+  ];
+  const grouped = {};
+
+  sources.forEach(function (source) {
+    if (source.sheet.getLastRow() < 2) return;
+    const values = source.sheet.getRange(
+      2, 1, source.sheet.getLastRow() - 1, Math.min(source.sheet.getLastColumn(), 15)
+    ).getValues();
+    values.forEach(function (row) {
+      const date = row[0];
+      const agent = String(row[1] || 'НЕ ОПРЕДЕЛЕН');
+      const geo = parseGeoFromCampaign_(String(row[4] || '')) || 'UNKNOWN';
+      addGeoAggregate_(grouped, source.period, date, geo, 'ALL', row);
+      addGeoAggregate_(grouped, source.period, date, geo, agent, row);
+    });
+  });
+
+  const rows = Object.keys(grouped).map(function (key) {
+    const x = grouped[key];
+    return [
+      x.period, x.date, x.geo, x.agent, x.spend, x.inst, x.reg, x.ftd, x.revenue,
+      safeDiv_(x.spend, x.inst), safeDiv_(x.spend, x.reg), safeDiv_(x.spend, x.ftd),
+      x.spend > 0 ? ((x.revenue - x.spend) / x.spend) * 100 : 0,
+      x.campaigns.size
+    ];
+  }).sort(function (a, b) {
+    return [String(a[1]), a[2], a[3]].join('|').localeCompare([String(b[1]), b[2], b[3]].join('|'));
+  });
+
+  const target = getOrCreateSheet_(SHEETS.GEO_ANALYSIS);
+  writeDbSheet_(SHEETS.GEO_ANALYSIS, headers, rows, {
+    numberColumns: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+  });
+  target.setFrozenRows(1);
+}
+
+function addGeoAggregate_(grouped, period, date, geo, agent, row) {
+  const key = [period, String(date), geo, agent].join('|');
+  if (!grouped[key]) {
+    grouped[key] = {
+      period: period, date: date, geo: geo, agent: agent,
+      spend: 0, inst: 0, reg: 0, ftd: 0, revenue: 0, campaigns: new Set()
+    };
+  }
+  const x = grouped[key];
+  x.spend += num_(row[5]);
+  x.inst += num_(row[6]);
+  x.reg += num_(row[7]);
+  x.ftd += num_(row[8]);
+  x.revenue += num_(row[9]);
+  if (row[3]) x.campaigns.add(String(row[3]));
+}
+
 function finalizeAllYesterday_() {
   const date = getYesterday_();
 
