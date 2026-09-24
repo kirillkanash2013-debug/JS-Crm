@@ -3,18 +3,43 @@
  */
 
 function ensureAgentsFromSocials_(socials) {
-  const sheet = getOrCreateSheet_(SHEETS.AGENTS);
-  const headers = ['Social ID', 'Соц', 'Agent'];
+  const sheet = getOrCreateSheet_(SHEETS.SOCIALS);
+  const headers = [
+    'Social ID', 'Соц', 'Agent', 'Social Status',
+    'Account IDs', 'Кабинеты', 'Кол-во кабинетов', 'Last Sync'
+  ];
 
   const oldMap = {};
   const oldNames = {};
   if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().forEach(function (row) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.min(sheet.getLastColumn(), headers.length))
+      .getValues().forEach(function (row) {
       const id = String(row[0] || '');
       if (id) {
         oldNames[id] = String(row[1] || '');
         oldMap[id] = String(row[2] || '');
       }
+    });
+  }
+
+  // One-time compatibility with the former technical assignment sheet.
+  const legacy = getStorageSpreadsheetForSheet_(SHEETS.AGENTS).getSheetByName(SHEETS.AGENTS);
+  if (legacy && legacy.getLastRow() > 1) {
+    legacy.getRange(2, 1, legacy.getLastRow() - 1, 3).getValues().forEach(function (row) {
+      const id = String(row[0] || '');
+      if (id && !oldMap[id]) oldMap[id] = String(row[2] || '');
+      if (id && !oldNames[id]) oldNames[id] = String(row[1] || '');
+    });
+  }
+
+  const cabsBySocial = {};
+  const cabSheet = getStorageSpreadsheetForSheet_(SHEETS.DB_CABS).getSheetByName(SHEETS.DB_CABS);
+  if (cabSheet && cabSheet.getLastRow() > 1) {
+    cabSheet.getRange(2, 1, cabSheet.getLastRow() - 1, 13).getValues().forEach(function (row) {
+      const socialId = String(row[2] || '');
+      if (!socialId) return;
+      if (!cabsBySocial[socialId]) cabsBySocial[socialId] = [];
+      cabsBySocial[socialId].push({id: String(row[0] || ''), name: String(row[1] || '')});
     });
   }
 
@@ -24,17 +49,33 @@ function ensureAgentsFromSocials_(socials) {
     currentIds.add(id);
     const name = String(social.name || social.fb_name || '');
     const agent = oldMap[id] || inferAgentFromName_(name);
+    const cabs = cabsBySocial[id] || [];
 
-    return [id, name, agent];
+    return [
+      id, name, agent, getSocialStatus_(social),
+      cabs.map(function (cab) { return cab.id; }).join(', '),
+      cabs.map(function (cab) { return cab.name || cab.id; }).join(', '),
+      cabs.length,
+      String(social.last_sync_date || '')
+    ];
   });
 
   Object.keys(oldMap).forEach(function (id) {
-    if (!currentIds.has(id)) rows.push([id, oldNames[id], oldMap[id]]);
+    if (!currentIds.has(id)) rows.push([id, oldNames[id], oldMap[id], 'NO_ACCESS', '', '', 0, '']);
   });
 
-  writeDbSheet_(SHEETS.AGENTS, headers, rows, {
-    textColumns: [1]
+  writeDbSheet_(SHEETS.SOCIALS, headers, rows, {
+    textColumns: [1, 5]
   });
+
+  sheet.setFrozenRows(1);
+  paintStatusColumn_(sheet, 4);
+
+  const agentRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(CONFIG.STRUCTURE_AGENTS.concat(['НЕ ОПРЕДЕЛЕН']), true)
+    .setAllowInvalid(false)
+    .build();
+  if (rows.length) sheet.getRange(2, 3, rows.length, 1).setDataValidation(agentRule);
 }
 
 function inferAgentFromName_(name) {
@@ -48,7 +89,7 @@ function inferAgentFromName_(name) {
 }
 
 function getAgentMap_() {
-  const sheet = getOrCreateSheet_(SHEETS.AGENTS);
+  const sheet = getOrCreateSheet_(SHEETS.SOCIALS);
   const result = {};
 
   if (sheet.getLastRow() < 2) return result;
