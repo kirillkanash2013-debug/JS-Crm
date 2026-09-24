@@ -33,15 +33,28 @@ function rebuildGeoAnalysis_() {
 
   sources.forEach(function (source) {
     if (source.sheet.getLastRow() < 2) return;
+    const sourceHeaders = source.sheet.getRange(1, 1, 1, source.sheet.getLastColumn()).getValues()[0];
+    const columns = getGeoSourceColumns_(sourceHeaders);
     const values = source.sheet.getRange(
-      2, 1, source.sheet.getLastRow() - 1, Math.min(source.sheet.getLastColumn(), 15)
+      2, 1, source.sheet.getLastRow() - 1, source.sheet.getLastColumn()
     ).getValues();
     values.forEach(function (row) {
-      const date = row[0];
-      const agent = String(row[1] || 'НЕ ОПРЕДЕЛЕН');
-      const geo = parseGeoFromCampaign_(String(row[4] || '')) || 'UNKNOWN';
-      addGeoAggregate_(grouped, source.period, date, geo, 'ALL', row);
-      addGeoAggregate_(grouped, source.period, date, geo, agent, row);
+      const date = row[columns.date];
+      if (!date) return;
+      const agent = String(row[columns.agent] || 'НЕ ОПРЕДЕЛЕН');
+      const campaign = String(row[columns.campaign] || '');
+      const geo = String(columns.geo >= 0 ? row[columns.geo] || '' : '') ||
+        parseGeoFromCampaign_(campaign) || 'UNKNOWN';
+      const metrics = {
+        spend: num_(row[columns.spend]),
+        inst: num_(row[columns.inst]),
+        reg: num_(row[columns.reg]),
+        ftd: num_(row[columns.ftd]),
+        revenue: num_(row[columns.revenue]),
+        campaign: campaign
+      };
+      addGeoAggregate_(grouped, source.period, date, geo, 'ALL', metrics);
+      addGeoAggregate_(grouped, source.period, date, geo, agent, metrics);
     });
   });
 
@@ -64,7 +77,30 @@ function rebuildGeoAnalysis_() {
   target.setFrozenRows(1);
 }
 
-function addGeoAggregate_(grouped, period, date, geo, agent, row) {
+function getGeoSourceColumns_(headers) {
+  const normalized = headers.map(function (x) { return String(x || '').trim().toLowerCase(); });
+  function find(names, required) {
+    for (let i = 0; i < names.length; i++) {
+      const index = normalized.indexOf(String(names[i]).toLowerCase());
+      if (index >= 0) return index;
+    }
+    if (required) throw new Error('Не найдена колонка для GEO-анализа: ' + names.join(' / '));
+    return -1;
+  }
+  return {
+    date: find(['Дата', 'Date'], true),
+    agent: find(['Agent', 'Агент'], true),
+    campaign: find(['Campaign', 'Кампания', 'Campaign Name'], true),
+    geo: find(['GEO', 'Geo'], false),
+    spend: find(['Spend', 'Спенд'], true),
+    inst: find(['Inst', 'I'], true),
+    reg: find(['Reg', 'R'], true),
+    ftd: find(['FTD', 'D'], true),
+    revenue: find(['Revenue', 'Доход'], true)
+  };
+}
+
+function addGeoAggregate_(grouped, period, date, geo, agent, metrics) {
   const key = [period, String(date), geo, agent].join('|');
   if (!grouped[key]) {
     grouped[key] = {
@@ -73,12 +109,12 @@ function addGeoAggregate_(grouped, period, date, geo, agent, row) {
     };
   }
   const x = grouped[key];
-  x.spend += num_(row[5]);
-  x.inst += num_(row[6]);
-  x.reg += num_(row[7]);
-  x.ftd += num_(row[8]);
-  x.revenue += num_(row[9]);
-  if (row[3]) x.campaigns.add(String(row[3]));
+  x.spend += num_(metrics.spend);
+  x.inst += num_(metrics.inst);
+  x.reg += num_(metrics.reg);
+  x.ftd += num_(metrics.ftd);
+  x.revenue += num_(metrics.revenue);
+  if (metrics.campaign) x.campaigns.add(String(metrics.campaign));
 }
 
 function finalizeAllYesterday_() {
