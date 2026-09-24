@@ -34,6 +34,9 @@ const SHEETS = Object.freeze({
   DB_STRUCTURE_HISTORY: '[DB_Structure_History]',
   AGENTS: 'Агенты',
 
+  SOCIALS: 'Соцы',
+  GEO_ANALYSIS: 'Анализ GEO',
+
   ALL_TODAY: 'ALL Сегодня',
   ALL: 'ALL',
   CONTROL: 'Контроль',
