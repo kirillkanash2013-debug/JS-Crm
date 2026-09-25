@@ -184,7 +184,9 @@ function testCampaignPipeline() {
 
 function hourlyRefresh() {
   withRunLock_('hourlyRefresh', function () {
-    assertCrmReady_();
+    // Today's pipeline must not depend on the schema of the closed-day ALL
+    // history. The legacy ALL is migrated separately and remains read-only.
+    assertTodayPipelineReady_();
     logInfo_('hourlyRefresh', 'START');
 
     // 1) Meta / Dolphin — сегодня
@@ -197,6 +199,7 @@ function hourlyRefresh() {
     // 3) Текущий ALL
     rebuildAllToday_();
     rebuildOffersToday();
+    rebuildGeoAnalysis_();
 
     // 4) Быстрые проверки
     runTodayControl_();
@@ -242,7 +245,7 @@ function refreshStructureOnly() {
 }
 
 function installTriggers() {
-  assertCrmReady_();
+  assertTodayPipelineReady_();
   const handlers = new Set([
     'hourlyRefresh',
     'dailyFinalization'
@@ -267,6 +270,16 @@ function installTriggers() {
     .create();
 
   logInfo_('installTriggers', 'Triggers installed');
+}
+
+/** Readiness gate for live/today refreshes; it deliberately ignores ALL history. */
+function assertTodayPipelineReady_() {
+  assertTargetSpreadsheet_();
+  getRequiredScriptProperty_(SCRIPT_PROPERTIES.DOLPHIN_TOKEN);
+  getRequiredScriptProperty_(SCRIPT_PROPERTIES.KEITARO_KEY);
+  if (PropertiesService.getScriptProperties().getProperty('CRM_PIPELINE_VERIFIED') !== 'true') {
+    throw new Error('Live source mapping and pipeline verification required before scheduled runs');
+  }
 }
 
 /** Read-only readiness gate: deployment never starts imports or installs triggers. */
