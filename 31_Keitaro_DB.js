@@ -90,15 +90,29 @@ function replaceKeitaroConversionsHistory_(conversionRows, date) {
     getKeitaroConversionFormatOptions_());
 }
 
-function writeKeitaroTodayDb_(reportRows, date, campaigns) {
+function writeKeitaroTodayDb_(reportRows, date, campaigns, conversionRows) {
   const timestamp = getCurrentTimestamp_();
   const statuses = {};
+  const offerIdsByName = {};
   (campaigns || []).forEach(function (campaign) {
     statuses[String(pick_(campaign, ['id', 'campaign_id']) || '')] =
       String(pick_(campaign, ['state', 'status']) || 'UNKNOWN').toUpperCase();
   });
+  (conversionRows || []).forEach(function (conversion) {
+    const offerId = String(pick_(conversion, ['offer_id']) ||
+      getDimensionId_(pick_(conversion, ['offer'])) || '').trim();
+    const offerName = normalizeJoinName_(getDimensionLabel_(
+      pick_(conversion, ['offer', 'offer_name'])
+    ));
+    if (offerId && offerName && !offerIdsByName[offerName]) {
+      offerIdsByName[offerName] = offerId;
+    }
+  });
   const rows = reportRows.map(function (row) {
     const mapped = mapKeitaroCampaignRow_(row, date, timestamp);
+    if (!mapped[11]) {
+      mapped[11] = offerIdsByName[normalizeJoinName_(mapped[12])] || '';
+    }
     mapped.push(statuses[String(mapped[16])] || 'UNKNOWN');
     return mapped;
   });
