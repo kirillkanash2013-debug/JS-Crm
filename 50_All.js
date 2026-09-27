@@ -16,65 +16,107 @@ function rebuildAllToday_() {
 
   writeDbSheet_(SHEETS.ALL_TODAY, getAllTodayHeaders_(), rows, {
     textColumns: [3, 4, 5],
-    numberColumns: [6, 7, 8, 9, 10, 11, 12, 13]
+    numberColumns: [6, 10, 11, 12, 13],
+    integerColumns: [7, 8, 9],
+    percentColumns: [14]
   });
 }
 
 function rebuildGeoAnalysis_() {
   const headers = [
-    'Период', 'Дата', 'GEO', 'Agent', 'Spend', 'Inst', 'Reg', 'FTD', 'Revenue',
-    'CPI', 'CPR', 'CPD', 'ROI', 'Кампаний'
+    'Период', 'Дата', 'GEO', 'Agent', 'Offer ID', 'Оффер', 'Лендинг',
+    'Spend', 'Inst', 'Reg', 'FTD', 'Revenue', 'CPI', 'CPR', 'CPD', 'ROI'
   ];
   const sources = [
-    {sheet: getOrCreateSheet_(SHEETS.ALL_TODAY), period: 'Сегодня'},
-    {sheet: getOrCreateSheet_(SHEETS.ALL), period: 'История'}
+    {all: getOrCreateSheet_(SHEETS.ALL_TODAY), keitaro: getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY), period: 'Сегодня'},
+    {all: getOrCreateSheet_(SHEETS.ALL), keitaro: getOrCreateSheet_(SHEETS.KEITARO_HISTORY), period: 'История'}
   ];
-  const grouped = {};
-
+  let rows = [];
   sources.forEach(function (source) {
-    if (source.sheet.getLastRow() < 2) return;
-    const sourceHeaders = source.sheet.getRange(1, 1, 1, source.sheet.getLastColumn()).getValues()[0];
-    const columns = getGeoSourceColumns_(sourceHeaders);
-    const values = source.sheet.getRange(
-      2, 1, source.sheet.getLastRow() - 1, source.sheet.getLastColumn()
-    ).getValues();
-    values.forEach(function (row) {
-      const date = row[columns.date];
-      if (!date) return;
-      const agent = String(row[columns.agent] || 'НЕ ОПРЕДЕЛЕН');
-      const campaign = String(row[columns.campaign] || '');
-      const geo = String(columns.geo >= 0 ? row[columns.geo] || '' : '') ||
-        parseGeoFromCampaign_(campaign) || 'UNKNOWN';
-      const metrics = {
-        spend: num_(row[columns.spend]),
-        inst: num_(row[columns.inst]),
-        reg: num_(row[columns.reg]),
-        ftd: num_(row[columns.ftd]),
-        revenue: num_(row[columns.revenue]),
-        campaign: campaign
-      };
-      addGeoAggregate_(grouped, source.period, date, geo, 'ALL', metrics);
-      addGeoAggregate_(grouped, source.period, date, geo, agent, metrics);
-    });
+    rows = rows.concat(buildGeoOfferRows_(source.all, source.keitaro, source.period));
   });
-
-  const rows = Object.keys(grouped).map(function (key) {
-    const x = grouped[key];
-    return [
-      x.period, x.date, x.geo, x.agent, x.spend, x.inst, x.reg, x.ftd, x.revenue,
-      safeDiv_(x.spend, x.inst), safeDiv_(x.spend, x.reg), safeDiv_(x.spend, x.ftd),
-      x.spend > 0 ? ((x.revenue - x.spend) / x.spend) * 100 : 0,
-      x.campaigns.size
-    ];
-  }).sort(function (a, b) {
-    return [String(a[1]), a[2], a[3]].join('|').localeCompare([String(b[1]), b[2], b[3]].join('|'));
+  rows.sort(function (a, b) {
+    return [String(a[1]), a[2], a[3], a[5], a[6]].join('|')
+      .localeCompare([String(b[1]), b[2], b[3], b[5], b[6]].join('|'));
   });
 
   const target = getOrCreateSheet_(SHEETS.GEO_ANALYSIS);
   writeDbSheet_(SHEETS.GEO_ANALYSIS, headers, rows, {
-    numberColumns: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    textColumns: [5],
+    numberColumns: [8, 12, 13, 14, 15],
+    integerColumns: [9, 10, 11],
+    percentColumns: [16]
   });
   target.setFrozenRows(1);
+}
+
+function buildGeoOfferRows_(allSheet, keitaroSheet, period) {
+  if (allSheet.getLastRow() < 2 || keitaroSheet.getLastRow() < 2) return [];
+  const allRows = allSheet.getRange(2, 1, allSheet.getLastRow() - 1, 15).getValues();
+  const ktRows = keitaroSheet.getRange(2, 1, keitaroSheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+  const campaignIndex = {};
+  const spendGroups = {};
+
+  allRows.forEach(function (row) {
+    const date = normalizeDateKey_(row[0]);
+    const agent = String(row[1] || 'НЕ ОПРЕДЕЛЕН');
+    const campaignId = String(row[3] || '');
+    const campaign = String(row[4] || '');
+    const geo = parseGeoFromCampaign_(campaign) || 'UNKNOWN';
+    const info = {date: date, agent: agent, geo: geo};
+    if (campaignId) campaignIndex['id|' + campaignId] = info;
+    if (campaign) campaignIndex['name|' + normalizeJoinName_(campaign)] = info;
+    const key = [date, geo, agent].join('|');
+    spendGroups[key] = num_(spendGroups[key]) + num_(row[5]);
+  });
+
+  const offers = {};
+  ktRows.forEach(function (row) {
+    const campaignId = String(row[4] || '');
+    const campaign = String(row[3] || '');
+    const info = (isValidCampaignId_(campaignId) && campaignIndex['id|' + campaignId]) ||
+      campaignIndex['name|' + normalizeJoinName_(campaign)];
+    if (!info) return;
+    const offerId = String(row[11] || '');
+    const fullOffer = String(row[12] || '').trim();
+    if (!fullOffer) return;
+    const parts = splitOfferAndLanding_(fullOffer);
+    const spendKey = [info.date, info.geo, info.agent].join('|');
+    const key = [spendKey, offerId || fullOffer, parts.landing].join('|');
+    if (!offers[key]) {
+      offers[key] = {period: period, date: info.date, geo: info.geo, agent: info.agent,
+        offerId: offerId, offer: parts.offer, landing: parts.landing,
+        spendKey: spendKey, inst: 0, reg: 0, ftd: 0, revenue: 0};
+    }
+    offers[key].inst += num_(row[6]);
+    offers[key].reg += num_(row[7]);
+    offers[key].ftd += num_(row[8]);
+    offers[key].revenue += num_(row[9]);
+  });
+
+  const totalInst = {};
+  Object.keys(offers).forEach(function (key) {
+    const x = offers[key];
+    totalInst[x.spendKey] = num_(totalInst[x.spendKey]) + x.inst;
+  });
+
+  return Object.keys(offers).map(function (key) {
+    const x = offers[key];
+    const geoSpend = num_(spendGroups[x.spendKey]);
+    const spend = totalInst[x.spendKey] > 0 ? geoSpend * x.inst / totalInst[x.spendKey] : 0;
+    if (spend <= 0) return null;
+    return [
+      x.period, x.date, x.geo, x.agent, x.offerId, x.offer, x.landing,
+      spend, x.inst, x.reg, x.ftd, x.revenue,
+      safeDiv_(spend, x.inst), safeDiv_(spend, x.reg), safeDiv_(spend, x.ftd),
+      ((x.revenue - spend) / spend) * 100
+    ];
+  }).filter(Boolean);
+}
+
+function splitOfferAndLanding_(value) {
+  const parts = String(value || '').split('|').map(function (part) { return part.trim(); });
+  return {offer: parts.shift() || '', landing: parts.join(' | ')};
 }
 
 function getGeoSourceColumns_(headers) {
@@ -132,8 +174,18 @@ function finalizeAllYesterday_() {
   ensureHeadersRemovingTrailing_(sheet, headers, ['Campaign Status Raw', 'Campaign Status']);
   replaceRowsByDate_(sheet, headers, date, rows, {
     textColumns: [3, 4, 5],
-    numberColumns: [6, 7, 8, 9, 10, 11, 12, 13]
+    numberColumns: [6, 10, 11, 12, 13],
+    integerColumns: [7, 8, 9],
+    percentColumns: [14]
   });
+
+  writeDbSheet_(SHEETS.ALL_YESTERDAY, headers, rows, {
+    textColumns: [3, 4, 5],
+    numberColumns: [6, 10, 11, 12, 13],
+    integerColumns: [7, 8, 9],
+    percentColumns: [14]
+  });
+  rebuildSpendAgent_();
 }
 
 function getAllHistoryHeaders_() {
@@ -279,4 +331,77 @@ function mergeMetrics_(a, b) {
     ftd: num_(a.ftd) + num_(b.ftd),
     revenue: num_(a.revenue) + num_(b.revenue)
   };
+}
+
+/** Monthly spend comparison: CRM is formula-driven; Table remains manual. */
+function rebuildSpendAgent_() {
+  const sheet = getOrCreateSheet_(SHEETS.SPEND_AGENT);
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  let startColumn = 1;
+
+  for (let column = 1; column <= Math.max(sheet.getLastColumn(), 1); column += 8) {
+    const value = sheet.getRange(1, column).getValue();
+    if (Object.prototype.toString.call(value) === '[object Date]' &&
+        value.getFullYear() === monthStart.getFullYear() &&
+        value.getMonth() === monthStart.getMonth()) {
+      startColumn = column;
+      break;
+    }
+    if (value) startColumn = column + 8;
+  }
+
+  const firstLetter = columnToLetter_(startColumn);
+  const headers = [
+    ['Месяц', 'Farm', '', 'Fun', '', '2B', ''],
+    ['', 'Farm', 'Farm', 'Fun', 'Fun', '2B', '2B'],
+    ['Дата', 'CRM', 'Table', 'CRM', 'Table', 'CRM', 'Table']
+  ];
+  sheet.getRange(1, startColumn, 3, 7).setValues(headers);
+  sheet.getRange(1, startColumn).setValue(monthStart).setNumberFormat('mmmm yyyy');
+
+  const dates = [];
+  const formulas = [];
+  for (let day = 1; day <= 31; day++) {
+    const date = new Date(monthStart.getFullYear(), monthStart.getMonth(), day);
+    const valid = date.getMonth() === monthStart.getMonth();
+    dates.push([valid ? date : '']);
+    const row = day + 3;
+    const dateCell = '$' + firstLetter + row;
+    formulas.push(CONFIG.STRUCTURE_AGENTS.reduce(function (cells, agent, index) {
+      const agentColumn = columnToLetter_(startColumn + 1 + index * 2);
+      cells.push('=IF(' + dateCell + '="","",SUMIFS(ALL!$F:$F,ALL!$A:$A,' +
+        dateCell + ',ALL!$B:$B,' + agentColumn + '$2))');
+      cells.push(null);
+      return cells;
+    }, []));
+  }
+  sheet.getRange(4, startColumn, 31, 1).setValues(dates).setNumberFormat('dd.mm.yyyy');
+  formulas.forEach(function (row, index) {
+    row.forEach(function (formula, offset) {
+      if (formula) sheet.getRange(index + 4, startColumn + 1 + offset).setFormula(formula);
+    });
+  });
+
+  sheet.getRange(35, startColumn).setValue('Итого');
+  for (let offset = 1; offset < 7; offset++) {
+    const letter = columnToLetter_(startColumn + offset);
+    sheet.getRange(35, startColumn + offset).setFormula('=SUM(' + letter + '4:' + letter + '34)');
+  }
+  sheet.getRange(1, startColumn, 35, 7).setVerticalAlignment('middle');
+  sheet.getRange(1, startColumn, 3, 7).setFontWeight('bold').setBackground('#d9eaf7');
+  sheet.getRange(35, startColumn, 1, 7).setFontWeight('bold').setBackground('#d9ead3');
+  sheet.getRange(4, startColumn + 1, 32, 6).setNumberFormat('0.00');
+  sheet.setFrozenRows(3);
+  sheet.autoResizeColumns(startColumn, 7);
+}
+
+function columnToLetter_(column) {
+  let result = '';
+  while (column > 0) {
+    column--;
+    result = String.fromCharCode(65 + (column % 26)) + result;
+    column = Math.floor(column / 26);
+  }
+  return result;
 }
