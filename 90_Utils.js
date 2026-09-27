@@ -176,6 +176,14 @@ function applyColumnFormats_(sheet, options) {
     sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1).setNumberFormat('0.00');
   });
 
+  (options.integerColumns || []).forEach(function (column) {
+    sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1).setNumberFormat('0');
+  });
+
+  (options.percentColumns || []).forEach(function (column) {
+    sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1).setNumberFormat('0"%"');
+  });
+
   (options.dateTimeColumns || []).forEach(function (column) {
     sheet.getRange(1, column, Math.max(sheet.getMaxRows(), 1), 1)
       .setNumberFormat('yyyy-mm-dd hh:mm:ss');
