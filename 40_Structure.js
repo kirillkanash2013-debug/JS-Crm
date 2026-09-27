@@ -61,7 +61,7 @@ function getAgentMap_() {
     db.getRange(2, 1, db.getLastRow() - 1, Math.min(db.getLastColumn(), 3)).getValues()
       .forEach(function (row) {
         const id = String(row[0] || '');
-        const name = normalizeJoinName_(row[1]);
+        const name = normalizeJoinName_(row[2]);
         if (id) result[id] = byName[name] || 'НЕ ОПРЕДЕЛЕН';
       });
   }
