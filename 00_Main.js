@@ -30,7 +30,7 @@ function updateKeitaroToday() {
   const reportRows = normalizeKeitaroReportRows_(getKeitaroReport_(date, date));
   const conversionRows = getKeitaroConversions_(date, date);
   const campaigns = getKeitaroCampaigns_();
-  writeKeitaroTodayDb_(reportRows, date, campaigns);
+  writeKeitaroTodayDb_(reportRows, date, campaigns, conversionRows);
   writeKeitaroConversionsTodayDb_(conversionRows, date);
   return {campaigns: reportRows.length, conversions: conversionRows.length};
 }
