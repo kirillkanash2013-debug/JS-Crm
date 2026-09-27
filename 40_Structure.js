@@ -227,7 +227,7 @@ function buildAgentStructureSheet_(agent, sheetName) {
     const cabName = String(row[8] || accountId);
     const cabStatus = String(row[9] || 'UNKNOWN');
     const policySpend = row[10];
-    const lastSeen = String(row[12] || '');
+    const lastSeen = row[12] || '';
     const current = String(row[13] || 'NO');
 
     if (!tree[socialId]) {
@@ -313,7 +313,8 @@ function buildAgentStructureSheet_(agent, sheetName) {
 
   writeDbSheet_(sheetName, headers, rows, {
     textColumns: [2],
-    numberColumns: [4]
+    numberColumns: [4],
+    dateTimeColumns: [6]
   });
 
   paintStatusColumn_(target, 3);
