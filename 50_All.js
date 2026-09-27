@@ -52,22 +52,28 @@ function rebuildGeoAnalysis_() {
 
 function buildGeoOfferRows_(allSheet, keitaroSheet, period) {
   if (allSheet.getLastRow() < 2 || keitaroSheet.getLastRow() < 2) return [];
-  const allRows = allSheet.getRange(2, 1, allSheet.getLastRow() - 1, 15).getValues();
+  const allWidth = allSheet.getLastColumn();
+  const allHeaders = allSheet.getRange(1, 1, 1, allWidth).getValues()[0];
+  const columns = getGeoSourceColumns_(allHeaders);
+  const campaignIdColumn = allHeaders.map(function (x) { return String(x || '').trim().toLowerCase(); })
+    .indexOf('campaign id');
+  const allRows = allSheet.getRange(2, 1, allSheet.getLastRow() - 1, allWidth).getValues();
   const ktRows = keitaroSheet.getRange(2, 1, keitaroSheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
   const campaignIndex = {};
   const spendGroups = {};
 
   allRows.forEach(function (row) {
-    const date = normalizeDateKey_(row[0]);
-    const agent = String(row[1] || 'НЕ ОПРЕДЕЛЕН');
-    const campaignId = String(row[3] || '');
-    const campaign = String(row[4] || '');
-    const geo = parseGeoFromCampaign_(campaign) || 'UNKNOWN';
+    const date = normalizeDateKey_(row[columns.date]);
+    const agent = String(row[columns.agent] || 'НЕ ОПРЕДЕЛЕН');
+    const campaignId = campaignIdColumn >= 0 ? String(row[campaignIdColumn] || '') : '';
+    const campaign = String(row[columns.campaign] || '');
+    const geo = String(columns.geo >= 0 ? row[columns.geo] || '' : '') ||
+      parseGeoFromCampaign_(campaign) || 'UNKNOWN';
     const info = {date: date, agent: agent, geo: geo};
     if (campaignId) campaignIndex['id|' + campaignId] = info;
     if (campaign) campaignIndex['name|' + normalizeJoinName_(campaign)] = info;
     const key = [date, geo, agent].join('|');
-    spendGroups[key] = num_(spendGroups[key]) + num_(row[5]);
+    spendGroups[key] = num_(spendGroups[key]) + num_(row[columns.spend]);
   });
 
   const offers = {};
@@ -165,56 +171,86 @@ function finalizeAllYesterday_() {
   const fbRows = filterSheetRowsByDate_(SHEETS.FB_HISTORY, date);
   const ktRows = filterSheetRowsByDate_(SHEETS.KEITARO_HISTORY, date);
 
-  const rows = buildAllRowsFromArrays_(fbRows, ktRows, false).filter(function (row) {
+  const baseRows = buildAllRowsFromArrays_(fbRows, ktRows, false).filter(function (row) {
     return num_(row[5]) > 0;
   });
+  const rows = buildAllHistoryRows_(baseRows, ktRows);
 
   const sheet = getOrCreateSheet_(SHEETS.ALL);
   const headers = getAllHistoryHeaders_();
   ensureHeadersRemovingTrailing_(sheet, headers, ['Campaign Status Raw', 'Campaign Status']);
   replaceRowsByDate_(sheet, headers, date, rows, {
-    textColumns: [3, 4, 5],
-    numberColumns: [6, 10, 11, 12, 13],
-    integerColumns: [7, 8, 9],
-    percentColumns: [14]
+    textColumns: [2, 3],
+    numberColumns: [9, 11, 13, 18, 19, 20],
+    integerColumns: [8, 10, 12],
+    ratioColumns: [14, 15, 16, 21]
   });
 
   writeDbSheet_(SHEETS.ALL_YESTERDAY, headers, rows, {
-    textColumns: [3, 4, 5],
-    numberColumns: [6, 10, 11, 12, 13],
-    integerColumns: [7, 8, 9],
-    percentColumns: [14]
+    textColumns: [2, 3],
+    numberColumns: [9, 11, 13, 18, 19, 20],
+    integerColumns: [8, 10, 12],
+    ratioColumns: [14, 15, 16, 21]
   });
   rebuildSpendAgent_();
 }
 
 function getAllHistoryHeaders_() {
   return [
-    'Дата',
-    'Agent',
-    'Account ID',
-    'Campaign ID',
-    'Campaign',
-    'Spend',
-    'Inst',
-    'Reg',
-    'FTD',
-    'Revenue',
-    'CPI',
-    'CPR',
-    'CPD',
-    'ROI',
-    'Join Type'
+    'Дата', 'Аккаунт', 'Кампания', 'GEO', 'Аудитория', 'Крео', 'Дата крео',
+    'I', 'CPI', 'R', 'CPR', 'D', 'CPD', 'I→R', 'R→D', 'I→D',
+    'Тип записи', 'Спенд', 'Доход', 'Профит', 'ROI', 'Источник трафика', 'Агент'
   ];
 }
 
 function getAllTodayHeaders_() {
-  return getAllHistoryHeaders_().concat(['Campaign Status Raw', 'Campaign Status']);
+  return getAllBaseHeaders_().concat(['Campaign Status Raw', 'Campaign Status']);
+}
+
+function getAllBaseHeaders_() {
+  return ['Дата', 'Agent', 'Account ID', 'Campaign ID', 'Campaign', 'Spend',
+    'Inst', 'Reg', 'FTD', 'Revenue', 'CPI', 'CPR', 'CPD', 'ROI', 'Join Type'];
 }
 
 // Backward-compatible name used by readiness checks: ALL is closed history.
 function getAllHeaders_() {
   return getAllHistoryHeaders_();
+}
+
+function buildAllHistoryRows_(baseRows, ktRows) {
+  const sourcesById = {};
+  const sourcesByName = {};
+  (ktRows || []).forEach(function (row) {
+    const id = String(row[4] || '');
+    const name = normalizeJoinName_(row[3]);
+    const source = String(row[10] || '');
+    if (source && isValidCampaignId_(id)) sourcesById[id] = source;
+    if (source && name) sourcesByName[name] = source;
+  });
+  return baseRows.map(function (row) {
+    const campaign = String(row[4] || '');
+    const inst = num_(row[6]);
+    const reg = num_(row[7]);
+    const ftd = num_(row[8]);
+    const spend = num_(row[5]);
+    const revenue = num_(row[9]);
+    return [
+      row[0], row[2], campaign, parseGeoFromCampaign_(campaign), 'All',
+      parseCreativeFromCampaign_(campaign), '', inst, safeDiv_(spend, inst),
+      reg, safeDiv_(spend, reg), ftd, safeDiv_(spend, ftd),
+      safeDiv_(reg, inst), safeDiv_(ftd, reg), safeDiv_(ftd, inst),
+      'Основной', spend, revenue, revenue - spend,
+      spend > 0 ? (revenue - spend) / spend : 0,
+      sourcesById[String(row[3] || '')] || sourcesByName[normalizeJoinName_(campaign)] || '',
+      row[1]
+    ];
+  });
+}
+
+function parseCreativeFromCampaign_(campaign) {
+  const parts = String(campaign || '').split(/[_\s]+/).filter(Boolean);
+  if (parts.length < 2) return String(campaign || '');
+  return parts.slice(1, Math.min(parts.length, 3)).join('_');
 }
 
 function buildAllRowsFromSheets_(fbSheet, ktSheet, includeStatus) {
@@ -370,8 +406,8 @@ function rebuildSpendAgent_() {
     const dateCell = '$' + firstLetter + row;
     formulas.push(CONFIG.STRUCTURE_AGENTS.reduce(function (cells, agent, index) {
       const agentColumn = columnToLetter_(startColumn + 1 + index * 2);
-      cells.push('=IF(' + dateCell + '="","",SUMIFS(ALL!$F:$F,ALL!$A:$A,' +
-        dateCell + ',ALL!$B:$B,' + agentColumn + '$2))');
+      cells.push('=IF(' + dateCell + '="","",SUMIFS(ALL!$R:$R,ALL!$A:$A,' +
+        dateCell + ',ALL!$W:$W,' + agentColumn + '$2))');
       cells.push(null);
       return cells;
     }, []));
