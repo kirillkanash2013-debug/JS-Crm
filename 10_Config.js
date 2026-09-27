@@ -36,8 +36,10 @@ const SHEETS = Object.freeze({
 
   SOCIALS: 'Соцы',
   GEO_ANALYSIS: 'Анализ GEO',
+  SPEND_AGENT: 'Spend Agent',
 
   ALL_TODAY: 'ALL Сегодня',
+  ALL_YESTERDAY: 'ALL Вчера',
   ALL: 'ALL',
   CONTROL: 'Контроль',
   OFFERS_TODAY: 'OFFERS_TODAY',
