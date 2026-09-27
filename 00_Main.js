@@ -66,6 +66,7 @@ function rebuildTodayDashboard() {
   rebuildAllToday_();
   rebuildOffersToday();
   rebuildGeoAnalysis_();
+  rebuildSpendAgent_();
   runTodayControl_();
 }
 
@@ -166,6 +167,7 @@ function testCampaignPipeline() {
     rebuildAllToday_();
     rebuildOffersToday();
     rebuildGeoAnalysis_();
+    rebuildSpendAgent_();
     runTodayControl_();
 
     const result = {
