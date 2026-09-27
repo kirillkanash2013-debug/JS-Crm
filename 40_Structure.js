@@ -4,78 +4,34 @@
 
 function ensureAgentsFromSocials_(socials) {
   const sheet = getOrCreateSheet_(SHEETS.SOCIALS);
-  const headers = [
-    'Social ID', 'Соц', 'Agent', 'Social Status',
-    'Account IDs', 'Кабинеты', 'Кол-во кабинетов', 'Last Sync'
-  ];
+  const expected = CONFIG.STRUCTURE_AGENTS;
+  const firstRow = sheet.getLastRow() ?
+    sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 3)).getValues()[0] : [];
+  if (expected.every(function (value, index) { return firstRow[index] === value; })) return;
 
-  const oldMap = {};
-  const oldNames = {};
-  if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.min(sheet.getLastColumn(), headers.length))
+  // One-time migration from the old generated table. Preserve only manual
+  // social-name -> agent assignments; operational fields stay in raw DB files.
+  const byAgent = {Farm: [], Fun: [], '2B': []};
+  if (sheet.getLastRow() > 1 && firstRow[0] === 'Social ID') {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.min(sheet.getLastColumn(), 3))
       .getValues().forEach(function (row) {
-      const id = String(row[0] || '');
-      if (id) {
-        oldNames[id] = String(row[1] || '');
-        oldMap[id] = String(row[2] || '');
-      }
-    });
+        const name = String(row[1] || '').trim();
+        const agent = String(row[2] || '').trim();
+        if (name && byAgent[agent]) byAgent[agent].push(name);
+      });
   }
-
-  // One-time compatibility with the former technical assignment sheet.
-  const legacy = getStorageSpreadsheetForSheet_(SHEETS.AGENTS).getSheetByName(SHEETS.AGENTS);
-  if (legacy && legacy.getLastRow() > 1) {
-    legacy.getRange(2, 1, legacy.getLastRow() - 1, 3).getValues().forEach(function (row) {
-      const id = String(row[0] || '');
-      if (id && !oldMap[id]) oldMap[id] = String(row[2] || '');
-      if (id && !oldNames[id]) oldNames[id] = String(row[1] || '');
+  sheet.clear();
+  sheet.getRange(1, 1, 1, 3).setValues([expected]);
+  const height = Math.max(byAgent.Farm.length, byAgent.Fun.length, byAgent['2B'].length);
+  if (height) {
+    const rows = Array.from({length: height}, function (_, index) {
+      return [byAgent.Farm[index] || '', byAgent.Fun[index] || '', byAgent['2B'][index] || ''];
     });
+    sheet.getRange(2, 1, rows.length, 3).setValues(rows);
   }
-
-  const cabsBySocial = {};
-  const cabSheet = getStorageSpreadsheetForSheet_(SHEETS.DB_CABS).getSheetByName(SHEETS.DB_CABS);
-  if (cabSheet && cabSheet.getLastRow() > 1) {
-    cabSheet.getRange(2, 1, cabSheet.getLastRow() - 1, 13).getValues().forEach(function (row) {
-      const socialId = String(row[2] || '');
-      if (!socialId) return;
-      if (!cabsBySocial[socialId]) cabsBySocial[socialId] = [];
-      cabsBySocial[socialId].push({id: String(row[0] || ''), name: String(row[1] || '')});
-    });
-  }
-
-  const currentIds = new Set();
-  const rows = socials.map(function (social) {
-    const id = getSocialId_(social);
-    currentIds.add(id);
-    const name = String(social.name || social.fb_name || '');
-    const agent = oldMap[id] || inferAgentFromName_(name);
-    const cabs = cabsBySocial[id] || [];
-
-    return [
-      id, name, agent, getSocialStatus_(social),
-      cabs.map(function (cab) { return cab.id; }).join(', '),
-      cabs.map(function (cab) { return cab.name || cab.id; }).join(', '),
-      cabs.length,
-      String(social.last_sync_date || '')
-    ];
-  });
-
-  Object.keys(oldMap).forEach(function (id) {
-    if (!currentIds.has(id)) rows.push([id, oldNames[id], oldMap[id], 'NO_ACCESS', '', '', 0, '']);
-  });
-
-  writeDbSheet_(SHEETS.SOCIALS, headers, rows, {
-    textColumns: [1, 5]
-  });
-
   sheet.setFrozenRows(1);
-  paintStatusColumn_(sheet, 4);
-
-  const agentRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(CONFIG.STRUCTURE_AGENTS.concat(['НЕ ОПРЕДЕЛЕН']), true)
-    .setAllowInvalid(false)
-    .build();
-  if (rows.length) sheet.getRange(2, 3, rows.length, 1).setDataValidation(agentRule);
+  sheet.getRange(1, 1, 1, 3).setFontWeight('bold').setBackground('#d9eaf7');
+  sheet.autoResizeColumns(1, 3);
 }
 
 function inferAgentFromName_(name) {
@@ -91,13 +47,24 @@ function inferAgentFromName_(name) {
 function getAgentMap_() {
   const sheet = getOrCreateSheet_(SHEETS.SOCIALS);
   const result = {};
-
-  if (sheet.getLastRow() < 2) return result;
-
-  sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().forEach(function (row) {
-    const socialId = String(row[0] || '');
-    if (socialId) result[socialId] = String(row[2] || 'НЕ ОПРЕДЕЛЕН');
-  });
+  const byName = {};
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().forEach(function (row) {
+      CONFIG.STRUCTURE_AGENTS.forEach(function (agent, index) {
+        const name = normalizeJoinName_(row[index]);
+        if (name) byName[name] = agent;
+      });
+    });
+  }
+  const db = getStorageSpreadsheetForSheet_(SHEETS.DB_SOCIALS).getSheetByName(SHEETS.DB_SOCIALS);
+  if (db && db.getLastRow() > 1) {
+    db.getRange(2, 1, db.getLastRow() - 1, Math.min(db.getLastColumn(), 3)).getValues()
+      .forEach(function (row) {
+        const id = String(row[0] || '');
+        const name = normalizeJoinName_(row[1]);
+        if (id) result[id] = byName[name] || 'НЕ ОПРЕДЕЛЕН';
+      });
+  }
 
   return result;
 }
