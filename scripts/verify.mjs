@@ -35,6 +35,15 @@ assert.equal(kt[12],'Pinco TJ');
 assert.equal(kt[13],6.25);
 assert.equal(kt[14],'SUB4');
 assert.equal(kt[16],'');
+let capturedKeitaroRows;
+ctx.getCurrentTimestamp_=()=> 'now';
+ctx.writeDbSheet_=(_name,_headers,rows)=>{capturedKeitaroRows=rows;};
+ctx.writeKeitaroTodayDb_([
+  {campaign_id:10690,campaign:'KT Campaign',offer:'Pinco TJ',campaign_unique_clicks:1}
+], '2026-09-27', [{id:10690,status:'active'}], [
+  {offer_id:6013,offer:'Pinco TJ'}
+]);
+assert.equal(capturedKeitaroRows[0][11],'6013');
 const conversion=ctx.mapKeitaroConversionRow_({conversion_id:'c-1',sub_id:'click-1',campaign_id:10690,campaign:'KT Campaign',offer_id:6013,offer:'Pinco TJ',sub_id_1:'Kirill',sub_id_2:'ad',sub_id_3:'FB campaign',sub_id_4:'238001',sub_id_5:'adset-1',sub_id_6:'set',revenue:50,status:'sale',postback_datetime:'2026-09-22 12:00:00'},'2026-09-22','now');
 assert.equal(conversion.length,28);
 assert.equal(conversion[2],'c-1');
