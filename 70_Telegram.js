@@ -88,14 +88,16 @@ function doPost(e) {
     const chatId = telegramUpdateChatId_(update);
     const allowed = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID) || '');
     if (chatId && String(chatId) === allowed) {
-      enqueueTelegramWebhookCommand_({
-        id: updateId,
-        chatId: String(chatId),
-        command: String(update.callback_query
-          ? update.callback_query.data || ''
-          : update.message && update.message.text || ''),
-        callbackId: String(update.callback_query && update.callback_query.id || '')
-      });
+      if (updateId && p.getProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID') === updateId) {
+        return ContentService.createTextOutput('duplicate');
+      }
+      if (updateId) p.setProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID', updateId);
+      if (update.callback_query) {
+        telegramApi_('answerCallbackQuery', {callback_query_id: update.callback_query.id});
+      }
+      telegramCommand_(chatId, String(update.callback_query
+        ? update.callback_query.data || ''
+        : update.message && update.message.text || ''));
     }
   } catch (error) {
     logError_('Telegram webhook', error);
@@ -432,25 +434,53 @@ function telegramOffers_() {
 }
 
 function telegramCampaignButtons_(chatId) {
-  const campaigns = getKeitaroCampaigns_().filter(function (c) {
-    const state = String(pick_(c, ['state', 'status']) || '').toUpperCase();
-    return state !== 'DISABLED' && state !== 'ARCHIVED';
-  }).slice(0, 40);
+  const campaigns = getTelegramCachedCampaigns_().slice(0, 40);
   if (!campaigns.length) {
     telegramSend_(chatId, 'Активные кампании Keitaro не найдены.', telegramMenu_());
     return;
   }
   const buttons = campaigns.map(function (c) {
-    const id = String(pick_(c, ['id', 'campaign_id']) || '');
-    const name = String(pick_(c, ['name', 'title']) || id);
+    const id = String(c.id || '');
+    const name = String(c.name || id);
     return [{text: name.substring(0, 55), callback_data: 'flow:' + id}];
   });
   telegramSend_(chatId, '<b>Выбери кампанию:</b>', {inline_keyboard: buttons});
 }
 
+function getTelegramCachedCampaigns_() {
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  if (sheet.getLastRow() < 2) return [];
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  const headers = values[0].map(function (value) {
+    return String(value || '').trim().toLowerCase();
+  });
+  const idIndex = headers.indexOf('keitaro campaign id');
+  const nameIndex = headers.indexOf('keitaro campaign');
+  const statusIndex = headers.indexOf('keitaro campaign status');
+  if (idIndex < 0) return [];
+  const unique = {};
+  values.slice(1).forEach(function (row) {
+    const id = String(row[idIndex] || '').trim();
+    const status = statusIndex >= 0 ? String(row[statusIndex] || '').toUpperCase() : '';
+    if (!id || status === 'DISABLED' || status === 'ARCHIVED') return;
+    unique[id] = {id: id, name: String(row[nameIndex] || id), status: status};
+  });
+  return Object.keys(unique).map(function (id) { return unique[id]; }).sort(function (a, b) {
+    return a.name.localeCompare(b.name);
+  });
+}
+
 function telegramFlowDetails_(chatId, campaignId) {
-  const streams = getCampaignFlowView_(campaignId);
+  const cached = getCachedCampaignFlowView_(campaignId);
+  if (!cached) {
+    telegramSend_(chatId,
+      'ℹ️ Потоки этой кампании ещё не сохранены. Нажми «🔄 Обновить» — после получения Keitaro они появятся.',
+      telegramMenu_());
+    return;
+  }
+  const streams = cached.streams || [];
   const out = ['<b>🔀 Потоки кампании #' + escapeHtml_(campaignId) + '</b>', ''];
+  if (cached.updatedAt) out.push('Данные на ' + escapeHtml_(formatTelegramTime_(cached.updatedAt)), '');
   if (!streams.length) out.push('Потоки не найдены.');
   streams.forEach(function (s) {
     out.push('<b>' + escapeHtml_(s.name) + '</b> · ' +
