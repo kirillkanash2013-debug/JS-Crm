@@ -248,6 +248,13 @@ function hourlyRefresh() {
  * in the first ten minutes of each Minsk hour.
  */
 function scheduledHourlyRefresh() {
+  // The existing five-minute scheduler also services Telegram without another trigger.
+  try {
+    processTelegramUpdates_();
+  } catch (e) {
+    logError_('Telegram polling', e);
+  }
+
   const now = new Date();
   const minute = Number(Utilities.formatDate(now, CONFIG.TIMEZONE, 'm'));
   if (minute >= 10) return;
