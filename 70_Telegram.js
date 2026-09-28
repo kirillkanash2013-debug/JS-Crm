@@ -47,7 +47,9 @@ function telegramEdit_(chatId, messageId, text) {
 function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
-  if (p.getProperty('TELEGRAM_WEBHOOK_URL')) return;
+  const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
+  if (p.getProperty('TELEGRAM_WEBHOOK_URL') &&
+      verifiedAt && Date.now() - verifiedAt < 15 * 60 * 1000) return;
   const allowedChatId = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID));
   const offset = Number(p.getProperty('TELEGRAM_UPDATE_OFFSET') || 0);
   const response = telegramApi_('getUpdates', {
@@ -168,7 +170,9 @@ function ensureTelegramWebhook_() {
     : ScriptApp.getService().getUrl();
   if (!baseUrl) return false;
   const url = baseUrl + '?secret=' + encodeURIComponent(secret);
-  if (p.getProperty('TELEGRAM_WEBHOOK_URL') === url) return true;
+  const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
+  if (p.getProperty('TELEGRAM_WEBHOOK_URL') === url &&
+      verifiedAt && Date.now() - verifiedAt < 10 * 60 * 1000) return true;
   const result = telegramApi_('setWebhook', {
     url: url,
     allowed_updates: ['message', 'callback_query'],
@@ -176,8 +180,18 @@ function ensureTelegramWebhook_() {
   });
   if (!result || result.ok !== true) throw new Error('Telegram webhook installation failed');
   p.setProperty('TELEGRAM_WEBHOOK_URL', url);
+  p.setProperty('TELEGRAM_WEBHOOK_VERIFIED_AT', String(Date.now()));
   logInfo_('Telegram', 'Webhook installed');
   return true;
+}
+
+/** Public recovery entry point used automatically after every deployment. */
+function repairTelegramWebhook() {
+  const p = PropertiesService.getScriptProperties();
+  p.deleteProperty('TELEGRAM_WEBHOOK_VERIFIED_AT');
+  const installed = ensureTelegramWebhook_();
+  processTelegramWebhookQueue_();
+  return {installed: installed, checkedAt: new Date().toISOString()};
 }
 
 function telegramUpdateChatId_(update) {
