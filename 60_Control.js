@@ -9,8 +9,49 @@ function runTodayControl_() {
   checks.push(checkDuplicateCampaigns_(SHEETS.DB_CAMPAIGNS_TODAY));
   checks.push(checkUnknownAgents_());
   checks.push(checkMissingKeitaroJoins_());
+  checks.push(checkKeitaroConversionReconciliation_());
 
   writeControl_(checks);
+}
+
+function checkKeitaroConversionReconciliation_() {
+  const campaignSheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  const conversionSheet = getOrCreateSheet_(SHEETS.DB_KEITARO_CONVERSIONS_TODAY);
+  if (campaignSheet.getLastRow() < 2 || conversionSheet.getLastRow() < 2) {
+    return [getCurrentTimestamp_(), 'Keitaro conversion reconciliation', 'WARN', '', '', '',
+      'Keitaro today DB or conversion log is empty'];
+  }
+  const campaignRows = campaignSheet.getRange(2, 1, campaignSheet.getLastRow() - 1,
+    getKeitaroTodayHeaders_().length).getValues();
+  const conversionRows = conversionSheet.getRange(2, 1, conversionSheet.getLastRow() - 1,
+    getKeitaroConversionHeaders_().length).getValues();
+  const db = campaignRows.reduce(function (total, row) {
+    total.reg += num_(row[7]);
+    total.ftd += num_(row[8]);
+    total.revenue += num_(row[9]);
+    return total;
+  }, {reg: 0, ftd: 0, revenue: 0});
+  const seen = {};
+  const log = conversionRows.reduce(function (total, row) {
+    const id = String(row[2] || '');
+    if (id && seen[id]) return total;
+    if (id) seen[id] = true;
+    const status = String(row[19] || '').toLowerCase();
+    if (status === 'lead') total.reg++;
+    if (status === 'sale') {
+      total.ftd++;
+      total.revenue += num_(row[18]);
+    }
+    return total;
+  }, {reg: 0, ftd: 0, revenue: 0});
+  const ok = db.reg === log.reg && db.ftd === log.ftd && round2_(db.revenue) === round2_(log.revenue);
+  return [
+    getCurrentTimestamp_(), 'Keitaro conversion reconciliation', ok ? 'OK' : 'ERROR',
+    'DB R' + db.reg + '/D' + db.ftd + '/$' + round2_(db.revenue),
+    'LOG R' + log.reg + '/D' + log.ftd + '/$' + round2_(log.revenue),
+    ok ? 0 : 1,
+    ok ? '' : 'Reg/FTD/Revenue differ between campaign DB and conversion log'
+  ];
 }
 
 function runDailyControl_() {

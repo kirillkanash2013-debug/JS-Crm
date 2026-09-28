@@ -40,7 +40,7 @@ function finalizeKeitaroYesterdayData() {
   const date = getYesterday_();
   const reportRows = normalizeKeitaroReportRows_(getKeitaroReport_(date, date));
   const conversionRows = getKeitaroConversions_(date, date);
-  appendKeitaroHistory_(reportRows, date);
+  appendKeitaroHistory_(reportRows, date, conversionRows);
   replaceKeitaroConversionsHistory_(conversionRows, date);
   return {date: date, campaigns: reportRows.length, conversions: conversionRows.length};
 }
@@ -311,7 +311,7 @@ function assertCrmReady_() {
 
 function assertTargetSpreadsheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss || ss.getId() !== '1OybSL2WmQAsibfvNqmvy9A0rTXCQJ02ghbX2NeFxfYM') {
+  if (!ss || ss.getId() !== STORAGE_SPREADSHEET_IDS.CRM) {
     throw new Error('CRM target spreadsheet mismatch');
   }
 }

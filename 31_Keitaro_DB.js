@@ -108,28 +108,135 @@ function writeKeitaroTodayDb_(reportRows, date, campaigns, conversionRows) {
       offerIdsByName[offerName] = offerId;
     }
   });
-  const rows = reportRows.map(function (row) {
+  let rows = reportRows.map(function (row) {
     const mapped = mapKeitaroCampaignRow_(row, date, timestamp);
     if (!mapped[11]) {
       mapped[11] = offerIdsByName[normalizeJoinName_(mapped[12])] || '';
     }
-    mapped.push(statuses[String(mapped[16])] || 'UNKNOWN');
     return mapped;
+  });
+  rows = applyConversionMetrics_(rows, conversionRows || [], date, timestamp);
+  rows.forEach(function (mapped) {
+    mapped.push(statuses[String(mapped[16])] || 'UNKNOWN');
   });
   writeDbSheet_(SHEETS.DB_KEITARO_TODAY, getKeitaroTodayHeaders_(), rows, {
     textColumns: [5, 12, 17], numberColumns: [6, 7, 8, 9, 10, 14]
   });
 }
 
-function appendKeitaroHistory_(reportRows, date) {
+function appendKeitaroHistory_(reportRows, date, conversionRows) {
   const sheet = getOrCreateSheet_(SHEETS.KEITARO_HISTORY);
   ensureAdditiveHeaders_(sheet, getKeitaroHeaders_());
   const timestamp = getCurrentTimestamp_();
-  const rows = reportRows.map(function (row) {
+  let rows = reportRows.map(function (row) {
     return mapKeitaroCampaignRow_(row, date, timestamp);
   });
+  rows = applyConversionMetrics_(rows, conversionRows || [], date, timestamp);
   replaceRowsByDate_(sheet, getKeitaroHeaders_(), date, rows,
     {textColumns: [5, 12, 17], numberColumns: [6, 7, 8, 9, 10, 14]});
+}
+
+/**
+ * report/build is authoritative for clicks/unique clicks, while the conversion
+ * log is authoritative for registrations, deposits and revenue. Keitaro can
+ * omit the first Minsk hours from report/build even when timezone is supplied.
+ */
+function applyConversionMetrics_(mappedReportRows, conversionRows, date, timestamp) {
+  const rows = (mappedReportRows || []).map(function (row) {
+    const copy = row.slice();
+    copy[7] = 0;
+    copy[8] = 0;
+    copy[9] = 0;
+    return copy;
+  });
+  const groups = aggregateConversionMetrics_(conversionRows || []);
+
+  Object.keys(groups).forEach(function (key) {
+    const metric = groups[key];
+    const candidates = rows.map(function (row, index) {
+      return {row: row, index: index};
+    }).filter(function (candidate) {
+      const row = candidate.row;
+      const sameCampaign = isValidCampaignId_(metric.campaignId)
+        ? String(row[4] || '') === metric.campaignId
+        : normalizeJoinName_(row[3]) === metric.campaignName;
+      if (!sameCampaign || normalizeJoinName_(row[3]) !== metric.campaignName) return false;
+      const rowOfferId = String(row[11] || '').trim();
+      if (metric.offerId && rowOfferId) return metric.offerId === rowOfferId;
+      return normalizeJoinName_(row[12]) === metric.offerName;
+    });
+
+    // When report/build splits the same offer by source, put conversions on the
+    // largest matching traffic row. This preserves campaign totals without
+    // duplicating a registration or deposit across report groups.
+    candidates.sort(function (a, b) {
+      return num_(b.row[6]) - num_(a.row[6]) || num_(b.row[5]) - num_(a.row[5]);
+    });
+    if (candidates.length) {
+      const target = candidates[0].row;
+      target[7] = num_(target[7]) + metric.reg;
+      target[8] = num_(target[8]) + metric.ftd;
+      target[9] = num_(target[9]) + metric.revenue;
+      return;
+    }
+
+    // A conversion may exist even when report/build has no row (for example a
+    // delayed deposit). Keep it as a zero-click synthetic row instead of losing it.
+    rows.push([
+      date, timestamp, metric.agent, metric.campaignLabel, metric.campaignId,
+      0, 0, metric.reg, metric.ftd, metric.revenue, metric.source,
+      metric.offerId, metric.offerLabel, 0,
+      isValidCampaignId_(metric.campaignId) ? 'SUB4' : 'MISSING',
+      JSON.stringify({source: 'conversion_log', conversion_ids: metric.conversionIds}),
+      metric.keitaroCampaignId, metric.keitaroCampaign
+    ]);
+  });
+  return rows;
+}
+
+function aggregateConversionMetrics_(conversionRows) {
+  const groups = {};
+  const seen = {};
+  (conversionRows || []).forEach(function (row) {
+    const conversionId = String(pick_(row, ['conversion_id', 'id']) || '').trim();
+    const status = String(pick_(row, ['status']) || '').trim().toLowerCase();
+    const fingerprint = conversionId || [
+      pick_(row, ['sub_id', 'subid']), status,
+      pick_(row, ['postback_datetime']), pick_(row, ['sale_datetime']),
+      pick_(row, ['offer_id']), pick_(row, ['sub_id_4', 'sub4'])
+    ].map(String).join('|');
+    if (seen[fingerprint]) return;
+    seen[fingerprint] = true;
+    if (status !== 'lead' && status !== 'sale') return;
+
+    const campaignId = String(pick_(row, ['sub_id_4', 'sub4']) || '').trim();
+    const campaignLabel = String(pick_(row, ['sub_id_3', 'sub3']) || '').trim();
+    const campaignName = normalizeJoinName_(campaignLabel);
+    const offerId = String(pick_(row, ['offer_id']) || getDimensionId_(pick_(row, ['offer'])) || '').trim();
+    const offerLabel = getDimensionLabel_(pick_(row, ['offer', 'offer_name']));
+    const offerName = normalizeJoinName_(offerLabel);
+    const key = [isValidCampaignId_(campaignId) ? campaignId : '', campaignName,
+      offerId || offerName].join('|');
+    if (!groups[key]) {
+      groups[key] = {
+        campaignId: campaignId, campaignName: campaignName, campaignLabel: campaignLabel,
+        offerId: offerId, offerName: offerName, offerLabel: offerLabel,
+        agent: pick_(row, ['sub_id_1', 'sub1']),
+        source: getDimensionLabel_(pick_(row, ['source'])),
+        keitaroCampaignId: String(pick_(row, ['campaign_id']) || getDimensionId_(pick_(row, ['campaign']))),
+        keitaroCampaign: getDimensionLabel_(pick_(row, ['campaign', 'campaign_name'])),
+        reg: 0, ftd: 0, revenue: 0, conversionIds: []
+      };
+    }
+    const target = groups[key];
+    if (status === 'lead') target.reg++;
+    if (status === 'sale') {
+      target.ftd++;
+      target.revenue += num_(pick_(row, ['revenue']));
+    }
+    target.conversionIds.push(conversionId || fingerprint);
+  });
+  return groups;
 }
 
 /** Test-only: seeds only today's temporary DB; the next refresh replaces it. */
