@@ -4,6 +4,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const root=process.cwd();
 const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
+const stableTelegramDeployment='AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA';
 if(JSON.parse(fs.readFileSync('.clasp.json')).scriptId!==target) throw Error('Wrong target');
 if(!process.env.CLASP_AUTH_JSON) throw Error('Owner action required: add CLASP_AUTH_JSON to GitHub Actions secrets.');
 const authValue=process.env.CLASP_AUTH_JSON.trim();
@@ -51,8 +52,9 @@ try {
   // A server-side version is a rollback checkpoint; never publish backup source as an artifact.
   run(['create-version','Before CRM deployment '+(process.env.GITHUB_SHA||'manual')]);
   run(['push','--force']);
-  const deployOutput=run(['deploy','--description','CRM '+(process.env.GITHUB_SHA||'manual')]);
-  console.log('Created Apps Script deployment: '+deployOutput.trim().replace(/https?:\/\/\S+/g,'[URL REDACTED]'));
+  const deployOutput=run(['deploy','--deploymentId',stableTelegramDeployment,
+    '--description','CRM '+(process.env.GITHUB_SHA||'manual')]);
+  console.log('Updated stable Apps Script deployment: '+deployOutput.trim().replace(/https?:\/\/\S+/g,'[URL REDACTED]'));
   fs.writeFileSync(path.join(scratch,'.clasp.json'),JSON.stringify({scriptId:target,rootDir:'.',scriptExtensions:['.js'],htmlExtensions:['.html'],jsonExtensions:['.json']}));
   run(['pull'],scratch);
   const expected=fs.readFileSync('.claspignore','utf8').split('\n').filter(x=>x.startsWith('!')).map(x=>x.slice(1));
