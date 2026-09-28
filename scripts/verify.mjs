@@ -82,6 +82,22 @@ const telegramTotals=ctx.aggregateTelegramKeitaroTotals_(
 assert.deepEqual(JSON.parse(JSON.stringify(telegramTotals)),{
   hasData:true,inst:10,reg:5,dep:2,revenue:95
 });
+let telegramCampaignRows = [
+  ['Keitaro Campaign ID','Keitaro Campaign','Keitaro Campaign Status'],
+  ['10690','Campaign B','ACTIVE'],
+  ['10538','Campaign A','ACTIVE'],
+  ['10538','Campaign A','ACTIVE'],
+  ['10000','Old','DISABLED']
+];
+ctx.getOrCreateSheet_=()=>({
+  getLastRow:()=>telegramCampaignRows.length,
+  getLastColumn:()=>telegramCampaignRows[0].length,
+  getRange:()=>({getValues:()=>telegramCampaignRows})
+});
+assert.deepEqual(JSON.parse(JSON.stringify(ctx.getTelegramCachedCampaigns_())),[
+  {id:'10538',name:'Campaign A',status:'ACTIVE'},
+  {id:'10690',name:'Campaign B',status:'ACTIVE'}
+]);
 assert.equal(Array.from(ctx.getAllHistoryHeaders_()).includes('Campaign Status'),false);
 assert.equal(Array.from(ctx.getAllTodayHeaders_()).includes('Campaign Status'),true);
 const staleCandidates={};
