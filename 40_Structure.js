@@ -274,7 +274,8 @@ function buildAgentStructureSheet_(agent, sheetName) {
 
   const rows = [];
 
-  Object.keys(tree).forEach(function (socialKey) {
+  Object.keys(tree).forEach(function (socialKey, socialIndex) {
+    if (socialIndex > 0) rows.push(['', '', '', '', '', '']);
     const social = tree[socialKey];
 
     rows.push([
