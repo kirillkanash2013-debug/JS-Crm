@@ -39,6 +39,13 @@ function run(args,cwd=root) {
   try{return execFileSync(clasp,args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});}
   catch {throw Error(`clasp ${args[0]} failed; private response suppressed. Check Google authorization/API access.`);}
 }
+function runFunction(name) {
+  const output=run(['run',name]);
+  const failed=/\b(error|exception)\b/i.test(output) || /"done"\s*:\s*false/i.test(output);
+  if(failed) throw Error(`Apps Script function ${name} returned an execution error.`);
+  console.log(`[AppsScript] ${name} completed.`);
+  return output;
+}
 const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'crm-deploy-'));
 try {
   fs.writeFileSync(authPath,JSON.stringify(auth),{mode:0o600});
@@ -60,10 +67,10 @@ try {
   if(extra.length)throw Error('Unexpected remote modules after deployment');
   console.log('Verified Apps Script source readback.');
   // One-time recovery/bootstrap. Removed after the verified run.
-  run(['run','installTriggers']);
-  run(['run','dailyFinalization']);
-  run(['run','updateKeitaroToday']);
-  run(['run','rebuildTodayDashboard']);
+  runFunction('installTriggers');
+  runFunction('dailyFinalization');
+  runFunction('updateKeitaroToday');
+  runFunction('rebuildTodayDashboard');
   console.log('Installed triggers and refreshed closed/current CRM data.');
 } finally {
   fs.rmSync(authPath,{force:true});
