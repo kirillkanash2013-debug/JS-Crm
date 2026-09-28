@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {google} from 'googleapis';
 const root=process.cwd();
 const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
 if(JSON.parse(fs.readFileSync('.clasp.json')).scriptId!==target) throw Error('Wrong target');
@@ -46,37 +45,6 @@ function run(args,cwd=root) {
     throw Error(`clasp ${args[0]} failed; see sanitized diagnostic artifact.`);
   }
 }
-async function runFunction(name) {
-  const token=auth.tokens.default;
-  const oauth=new google.auth.OAuth2(token.client_id,token.client_secret);
-  oauth.setCredentials({
-    access_token:token.access_token,
-    refresh_token:token.refresh_token,
-    token_type:token.token_type,
-    expiry_date:token.expiry_date
-  });
-  const api=google.script({version:'v1',auth:oauth});
-  let data;
-  try {
-    const response=await api.scripts.run({
-      scriptId:target,
-      requestBody:{function:name,parameters:[],devMode:true}
-    });
-    data=response.data||{};
-  } catch (error) {
-    const diagnostic={name:name,message:String(error?.message||''),code:error?.code||null};
-    fs.writeFileSync(path.join(root,'clasp-run-output.txt'),JSON.stringify(diagnostic,null,2));
-    throw Error(`Apps Script API call failed for ${name}.`);
-  }
-  const safe=JSON.stringify(data,null,2).replace(/ya29\.[A-Za-z0-9._-]+/g,'[REDACTED]');
-  fs.writeFileSync(path.join(root,'clasp-run-output.txt'),safe);
-  if(data.error) throw Error(`Apps Script function ${name} returned an execution error.`);
-  if(!data.response || data.response.result===undefined) {
-    throw Error(`Apps Script function ${name} returned no response.`);
-  }
-  console.log(`[AppsScript] ${name} completed.`);
-  return data.response.result;
-}
 const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'crm-deploy-'));
 try {
   fs.writeFileSync(authPath,JSON.stringify(auth),{mode:0o600});
@@ -97,10 +65,6 @@ try {
   const extra=fs.readdirSync(scratch).filter(x=>/\.(js|gs|html)$/.test(x)&&!expected.includes(x));
   if(extra.length)throw Error('Unexpected remote modules after deployment');
   console.log('Verified Apps Script source readback.');
-  // One-time recovery/bootstrap. Create the API executable required by clasp run.
-  run(['deploy','--description','CRM API executable bootstrap']);
-  await runFunction('bootstrapCrmAutomation');
-  console.log('Installed triggers and refreshed closed/current CRM data.');
 } finally {
   fs.rmSync(authPath,{force:true});
   fs.rmSync(scratch,{recursive:true,force:true});

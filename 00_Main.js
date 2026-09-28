@@ -7,19 +7,6 @@ function manualRefresh() {
   return updateToday();
 }
 
-/** One-time remote bootstrap used by the verified GitHub deployment. */
-function bootstrapCrmAutomation() {
-  installTriggers();
-  dailyFinalization();
-  updateKeitaroToday();
-  rebuildTodayDashboard();
-  return {
-    ok: true,
-    yesterday: getYesterday_(),
-    today: getToday_(),
-    checkedAt: new Date().toISOString()
-  };
-}
 
 /** Public manual refresh. It never finalizes yesterday. */
 function updateToday() {
