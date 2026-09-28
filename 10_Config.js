@@ -15,6 +15,10 @@ const CONFIG = Object.freeze({
   DOLPHIN_SYNC_MAX_ATTEMPTS: 20,
   PAGE_SIZE: 100,
 
+  // Stable Apps Script web-app deployment used by the Telegram webhook.
+  // Future releases update this deployment instead of creating a new URL.
+  TELEGRAM_WEBAPP_DEPLOYMENT_ID: 'AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA',
+
   STRUCTURE_AGENTS: ['Farm', 'Fun', '2B'],
   GEO_TOKEN_PATTERN: '^[A-Z]{2}(?:\\+[A-Z]{2})*$'
 });
