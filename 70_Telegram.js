@@ -81,6 +81,11 @@ function doPost(e) {
   }
   try {
     const update = JSON.parse(e.postData && e.postData.contents || '{}');
+    const updateId = String(update.update_id === undefined ? '' : update.update_id);
+    if (updateId && p.getProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID') === updateId) {
+      return ContentService.createTextOutput('duplicate');
+    }
+    if (updateId) p.setProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID', updateId);
     const chatId = telegramUpdateChatId_(update);
     const allowed = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID) || '');
     if (chatId && String(chatId) === allowed) {
@@ -105,7 +110,10 @@ function ensureTelegramWebhook_() {
     secret = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
     p.setProperty('TELEGRAM_WEBHOOK_SECRET', secret);
   }
-  const baseUrl = ScriptApp.getService().getUrl();
+  const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
+  const baseUrl = deploymentId
+    ? 'https://script.google.com/macros/s/' + deploymentId + '/exec'
+    : ScriptApp.getService().getUrl();
   if (!baseUrl) return false;
   const url = baseUrl + '?secret=' + encodeURIComponent(secret);
   if (p.getProperty('TELEGRAM_WEBHOOK_URL') === url) return true;
@@ -172,15 +180,24 @@ function queueTelegramRefresh_(chatId) {
   try {
     const p = PropertiesService.getScriptProperties();
     if (p.getProperty('TELEGRAM_REFRESH_QUEUED') === 'true') {
-      telegramSend_(chatId, '⏳ Обновление уже выполняется.', telegramMenu_());
-      return false;
+      const queuedAt = Number(p.getProperty('TELEGRAM_REFRESH_QUEUED_AT') || 0);
+      if (queuedAt && Date.now() - queuedAt < 20 * 60 * 1000) {
+        telegramSend_(chatId, '⏳ Обновление уже выполняется.', telegramMenu_());
+        return false;
+      }
+      // Recover automatically if a previous Apps Script execution timed out.
+      p.deleteProperty('TELEGRAM_REFRESH_QUEUED');
+      p.deleteProperty('TELEGRAM_REFRESH_CHAT_ID');
+      p.deleteProperty('TELEGRAM_REFRESH_MESSAGE_ID');
+      p.deleteProperty('TELEGRAM_REFRESH_QUEUED_AT');
     }
     const status = telegramSend_(chatId, '⏳ <b>Получаю Dolphin…</b>');
     const messageId = status && status.result ? status.result.message_id : '';
     p.setProperties({
       TELEGRAM_REFRESH_QUEUED: 'true',
       TELEGRAM_REFRESH_CHAT_ID: String(chatId),
-      TELEGRAM_REFRESH_MESSAGE_ID: String(messageId || '')
+      TELEGRAM_REFRESH_MESSAGE_ID: String(messageId || ''),
+      TELEGRAM_REFRESH_QUEUED_AT: String(Date.now())
     });
     ScriptApp.newTrigger('runQueuedTelegramRefresh_').timeBased().after(1000).create();
     return true;
@@ -220,6 +237,7 @@ function runQueuedTelegramRefresh_() {
     p.deleteProperty('TELEGRAM_REFRESH_QUEUED');
     p.deleteProperty('TELEGRAM_REFRESH_CHAT_ID');
     p.deleteProperty('TELEGRAM_REFRESH_MESSAGE_ID');
+    p.deleteProperty('TELEGRAM_REFRESH_QUEUED_AT');
   }
 }
 
@@ -252,7 +270,7 @@ function telegramToday_() {
     t.revenue = keitaroTotals.revenue;
   }
   const roi = t.spend > 0 ? (t.revenue - t.spend) / t.spend * 100 : 0;
-  const time = rows.length && c.time >= 0 ? String(rows[0][c.time] || '') : '';
+  const time = rows.length && c.time >= 0 ? formatTelegramTime_(rows[0][c.time]) : '';
   return ['<b>📊 Сегодня' + (time ? ' · ' + escapeHtml_(time) : '') + '</b>', '',
     'Spend: <b>$' + t.spend.toFixed(2) + '</b>',
     'Inst: <b>' + Math.round(t.inst) + '</b>',
@@ -260,6 +278,14 @@ function telegramToday_() {
     'Dep: <b>' + Math.round(t.dep) + '</b>',
     'Revenue: <b>$' + t.revenue.toFixed(2) + '</b>',
     'ROI: <b>' + Math.round(roi) + '%</b>'].join('\n');
+}
+
+function formatTelegramTime_(value) {
+  if (!value) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, CONFIG.TIMEZONE, 'HH:mm');
+  }
+  return String(value).replace(/^.*?(\d{1,2}:\d{2})(?::\d{2})?.*$/, '$1');
 }
 
 function getTelegramKeitaroTodayTotals_() {
