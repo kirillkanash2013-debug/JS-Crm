@@ -38,6 +38,8 @@ function rebuildOffersToday() {
     const item = groups[key];
     return [item.geo, item.offerId, item.offer, item.inst, item.reg, item.dep, item.revenue,
       safeDiv_(item.revenue, item.inst)];
+  }).filter(function (row) {
+    return num_(row[3]) > 1;
   }).sort(function (a, b) {
     return String(a[0]).localeCompare(String(b[0])) || num_(b[7]) - num_(a[7]);
   });
