@@ -251,6 +251,7 @@ function scheduledHourlyRefresh() {
   // The existing five-minute scheduler also services Telegram without another trigger.
   try {
     ensureTelegramWebhook_();
+    processTelegramWebhookQueue_();
     processTelegramUpdates_();
     ensureTelegramPollingTrigger_();
   } catch (e) {
@@ -272,6 +273,7 @@ function scheduledHourlyRefresh() {
 function telegramPolling() {
   try {
     ensureTelegramWebhook_();
+    processTelegramWebhookQueue_();
     processTelegramUpdates_();
   } catch (e) {
     logError_('Telegram polling', e);
