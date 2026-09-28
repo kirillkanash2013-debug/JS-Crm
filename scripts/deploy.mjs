@@ -38,7 +38,8 @@ const clasp=path.join(root,'node_modules/.bin/clasp');
 function run(args,cwd=root) {
   try{return execFileSync(clasp,args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});}
   catch (error) {
-    const raw=String(error?.stderr||error?.stdout||error?.message||'');
+    const diagnostic={args:args,code:error?.status??error?.code??null,signal:error?.signal??null,message:String(error?.message||''),stdout:String(error?.stdout||''),stderr:String(error?.stderr||'')};
+    const raw=JSON.stringify(diagnostic,null,2);
     const safe=raw.replace(/ya29\.[A-Za-z0-9._-]+/g,'[REDACTED]').replace(/("(?:access_token|refresh_token|client_secret)"\s*:\s*")[^"]+/gi,'$1[REDACTED]');
     fs.writeFileSync(path.join(root,'clasp-run-output.txt'),safe.slice(0,8000));
     throw Error(`clasp ${args[0]} failed; see sanitized diagnostic artifact.`);
