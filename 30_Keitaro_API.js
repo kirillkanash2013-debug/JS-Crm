@@ -38,6 +38,18 @@ function keitaroPost_(path, payload) {
   return parseJsonResponseOrThrow_(response, 'Keitaro POST ' + url);
 }
 
+function keitaroPut_(path, payload) {
+  const url = CONFIG.KEITARO_API_BASE + '/' + String(path || '').replace(/^\/+/, '');
+  const response = UrlFetchApp.fetch(url, {
+    method: 'put',
+    contentType: 'application/json',
+    headers: {'Api-Key': getKeitaroApiKey_(), Accept: 'application/json'},
+    payload: JSON.stringify(payload || {}),
+    muteHttpExceptions: true
+  });
+  return parseJsonResponseOrThrow_(response, 'Keitaro PUT ' + url);
+}
+
 function getKeitaroCampaigns_() {
   const data = keitaroGet_('campaigns');
   if (Array.isArray(data)) return data;
