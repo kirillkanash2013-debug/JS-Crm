@@ -122,6 +122,36 @@ function testApiConnections() {
  * Read-only live schema check. It validates the endpoints used by the real
  * pipeline and logs only counts/field names, never tokens or full records.
  */
+/**
+ * Owner-authorized one-time bootstrap.
+ * Verifies both live sources before enabling schedules, then recovers yesterday.
+ */
+function verifyInstallAndRecover() {
+  const connections = testApiConnections();
+  const mappings = testSourceMappings();
+
+  if (!connections.dolphin.ok || connections.dolphin.socials < 1) {
+    throw new Error('Dolphin verification failed: no socials returned');
+  }
+  if (!connections.keitaro.ok || connections.keitaro.campaigns < 1) {
+    throw new Error('Keitaro verification failed: no campaigns returned');
+  }
+  if (!mappings.dolphin.socialFields.length || !mappings.keitaro.rowFields.length) {
+    throw new Error('Live source mapping verification returned an empty schema');
+  }
+
+  PropertiesService.getScriptProperties().setProperty('CRM_PIPELINE_VERIFIED', 'true');
+  installTriggers();
+  dailyFinalization();
+
+  return {
+    verified: true,
+    triggersInstalled: true,
+    finalizedDate: getYesterday_(),
+    checkedAt: new Date().toISOString()
+  };
+}
+
 function testSourceMappings() {
   const today = getToday_();
   const socials = getFbSocials_();
