@@ -110,7 +110,8 @@ function sumSpendForDate_(sheetName, date) {
     throw new Error('Date header not found in ' + sheetName);
   }
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const values = filterLatestTodaySnapshotRows_(headers,
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues());
   const dateKey = date ? normalizeDateKey_(date) : '';
 
   return values.reduce(function (sum, row) {
@@ -190,9 +191,16 @@ function checkMissingKeitaroJoins_() {
     return [getCurrentTimestamp_(), 'Missing Keitaro joins', 'OK', 0, '', '', ''];
   }
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 15).getValues();
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const joinIndex = headers.indexOf('Join Type');
+  if (joinIndex < 0) {
+    return [getCurrentTimestamp_(), 'Missing Keitaro joins', 'ERROR', '', '', '',
+      'Join Type header not found'];
+  }
+  const values = filterLatestTodaySnapshotRows_(headers,
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues());
   const missing = values.filter(function (row) {
-    return !String(row[14] || '');
+    return !String(row[joinIndex] || '');
   });
 
   return [
