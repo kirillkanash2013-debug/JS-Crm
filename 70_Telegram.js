@@ -182,7 +182,8 @@ function processTelegramWebhookQueue_() {
 function ensureTelegramWebhook_() {
   if (!isTelegramConfigured_()) return false;
   const p = PropertiesService.getScriptProperties();
-  if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING') return false;
+  const workerUrl = String(CONFIG.TELEGRAM_WORKER_URL || '').replace(/\/$/, '');
+  if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING' && !workerUrl) return false;
   const currentInfoResponse = telegramApi_('getWebhookInfo', {});
   const currentInfo = currentInfoResponse && currentInfoResponse.result || {};
   if (/302\s+Found/i.test(String(currentInfo.last_error_message || ''))) {
@@ -203,7 +204,9 @@ function ensureTelegramWebhook_() {
     ? 'https://script.google.com/macros/s/' + deploymentId + '/exec'
     : ScriptApp.getService().getUrl();
   if (!baseUrl) return false;
-  const url = baseUrl + '?secret=' + encodeURIComponent(secret);
+  const url = workerUrl
+    ? workerUrl + '/' + encodeURIComponent(secret)
+    : baseUrl + '?secret=' + encodeURIComponent(secret);
   const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
   if (p.getProperty('TELEGRAM_WEBHOOK_URL') === url &&
       verifiedAt && Date.now() - verifiedAt < 10 * 60 * 1000) return true;
@@ -215,6 +218,7 @@ function ensureTelegramWebhook_() {
   if (!result || result.ok !== true) throw new Error('Telegram webhook installation failed');
   p.setProperty('TELEGRAM_WEBHOOK_URL', url);
   p.setProperty('TELEGRAM_WEBHOOK_VERIFIED_AT', String(Date.now()));
+  p.setProperty('TELEGRAM_DELIVERY_MODE', 'WEBHOOK');
   logInfo_('Telegram', 'Webhook installed');
   const webhookInfo = telegramApi_('getWebhookInfo', {});
   const info = webhookInfo && webhookInfo.result || {};
@@ -251,10 +255,13 @@ function testTelegramWebhookRoundTrip() {
   const p = PropertiesService.getScriptProperties();
   const secret = getRequiredScriptProperty_('TELEGRAM_WEBHOOK_SECRET');
   const chatId = getRequiredScriptProperty_(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID);
+  const workerUrl = String(CONFIG.TELEGRAM_WORKER_URL || '').replace(/\/$/, '');
   const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
-  if (!deploymentId) throw new Error('Telegram web-app deployment is not configured');
-  const response = UrlFetchApp.fetch(
-    'https://script.google.com/macros/s/' + deploymentId + '/exec?secret=' + encodeURIComponent(secret), {
+  if (!workerUrl && !deploymentId) throw new Error('Telegram webhook endpoint is not configured');
+  const testUrl = workerUrl
+    ? workerUrl + '/' + encodeURIComponent(secret)
+    : 'https://script.google.com/macros/s/' + deploymentId + '/exec?secret=' + encodeURIComponent(secret);
+  const response = UrlFetchApp.fetch(testUrl, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({
