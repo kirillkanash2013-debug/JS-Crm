@@ -174,6 +174,18 @@ function telegramToday_() {
     });
     return a;
   }, {spend: 0, inst: 0, reg: 0, dep: 0, revenue: 0});
+
+  // Spend belongs to Meta/FB, but the conversion funnel belongs to Keitaro.
+  // ALL Today intentionally contains only rows joined to an FB campaign. Using
+  // it for Revenue loses delayed conversions and legacy traffic whose sub4 is
+  // blank or still contains an unexpanded macro such as {sub_id_4}.
+  const keitaroTotals = getTelegramKeitaroTodayTotals_();
+  if (keitaroTotals.hasData) {
+    t.inst = keitaroTotals.inst;
+    t.reg = keitaroTotals.reg;
+    t.dep = keitaroTotals.dep;
+    t.revenue = keitaroTotals.revenue;
+  }
   const roi = t.spend > 0 ? (t.revenue - t.spend) / t.spend * 100 : 0;
   const time = rows.length && c.time >= 0 ? String(rows[0][c.time] || '') : '';
   return ['<b>📊 Сегодня' + (time ? ' · ' + escapeHtml_(time) : '') + '</b>', '',
@@ -183,6 +195,47 @@ function telegramToday_() {
     'Dep: <b>' + Math.round(t.dep) + '</b>',
     'Revenue: <b>$' + t.revenue.toFixed(2) + '</b>',
     'ROI: <b>' + Math.round(roi) + '%</b>'].join('\n');
+}
+
+function getTelegramKeitaroTodayTotals_() {
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  if (sheet.getLastRow() < 2 || sheet.getLastColumn() < 1) {
+    return {hasData: false, inst: 0, reg: 0, dep: 0, revenue: 0};
+  }
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  return aggregateTelegramKeitaroTotals_(values[0], values.slice(1));
+}
+
+function aggregateTelegramKeitaroTotals_(headers, rows) {
+  const normalized = (headers || []).map(function (value) {
+    return String(value || '').trim().toLowerCase();
+  });
+  function indexOfAny_(names) {
+    for (let i = 0; i < names.length; i++) {
+      const index = normalized.indexOf(names[i]);
+      if (index >= 0) return index;
+    }
+    return -1;
+  }
+  const columns = {
+    inst: indexOfAny_(['inst']),
+    reg: indexOfAny_(['reg']),
+    dep: indexOfAny_(['ftd', 'dep']),
+    revenue: indexOfAny_(['revenue'])
+  };
+  const hasRequiredColumns = Object.keys(columns).every(function (key) {
+    return columns[key] >= 0;
+  });
+  if (!hasRequiredColumns || !(rows || []).length) {
+    return {hasData: false, inst: 0, reg: 0, dep: 0, revenue: 0};
+  }
+  return (rows || []).reduce(function (totals, row) {
+    totals.inst += num_(row[columns.inst]);
+    totals.reg += num_(row[columns.reg]);
+    totals.dep += num_(row[columns.dep]);
+    totals.revenue += num_(row[columns.revenue]);
+    return totals;
+  }, {hasData: true, inst: 0, reg: 0, dep: 0, revenue: 0});
 }
 
 function telegramOffers_() {
