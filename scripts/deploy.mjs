@@ -37,7 +37,12 @@ if(fs.existsSync(authPath)) throw Error('Refusing to overwrite existing credenti
 const clasp=path.join(root,'node_modules/.bin/clasp');
 function run(args,cwd=root) {
   try{return execFileSync(clasp,args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});}
-  catch {throw Error(`clasp ${args[0]} failed; private response suppressed. Check Google authorization/API access.`);}
+  catch (error) {
+    const raw=String(error?.stderr||error?.stdout||error?.message||'');
+    const safe=raw.replace(/ya29\.[A-Za-z0-9._-]+/g,'[REDACTED]').replace(/("(?:access_token|refresh_token|client_secret)"\s*:\s*")[^"]+/gi,'$1[REDACTED]');
+    fs.writeFileSync(path.join(root,'clasp-run-output.txt'),safe.slice(0,8000));
+    throw Error(`clasp ${args[0]} failed; see sanitized diagnostic artifact.`);
+  }
 }
 function runFunction(name) {
   const output=run(['--json','run',name]);
@@ -74,7 +79,8 @@ try {
   const extra=fs.readdirSync(scratch).filter(x=>/\.(js|gs|html)$/.test(x)&&!expected.includes(x));
   if(extra.length)throw Error('Unexpected remote modules after deployment');
   console.log('Verified Apps Script source readback.');
-  // One-time recovery/bootstrap. Removed after the verified run.
+  // One-time recovery/bootstrap. Create the API executable required by clasp run.
+  run(['deploy','--description','CRM API executable bootstrap']);
   runFunction('bootstrapCrmAutomation');
   console.log('Installed triggers and refreshed closed/current CRM data.');
 } finally {
