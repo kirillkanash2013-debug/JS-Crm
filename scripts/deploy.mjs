@@ -59,6 +59,8 @@ try {
   // leaving commands unanswered until the next time-based trigger fires.
   const telegramRepair=run(['run','repairTelegramWebhook']);
   console.log('Telegram webhook repair executed: '+telegramRepair.trim().slice(0,500));
+  const telegramRoundTrip=run(['run','testTelegramWebhookRoundTrip']);
+  console.log('Telegram webhook round-trip executed: '+telegramRoundTrip.trim().slice(0,500));
   fs.writeFileSync(path.join(scratch,'.clasp.json'),JSON.stringify({scriptId:target,rootDir:'.',scriptExtensions:['.js'],htmlExtensions:['.html'],jsonExtensions:['.json']}));
   run(['pull'],scratch);
   const expected=fs.readFileSync('.claspignore','utf8').split('\n').filter(x=>x.startsWith('!')).map(x=>x.slice(1));
