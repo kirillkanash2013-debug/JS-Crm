@@ -46,7 +46,7 @@ function run(args,cwd=root) {
   }
 }
 function runFunction(name) {
-  const output=run(['--json','run',name]);
+  const output=run(['run',name,'--json']);
   let result;
   try { result=JSON.parse(output); }
   catch {
