@@ -191,6 +191,14 @@ function ensureTelegramWebhook_() {
   p.setProperty('TELEGRAM_WEBHOOK_URL', url);
   p.setProperty('TELEGRAM_WEBHOOK_VERIFIED_AT', String(Date.now()));
   logInfo_('Telegram', 'Webhook installed');
+  const webhookInfo = telegramApi_('getWebhookInfo', {});
+  const info = webhookInfo && webhookInfo.result || {};
+  logInfo_('Telegram webhook status', JSON.stringify({
+    pending: Number(info.pending_update_count || 0),
+    lastErrorDate: info.last_error_date || '',
+    lastErrorMessage: info.last_error_message || '',
+    maxConnections: info.max_connections || ''
+  }));
   return true;
 }
 
