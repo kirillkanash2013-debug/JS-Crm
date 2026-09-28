@@ -48,7 +48,8 @@ function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
   const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
-  if (p.getProperty('TELEGRAM_WEBHOOK_URL') &&
+  if (p.getProperty('TELEGRAM_DELIVERY_MODE') !== 'POLLING' &&
+      p.getProperty('TELEGRAM_WEBHOOK_URL') &&
       verifiedAt && Date.now() - verifiedAt < 15 * 60 * 1000) return;
   const allowedChatId = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID));
   const offset = Number(p.getProperty('TELEGRAM_UPDATE_OFFSET') || 0);
@@ -168,6 +169,17 @@ function processTelegramWebhookQueue_() {
 function ensureTelegramWebhook_() {
   if (!isTelegramConfigured_()) return false;
   const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING') return false;
+  const currentInfoResponse = telegramApi_('getWebhookInfo', {});
+  const currentInfo = currentInfoResponse && currentInfoResponse.result || {};
+  if (/302\s+Found/i.test(String(currentInfo.last_error_message || ''))) {
+    telegramApi_('deleteWebhook', {drop_pending_updates: false});
+    p.setProperty('TELEGRAM_DELIVERY_MODE', 'POLLING');
+    p.deleteProperty('TELEGRAM_WEBHOOK_URL');
+    p.deleteProperty('TELEGRAM_WEBHOOK_VERIFIED_AT');
+    logInfo_('Telegram', 'Apps Script webhook returned 302; switched to one-minute polling');
+    return false;
+  }
   let secret = String(p.getProperty('TELEGRAM_WEBHOOK_SECRET') || '');
   if (!secret) {
     secret = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
