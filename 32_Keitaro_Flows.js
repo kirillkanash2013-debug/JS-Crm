@@ -48,3 +48,52 @@ function normalizeKeitaroStream_(stream) {
 function getCampaignFlowView_(campaignId) {
   return getKeitaroCampaignStreams_(campaignId).map(normalizeKeitaroStream_);
 }
+
+function telegramFlowCacheKey_(campaignId) {
+  return 'TELEGRAM_FLOW_CACHE_' + String(campaignId || '').trim();
+}
+
+function refreshKeitaroFlowCache_(campaigns) {
+  const properties = PropertiesService.getScriptProperties();
+  const updatedAt = new Date().toISOString();
+  const result = {updated: 0, errors: 0};
+  (campaigns || []).forEach(function (campaign) {
+    const id = String(pick_(campaign, ['id', 'campaign_id']) || '').trim();
+    const status = String(pick_(campaign, ['state', 'status']) || '').toUpperCase();
+    if (!/^\d+$/.test(id) || status === 'DISABLED' || status === 'ARCHIVED') return;
+    try {
+      const streams = getCampaignFlowView_(id).map(function (stream) {
+        return {
+          id: stream.id,
+          name: stream.name,
+          status: stream.status,
+          type: stream.type,
+          position: stream.position,
+          offers: stream.offers
+        };
+      });
+      properties.setProperty(telegramFlowCacheKey_(id), JSON.stringify({
+        campaignId: id,
+        updatedAt: updatedAt,
+        streams: streams
+      }));
+      result.updated++;
+    } catch (error) {
+      result.errors++;
+      logError_('Keitaro flow cache #' + id, error);
+    }
+  });
+  properties.setProperty('TELEGRAM_FLOW_CACHE_UPDATED_AT', updatedAt);
+  return result;
+}
+
+function getCachedCampaignFlowView_(campaignId) {
+  const raw = PropertiesService.getScriptProperties().getProperty(
+    telegramFlowCacheKey_(campaignId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
