@@ -238,7 +238,49 @@ function hourlyRefresh() {
     runTodayControl_();
 
     logInfo_('hourlyRefresh', 'DONE');
+    ensureTopOfHourTrigger_();
   });
+}
+
+/**
+ * Apps Script cannot guarantee execution at exactly :00.
+ * This lightweight scheduler wakes every 5 minutes and performs one refresh
+ * in the first ten minutes of each Minsk hour.
+ */
+function scheduledHourlyRefresh() {
+  const now = new Date();
+  const minute = Number(Utilities.formatDate(now, CONFIG.TIMEZONE, 'm'));
+  if (minute >= 10) return;
+
+  const slot = Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyy-MM-dd-HH');
+  const properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty('CRM_LAST_HOURLY_SLOT') === slot) return;
+
+  hourlyRefresh();
+  properties.setProperty('CRM_LAST_HOURLY_SLOT', slot);
+}
+
+function ensureTopOfHourTrigger_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const hasScheduler = triggers.some(function (trigger) {
+    return trigger.getHandlerFunction() === 'scheduledHourlyRefresh';
+  });
+  const legacy = triggers.filter(function (trigger) {
+    return trigger.getHandlerFunction() === 'hourlyRefresh';
+  });
+
+  if (hasScheduler && legacy.length === 0) return;
+
+  legacy.forEach(function (trigger) {
+    ScriptApp.deleteTrigger(trigger);
+  });
+  if (!hasScheduler) {
+    ScriptApp.newTrigger('scheduledHourlyRefresh')
+      .timeBased()
+      .everyMinutes(5)
+      .create();
+  }
+  logInfo_('ensureTopOfHourTrigger', 'Hourly scheduler aligned to first 10 minutes');
 }
 
 function dailyFinalization() {
@@ -281,6 +323,7 @@ function installTriggers() {
   assertTodayPipelineReady_();
   const handlers = new Set([
     'hourlyRefresh',
+    'scheduledHourlyRefresh',
     'dailyFinalization'
   ]);
 
@@ -290,9 +333,9 @@ function installTriggers() {
     }
   });
 
-  ScriptApp.newTrigger('hourlyRefresh')
+  ScriptApp.newTrigger('scheduledHourlyRefresh')
     .timeBased()
-    .everyHours(1)
+    .everyMinutes(5)
     .create();
 
   ScriptApp.newTrigger('dailyFinalization')
