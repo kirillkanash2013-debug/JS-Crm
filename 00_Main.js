@@ -33,7 +33,9 @@ function updateKeitaroToday() {
   const campaigns = getKeitaroCampaigns_();
   writeKeitaroTodayDb_(reportRows, date, campaigns, conversionRows);
   writeKeitaroConversionsTodayDb_(conversionRows, date);
-  return {campaigns: reportRows.length, conversions: conversionRows.length};
+  const flowCache = refreshKeitaroFlowCache_(campaigns);
+  return {campaigns: reportRows.length, conversions: conversionRows.length,
+    cachedFlows: flowCache.updated, flowErrors: flowCache.errors};
 }
 
 /** Public, Keitaro-only closed-day finalizer for safe manual recovery/testing. */
