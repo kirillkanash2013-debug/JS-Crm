@@ -396,14 +396,19 @@ function runQueuedTelegramRefresh_() {
 
 function telegramToday_() {
   const sheet = getOrCreateSheet_(SHEETS.ALL_TODAY);
-  if (sheet.getLastRow() < 2) return '<b>📊 Сегодня</b>\nДанных пока нет.';
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const rows = filterLatestTodaySnapshotRows_(headers,
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues());
+  const headers = sheet.getLastRow() >= 1
+    ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : [];
+  const allRows = sheet.getLastRow() >= 2
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues() : [];
   const h = headers.map(function (x) { return String(x || '').trim().toLowerCase(); });
   function col(name) { return h.indexOf(name); }
   const c = {spend: col('spend'), inst: col('inst'), reg: col('reg'),
-    dep: col('ftd'), revenue: col('revenue'), time: col('время')};
+    dep: col('ftd'), revenue: col('revenue'), time: col('время'), date: col('дата')};
+  const today = getToday_();
+  const todayRows = allRows.filter(function (row) {
+    return c.date >= 0 && normalizeDateKey_(row[c.date]) === today;
+  });
+  const rows = filterLatestTodaySnapshotRows_(headers, todayRows);
   const t = rows.reduce(function (a, row) {
     ['spend', 'inst', 'reg', 'dep', 'revenue'].forEach(function (key) {
       if (c[key] >= 0) a[key] += num_(row[c[key]]);
@@ -422,15 +427,22 @@ function telegramToday_() {
     t.dep = keitaroTotals.dep;
     t.revenue = keitaroTotals.revenue;
   }
+  const hasFbData = rows.length > 0;
+  if (!hasFbData && !keitaroTotals.hasData) {
+    return '<b>📊 Сегодня</b>\nДанных за текущие сутки пока нет.';
+  }
   const roi = t.spend > 0 ? (t.revenue - t.spend) / t.spend * 100 : 0;
-  const time = rows.length && c.time >= 0 ? formatTelegramTime_(rows[0][c.time]) : '';
+  const time = rows.length && c.time >= 0
+    ? formatTelegramTime_(rows[0][c.time])
+    : formatTelegramTime_(keitaroTotals.updatedAt || '');
   return ['<b>📊 Сегодня' + (time ? ' · ' + escapeHtml_(time) : '') + '</b>', '',
-    'Spend: <b>$' + t.spend.toFixed(2) + '</b>',
+    hasFbData ? 'Spend: <b>$' + t.spend.toFixed(2) + '</b>' :
+      'Spend: <b>нет данных Dolphin за сегодня</b>',
     'Inst: <b>' + Math.round(t.inst) + '</b>',
     'Reg: <b>' + Math.round(t.reg) + '</b>',
     'Dep: <b>' + Math.round(t.dep) + '</b>',
     'Revenue: <b>$' + t.revenue.toFixed(2) + '</b>',
-    'ROI: <b>' + Math.round(roi) + '%</b>'].join('\n');
+    hasFbData ? 'ROI: <b>' + Math.round(roi) + '%</b>' : 'ROI: <b>—</b>'].join('\n');
 }
 
 function formatTelegramTime_(value) {
@@ -447,7 +459,21 @@ function getTelegramKeitaroTodayTotals_() {
     return {hasData: false, inst: 0, reg: 0, dep: 0, revenue: 0};
   }
   const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
-  return aggregateTelegramKeitaroTotals_(values[0], values.slice(1));
+  const normalized = values[0].map(function (value) {
+    return String(value || '').trim().toLowerCase();
+  });
+  const dateIndex = normalized.indexOf('дата');
+  const updatedIndex = normalized.indexOf('updated at');
+  const today = getToday_();
+  const rows = values.slice(1).filter(function (row) {
+    return dateIndex >= 0 && normalizeDateKey_(row[dateIndex]) === today;
+  });
+  const totals = aggregateTelegramKeitaroTotals_(values[0], rows);
+  totals.updatedAt = rows.reduce(function (latest, row) {
+    const value = updatedIndex >= 0 ? row[updatedIndex] : '';
+    return String(value || '') > String(latest || '') ? value : latest;
+  }, '');
+  return totals;
 }
 
 function aggregateTelegramKeitaroTotals_(headers, rows) {
