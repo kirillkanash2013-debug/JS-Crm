@@ -57,27 +57,74 @@ function checkKeitaroConversionReconciliation_() {
 function runDailyControl_() {
   const checks = [];
 
-  checks.push(checkSpendReconciliation_(SHEETS.FB_HISTORY, SHEETS.ALL));
+  checks.push(checkSpendReconciliation_(SHEETS.FB_HISTORY, SHEETS.ALL, getYesterday_()));
   checks.push(checkDuplicateCampaigns_(SHEETS.FB_HISTORY));
   checks.push(checkUnknownAgents_());
 
   writeControl_(checks);
 }
 
-function checkSpendReconciliation_(fbSheetName, allSheetName) {
-  const fbSpend = sumColumnByHeader_(fbSheetName, 'Spend');
-  const allSpend = sumColumnByHeader_(allSheetName, 'Spend');
-  const diff = round2_(fbSpend - allSpend);
+function checkSpendReconciliation_(fbSheetName, allSheetName, date) {
+  try {
+    const fbSpend = sumSpendForDate_(fbSheetName, date);
+    const allSpend = sumSpendForDate_(allSheetName, date);
+    const diff = round2_(fbSpend - allSpend);
 
-  return [
-    getCurrentTimestamp_(),
-    'Spend reconciliation',
-    diff === 0 ? 'OK' : 'ERROR',
-    fbSpend,
-    allSpend,
-    diff,
-    ''
-  ];
+    return [
+      getCurrentTimestamp_(),
+      'Spend reconciliation',
+      diff === 0 ? 'OK' : 'ERROR',
+      round2_(fbSpend),
+      round2_(allSpend),
+      diff,
+      date ? 'Date: ' + normalizeDateKey_(date) : ''
+    ];
+  } catch (e) {
+    return [
+      getCurrentTimestamp_(),
+      'Spend reconciliation',
+      'ERROR',
+      '',
+      '',
+      '',
+      e.message
+    ];
+  }
+}
+
+function sumSpendForDate_(sheetName, date) {
+  const sheet = getOrCreateSheet_(sheetName);
+  if (sheet.getLastRow() < 2) return 0;
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const normalized = headers.map(function (value) {
+    return String(value || '').trim().toLowerCase();
+  });
+  const spendIdx = findHeaderIndex_(normalized, ['spend', 'спенд']);
+  const dateIdx = findHeaderIndex_(normalized, ['date', 'дата']);
+
+  if (spendIdx < 0) {
+    throw new Error('Spend header not found in ' + sheetName);
+  }
+  if (date && dateIdx < 0) {
+    throw new Error('Date header not found in ' + sheetName);
+  }
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const dateKey = date ? normalizeDateKey_(date) : '';
+
+  return values.reduce(function (sum, row) {
+    if (dateKey && normalizeDateKey_(row[dateIdx]) !== dateKey) return sum;
+    return sum + num_(row[spendIdx]);
+  }, 0);
+}
+
+function findHeaderIndex_(normalizedHeaders, aliases) {
+  for (let i = 0; i < aliases.length; i++) {
+    const index = normalizedHeaders.indexOf(String(aliases[i]).trim().toLowerCase());
+    if (index >= 0) return index;
+  }
+  return -1;
 }
 
 function checkDuplicateCampaigns_(sheetName) {
