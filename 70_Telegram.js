@@ -199,6 +199,16 @@ function repairTelegramWebhook() {
   const p = PropertiesService.getScriptProperties();
   p.deleteProperty('TELEGRAM_WEBHOOK_VERIFIED_AT');
   const installed = ensureTelegramWebhook_();
+  const webhookInfo = telegramApi_('getWebhookInfo', {});
+  const info = webhookInfo && webhookInfo.result || {};
+  logInfo_('Telegram webhook diagnostic', JSON.stringify({
+    installed: installed,
+    urlConfigured: Boolean(info.url),
+    pending: Number(info.pending_update_count || 0),
+    lastErrorDate: info.last_error_date || '',
+    lastErrorMessage: info.last_error_message || '',
+    maxConnections: info.max_connections || ''
+  }));
   processTelegramWebhookQueue_();
   return {installed: installed, checkedAt: new Date().toISOString()};
 }
