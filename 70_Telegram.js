@@ -23,7 +23,8 @@ function telegramMenu_() {
   return {keyboard: [
     [{text: '📊 Сегодня'}, {text: '🎯 Офферы'}],
     [{text: '📣 Кампании'}, {text: '🔀 Потоки'}],
-    [{text: '🔄 Обновить'}, {text: '❓ Помощь'}]
+    [{text: '🔄 Обновить'}, {text: '❌ Отмена'}],
+    [{text: '❓ Помощь'}]
   ], resize_keyboard: true, is_persistent: true};
 }
 
@@ -82,24 +83,75 @@ function doPost(e) {
   try {
     const update = JSON.parse(e.postData && e.postData.contents || '{}');
     const updateId = String(update.update_id === undefined ? '' : update.update_id);
-    if (updateId && p.getProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID') === updateId) {
-      return ContentService.createTextOutput('duplicate');
-    }
-    if (updateId) p.setProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID', updateId);
     const chatId = telegramUpdateChatId_(update);
     const allowed = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID) || '');
     if (chatId && String(chatId) === allowed) {
-      if (update.callback_query) {
-        telegramApi_('answerCallbackQuery', {callback_query_id: update.callback_query.id});
-        telegramCommand_(chatId, String(update.callback_query.data || ''));
-      } else {
-        telegramCommand_(chatId, String(update.message && update.message.text || ''));
-      }
+      enqueueTelegramWebhookCommand_({
+        id: updateId,
+        chatId: String(chatId),
+        command: String(update.callback_query
+          ? update.callback_query.data || ''
+          : update.message && update.message.text || ''),
+        callbackId: String(update.callback_query && update.callback_query.id || '')
+      });
     }
   } catch (error) {
     logError_('Telegram webhook', error);
   }
   return ContentService.createTextOutput('ok');
+}
+
+function enqueueTelegramWebhookCommand_(item) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let queue = [];
+    try { queue = JSON.parse(p.getProperty('TELEGRAM_WEBHOOK_QUEUE') || '[]'); } catch (_) {}
+    if (item.id && (p.getProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID') === item.id ||
+        queue.some(function (queued) { return queued.id === item.id; }))) return;
+    queue.push(item);
+    // A Telegram retry storm must never overflow Script Properties.
+    queue = queue.slice(-20);
+    p.setProperty('TELEGRAM_WEBHOOK_QUEUE', JSON.stringify(queue));
+    if (p.getProperty('TELEGRAM_WEBHOOK_WORKER_QUEUED') !== 'true') {
+      p.setProperty('TELEGRAM_WEBHOOK_WORKER_QUEUED', 'true');
+      ScriptApp.newTrigger('processTelegramWebhookQueue_').timeBased().after(1000).create();
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function processTelegramWebhookQueue_() {
+  const p = PropertiesService.getScriptProperties();
+  p.deleteProperty('TELEGRAM_WEBHOOK_WORKER_QUEUED');
+  for (let i = 0; i < 20; i++) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(5000);
+    let item;
+    try {
+      let queue = [];
+      try { queue = JSON.parse(p.getProperty('TELEGRAM_WEBHOOK_QUEUE') || '[]'); } catch (_) {}
+      if (!queue.length) {
+        p.deleteProperty('TELEGRAM_WEBHOOK_QUEUE');
+        return;
+      }
+      item = queue.shift();
+      if (queue.length) p.setProperty('TELEGRAM_WEBHOOK_QUEUE', JSON.stringify(queue));
+      else p.deleteProperty('TELEGRAM_WEBHOOK_QUEUE');
+      if (item.id) p.setProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID', String(item.id));
+    } finally {
+      lock.releaseLock();
+    }
+    try {
+      if (item.callbackId) telegramApi_('answerCallbackQuery', {callback_query_id: item.callbackId});
+      telegramCommand_(item.chatId, item.command);
+    } catch (error) {
+      telegramSend_(item.chatId, '⚠️ ' + escapeHtml_(error.message), telegramMenu_());
+      logError_('Telegram queued command', error);
+    }
+  }
 }
 
 function ensureTelegramWebhook_() {
@@ -171,7 +223,28 @@ function telegramCommand_(chatId, command) {
     queueTelegramRefresh_(chatId);
     return;
   }
-  telegramSend_(chatId, 'Используй кнопки меню.', telegramMenu_());
+  if (value === '/cancel' || value === '❌ Отмена') {
+    cancelTelegramRefresh_(chatId);
+    return;
+  }
+  telegramSend_(chatId,
+    'Сообщение принято, но это не команда CRM. Используй кнопки меню.', telegramMenu_());
+}
+
+function cancelTelegramRefresh_(chatId) {
+  const p = PropertiesService.getScriptProperties();
+  const wasQueued = p.getProperty('TELEGRAM_REFRESH_QUEUED') === 'true';
+  p.deleteProperty('TELEGRAM_REFRESH_QUEUED');
+  p.deleteProperty('TELEGRAM_REFRESH_CHAT_ID');
+  p.deleteProperty('TELEGRAM_REFRESH_MESSAGE_ID');
+  p.deleteProperty('TELEGRAM_REFRESH_QUEUED_AT');
+  ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === 'runQueuedTelegramRefresh_';
+  }).forEach(function (trigger) { ScriptApp.deleteTrigger(trigger); });
+  telegramSend_(chatId, wasQueued
+    ? '❌ Запланированное обновление отменено.'
+    : 'ℹ️ Нет обновления, ожидающего запуска. Уже выполняющийся запрос остановить нельзя.',
+    telegramMenu_());
 }
 
 function queueTelegramRefresh_(chatId) {
