@@ -9,16 +9,55 @@
 function rebuildAllToday_() {
   const fbSheet = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
   const ktSheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
-
+  const target = getOrCreateSheet_(SHEETS.ALL_TODAY);
+  const headers = getAllTodayHeaders_();
+  const today = getToday_();
+  const snapshotTime = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'HH:mm:ss');
   const rows = buildAllRowsFromSheets_(fbSheet, ktSheet, true).filter(function (row) {
     return num_(row[5]) > 0;
+  }).map(function (row) {
+    return [row[0], snapshotTime].concat(row.slice(1));
   });
+  const formatOptions = {
+    textColumns: [4, 5, 6],
+    numberColumns: [7, 11, 12, 13, 14],
+    integerColumns: [8, 9, 10],
+    percentColumns: [15]
+  };
 
-  writeDbSheet_(SHEETS.ALL_TODAY, getAllTodayHeaders_(), rows, {
-    textColumns: [3, 4, 5],
-    numberColumns: [6, 10, 11, 12, 13],
-    integerColumns: [7, 8, 9],
-    percentColumns: [14]
+  let reset = target.getLastRow() < 1;
+  if (!reset) {
+    const actual = target.getRange(1, 1, 1, target.getLastColumn()).getValues()[0];
+    reset = actual.length !== headers.length || actual.some(function (value, index) {
+      return value !== headers[index];
+    });
+  }
+  if (!reset && target.getLastRow() > 1) {
+    reset = normalizeDateKey_(target.getRange(2, 1).getValue()) !== today;
+  }
+
+  if (reset) {
+    target.clearContents();
+    ensureHeaders_(target, headers);
+  }
+  if (rows.length) appendRows_(target, rows, formatOptions);
+  target.setFrozenRows(1);
+}
+
+function filterLatestTodaySnapshotRows_(headers, rows) {
+  const normalized = headers.map(function (value) {
+    return String(value || '').trim().toLowerCase();
+  });
+  const timeIndex = normalized.indexOf('время');
+  if (timeIndex < 0 || !rows.length) return rows;
+
+  let latest = '';
+  rows.forEach(function (row) {
+    const value = String(row[timeIndex] || '');
+    if (value > latest) latest = value;
+  });
+  return rows.filter(function (row) {
+    return String(row[timeIndex] || '') === latest;
   });
 }
 
@@ -57,7 +96,8 @@ function buildGeoOfferRows_(allSheet, keitaroSheet, period) {
   const columns = getGeoSourceColumns_(allHeaders);
   const campaignIdColumn = allHeaders.map(function (x) { return String(x || '').trim().toLowerCase(); })
     .indexOf('campaign id');
-  const allRows = allSheet.getRange(2, 1, allSheet.getLastRow() - 1, allWidth).getValues();
+  const allRows = filterLatestTodaySnapshotRows_(allHeaders,
+    allSheet.getRange(2, 1, allSheet.getLastRow() - 1, allWidth).getValues());
   const ktRows = keitaroSheet.getRange(2, 1, keitaroSheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
   const campaignIndex = {};
   const spendGroups = {};
@@ -204,7 +244,8 @@ function getAllHistoryHeaders_() {
 }
 
 function getAllTodayHeaders_() {
-  return getAllBaseHeaders_().concat(['Campaign Status Raw', 'Campaign Status']);
+  return ['Дата', 'Время'].concat(getAllBaseHeaders_().slice(1))
+    .concat(['Campaign Status Raw', 'Campaign Status']);
 }
 
 function getAllBaseHeaders_() {
