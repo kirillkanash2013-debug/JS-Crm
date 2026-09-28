@@ -59,9 +59,12 @@ try {
   const extra=fs.readdirSync(scratch).filter(x=>/\.(js|gs|html)$/.test(x)&&!expected.includes(x));
   if(extra.length)throw Error('Unexpected remote modules after deployment');
   console.log('Verified Apps Script source readback.');
-  // One-time bootstrap: verify that the Apps Script Execution API is reachable.
-  run(['run','testApiConnections']);
-  console.log('Verified live Apps Script execution.');
+  // One-time recovery/bootstrap. Removed after the verified run.
+  run(['run','installTriggers']);
+  run(['run','dailyFinalization']);
+  run(['run','updateKeitaroToday']);
+  run(['run','rebuildTodayDashboard']);
+  console.log('Installed triggers and refreshed closed/current CRM data.');
 } finally {
   fs.rmSync(authPath,{force:true});
   fs.rmSync(scratch,{recursive:true,force:true});
