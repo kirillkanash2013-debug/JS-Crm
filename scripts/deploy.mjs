@@ -55,6 +55,10 @@ try {
   const deployOutput=run(['deploy','--deploymentId',stableTelegramDeployment,
     '--description','CRM '+(process.env.GITHUB_SHA||'manual')]);
   console.log('Updated stable Apps Script deployment: '+deployOutput.trim().replace(/https?:\/\/\S+/g,'[URL REDACTED]'));
+  // Re-register Telegram immediately. This prevents a stale webhook from
+  // leaving commands unanswered until the next time-based trigger fires.
+  const telegramRepair=run(['run','repairTelegramWebhook']);
+  console.log('Telegram webhook repair executed: '+telegramRepair.trim().slice(0,500));
   fs.writeFileSync(path.join(scratch,'.clasp.json'),JSON.stringify({scriptId:target,rootDir:'.',scriptExtensions:['.js'],htmlExtensions:['.html'],jsonExtensions:['.json']}));
   run(['pull'],scratch);
   const expected=fs.readFileSync('.claspignore','utf8').split('\n').filter(x=>x.startsWith('!')).map(x=>x.slice(1));
