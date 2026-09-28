@@ -43,7 +43,12 @@ function runFunction(name) {
   const output=run(['--json','run',name]);
   let result;
   try { result=JSON.parse(output); }
-  catch { throw Error(`Apps Script function ${name} returned invalid JSON.`); }
+  catch {
+    fs.writeFileSync(path.join(root,'clasp-run-output.txt'),String(output).slice(0,8000));
+    throw Error(`Apps Script function ${name} returned invalid JSON.`);
+  }
+  const safe=JSON.stringify(result,null,2).replace(/ya29\.[A-Za-z0-9._-]+/g,'[REDACTED]').replace(/("(?:access_token|refresh_token|client_secret)"\s*:\s*")[^"]+/gi,'$1[REDACTED]');
+  fs.writeFileSync(path.join(root,'clasp-run-output.txt'),safe);
   if(result.error) throw Error(`Apps Script function ${name} returned an execution error.`);
   if(result.response===undefined) throw Error(`Apps Script function ${name} returned no response.`);
   console.log(`[AppsScript] ${name} completed.`);
