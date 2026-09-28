@@ -2,7 +2,7 @@
   "timeZone": "Europe/Minsk",
   "dependencies": {},
   "executionApi": {
-    "access": "MYSELF"
+    "access": "ANYONE"
   },
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8"
