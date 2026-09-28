@@ -150,12 +150,49 @@ function telegramCommand_(chatId, command) {
     return;
   }
   if (value === '/refresh' || value === '🔄 Обновить') {
-    telegramSend_(chatId, '⏳ Обновляю Dolphin, Keitaro и CRM…');
-    updateToday();
-    telegramSend_(chatId, '✅ Обновление завершено.\n\n' + telegramToday_(), telegramMenu_());
+    queueTelegramRefresh_(chatId);
+    telegramSend_(chatId,
+      '✅ Запрос принят. Обновление идёт в фоне — бот пришлёт результат после завершения.',
+      telegramMenu_());
     return;
   }
   telegramSend_(chatId, 'Используй кнопки меню.', telegramMenu_());
+}
+
+function queueTelegramRefresh_(chatId) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const p = PropertiesService.getScriptProperties();
+    if (p.getProperty('TELEGRAM_REFRESH_QUEUED') === 'true') return false;
+    p.setProperties({
+      TELEGRAM_REFRESH_QUEUED: 'true',
+      TELEGRAM_REFRESH_CHAT_ID: String(chatId)
+    });
+    ScriptApp.newTrigger('runQueuedTelegramRefresh_').timeBased().after(1000).create();
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runQueuedTelegramRefresh_() {
+  const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('TELEGRAM_REFRESH_QUEUED') !== 'true') return;
+  const chatId = String(p.getProperty('TELEGRAM_REFRESH_CHAT_ID') ||
+    p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID) || '');
+  try {
+    updateToday();
+    if (chatId) telegramSend_(chatId,
+      '✅ Обновление завершено.\n\n' + telegramToday_(), telegramMenu_());
+  } catch (error) {
+    if (chatId) telegramSend_(chatId,
+      '⚠️ Обновление не завершено: ' + escapeHtml_(error.message), telegramMenu_());
+    logError_('Telegram queued refresh', error);
+  } finally {
+    p.deleteProperty('TELEGRAM_REFRESH_QUEUED');
+    p.deleteProperty('TELEGRAM_REFRESH_CHAT_ID');
+  }
 }
 
 function telegramToday_() {
