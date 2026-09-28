@@ -406,8 +406,8 @@ function rebuildSpendAgent_() {
     const dateCell = '$' + firstLetter + row;
     formulas.push(CONFIG.STRUCTURE_AGENTS.reduce(function (cells, agent, index) {
       const agentColumn = columnToLetter_(startColumn + 1 + index * 2);
-      cells.push('=IF(' + dateCell + '="","",SUMIFS(ALL!$R:$R,ALL!$A:$A,' +
-        dateCell + ',ALL!$W:$W,' + agentColumn + '$2))');
+      cells.push('=IF(' + dateCell + '="";"";SUMIFS(ALL!$R:$R;ALL!$A:$A;' +
+        dateCell + ';ALL!$W:$W;' + agentColumn + '$2))');
       cells.push(null);
       return cells;
     }, []));
