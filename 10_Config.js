@@ -18,6 +18,7 @@ const CONFIG = Object.freeze({
   // Stable Apps Script web-app deployment used by the Telegram webhook.
   // Future releases update this deployment instead of creating a new URL.
   TELEGRAM_WEBAPP_DEPLOYMENT_ID: 'AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA',
+  TELEGRAM_WORKER_URL: 'https://js-crm-telegram.kirill-kanash2013.workers.dev',
 
   STRUCTURE_AGENTS: ['Farm', 'Fun', '2B'],
   GEO_TOKEN_PATTERN: '^[A-Z]{2}(?:\\+[A-Z]{2})*$'
