@@ -51,6 +51,8 @@ try {
   // A server-side version is a rollback checkpoint; never publish backup source as an artifact.
   run(['create-version','Before CRM deployment '+(process.env.GITHUB_SHA||'manual')]);
   run(['push','--force']);
+  const deployOutput=run(['deploy','--description','CRM '+(process.env.GITHUB_SHA||'manual')]);
+  console.log('Created Apps Script deployment: '+deployOutput.trim().replace(/https?:\\/\\/\\S+/g,'[URL REDACTED]'));
   fs.writeFileSync(path.join(scratch,'.clasp.json'),JSON.stringify({scriptId:target,rootDir:'.',scriptExtensions:['.js'],htmlExtensions:['.html'],jsonExtensions:['.json']}));
   run(['pull'],scratch);
   const expected=fs.readFileSync('.claspignore','utf8').split('\n').filter(x=>x.startsWith('!')).map(x=>x.slice(1));
