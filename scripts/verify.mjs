@@ -75,6 +75,13 @@ assert.equal(ctx.getCampaignSpend_({statsTotal:{spend:'12.5'}}),12.5);
 assert.equal(ctx.getCampaignAccountId_({ad_account_id:123}),'123');
 assert.equal(ctx.isValidCampaignId_('123456'),true);
 assert.equal(ctx.isValidCampaignId_('{sub_id_4}'),false);
+const telegramTotals=ctx.aggregateTelegramKeitaroTotals_(
+  ['Дата','Inst','Reg','FTD','Revenue'],
+  [['2026-09-28',10,4,1,50],['2026-09-28',0,1,1,45]]
+);
+assert.deepEqual(JSON.parse(JSON.stringify(telegramTotals)),{
+  hasData:true,inst:10,reg:5,dep:2,revenue:95
+});
 assert.equal(Array.from(ctx.getAllHistoryHeaders_()).includes('Campaign Status'),false);
 assert.equal(Array.from(ctx.getAllTodayHeaders_()).includes('Campaign Status'),true);
 const staleCandidates={};
