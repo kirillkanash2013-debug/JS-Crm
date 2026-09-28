@@ -51,9 +51,8 @@ async function runAppsScriptFunction(functionName) {
   const credentials=auth.tokens.default;
   const client=new OAuth2Client(credentials.client_id,credentials.client_secret);
   client.setCredentials({
-    access_token:credentials.access_token,
     refresh_token:credentials.refresh_token,
-    expiry_date:credentials.expiry_date
+    expiry_date:0
   });
   const accessToken=await client.getAccessToken();
   const response=await fetch(`https://script.googleapis.com/v1/scripts/${target}:run`,{
