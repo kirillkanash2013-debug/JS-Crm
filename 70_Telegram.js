@@ -82,10 +82,11 @@ function doPost(e) {
   if (!secret || !e || !e.parameter || String(e.parameter.secret || '') !== secret) {
     return ContentService.createTextOutput('forbidden');
   }
+  let chatId = '';
   try {
     const update = JSON.parse(e.postData && e.postData.contents || '{}');
     const updateId = String(update.update_id === undefined ? '' : update.update_id);
-    const chatId = telegramUpdateChatId_(update);
+    chatId = telegramUpdateChatId_(update);
     const allowed = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID) || '');
     if (chatId && String(chatId) === allowed) {
       if (updateId && p.getProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID') === updateId) {
@@ -101,6 +102,12 @@ function doPost(e) {
     }
   } catch (error) {
     logError_('Telegram webhook', error);
+    if (chatId) {
+      try {
+        telegramSend_(chatId, '⚠️ Команда получена, но обработка завершилась ошибкой: ' +
+          escapeHtml_(error.message), telegramMenu_());
+      } catch (_) {}
+    }
   }
   return ContentService.createTextOutput('ok');
 }
@@ -196,6 +203,29 @@ function repairTelegramWebhook() {
   return {installed: installed, checkedAt: new Date().toISOString()};
 }
 
+/** End-to-end deployment check: posts a synthetic command through the public webhook. */
+function testTelegramWebhookRoundTrip() {
+  const p = PropertiesService.getScriptProperties();
+  const secret = getRequiredScriptProperty_('TELEGRAM_WEBHOOK_SECRET');
+  const chatId = getRequiredScriptProperty_(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID);
+  const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
+  if (!deploymentId) throw new Error('Telegram web-app deployment is not configured');
+  const response = UrlFetchApp.fetch(
+    'https://script.google.com/macros/s/' + deploymentId + '/exec?secret=' + encodeURIComponent(secret), {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        update_id: -Date.now(),
+        message: {chat: {id: String(chatId)}, text: '/health'}
+      }),
+      followRedirects: true,
+      muteHttpExceptions: true
+    });
+  const code = response.getResponseCode();
+  if (code < 200 || code >= 300) throw new Error('Telegram webhook round-trip HTTP ' + code);
+  return {ok: true, status: code};
+}
+
 function telegramUpdateChatId_(update) {
   if (update.message && update.message.chat) return String(update.message.chat.id);
   if (update.callback_query && update.callback_query.message) {
@@ -206,6 +236,10 @@ function telegramUpdateChatId_(update) {
 
 function telegramCommand_(chatId, command) {
   const value = String(command || '').trim();
+  if (value === '/health') {
+    telegramSend_(chatId, '✅ Бот подключён. Команды принимаются мгновенно.', telegramMenu_());
+    return;
+  }
   if (value === '/start' || value === '/help' || value === '❓ Помощь') {
     telegramSend_(chatId,
       '<b>JS CRM — оперативный пульт</b>\n\n' +
