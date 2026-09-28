@@ -390,10 +390,9 @@ function rebuildSpendAgent_() {
   const firstLetter = columnToLetter_(startColumn);
   const headers = [
     ['Месяц', 'Farm', '', 'Fun', '', '2B', ''],
-    ['', 'Farm', 'Farm', 'Fun', 'Fun', '2B', '2B'],
     ['Дата', 'CRM', 'Table', 'CRM', 'Table', 'CRM', 'Table']
   ];
-  sheet.getRange(1, startColumn, 3, 7).setValues(headers);
+  sheet.getRange(1, startColumn, 2, 7).setValues(headers);
   sheet.getRange(1, startColumn).setValue(monthStart).setNumberFormat('mmmm yyyy');
 
   const dates = [];
@@ -402,33 +401,35 @@ function rebuildSpendAgent_() {
     const date = new Date(monthStart.getFullYear(), monthStart.getMonth(), day);
     const valid = date.getMonth() === monthStart.getMonth();
     dates.push([valid ? date : '']);
-    const row = day + 3;
+    const row = day + 2;
     const dateCell = '$' + firstLetter + row;
     formulas.push(CONFIG.STRUCTURE_AGENTS.reduce(function (cells, agent, index) {
       const agentColumn = columnToLetter_(startColumn + 1 + index * 2);
-      cells.push('=IF(' + dateCell + '="";"";SUMIFS(ALL!$R:$R;ALL!$A:$A;' +
-        dateCell + ';ALL!$W:$W;' + agentColumn + '$2))');
+      const sum = 'SUMIFS(ALL!$R:$R;ALL!$A:$A;' + dateCell +
+        ';ALL!$W:$W;' + agentColumn + '$1)';
+      cells.push('=IF(' + dateCell + '="";"";IF(' + sum + '=0;"";' + sum + '))');
       cells.push(null);
       return cells;
     }, []));
   }
-  sheet.getRange(4, startColumn, 31, 1).setValues(dates).setNumberFormat('dd.mm.yyyy');
+  sheet.getRange(3, startColumn, 31, 1).setValues(dates).setNumberFormat('dd.mm.yyyy');
   formulas.forEach(function (row, index) {
     row.forEach(function (formula, offset) {
-      if (formula) sheet.getRange(index + 4, startColumn + 1 + offset).setFormula(formula);
+      if (formula) sheet.getRange(index + 3, startColumn + 1 + offset).setFormula(formula);
     });
   });
 
-  sheet.getRange(35, startColumn).setValue('Итого');
+  sheet.getRange(34, startColumn).setValue('Итого');
   for (let offset = 1; offset < 7; offset++) {
     const letter = columnToLetter_(startColumn + offset);
-    sheet.getRange(35, startColumn + offset).setFormula('=SUM(' + letter + '4:' + letter + '34)');
+    const sum = 'SUM(' + letter + '3:' + letter + '33)';
+    sheet.getRange(34, startColumn + offset).setFormula('=IF(' + sum + '=0;"";' + sum + ')');
   }
-  sheet.getRange(1, startColumn, 35, 7).setVerticalAlignment('middle');
-  sheet.getRange(1, startColumn, 3, 7).setFontWeight('bold').setBackground('#d9eaf7');
-  sheet.getRange(35, startColumn, 1, 7).setFontWeight('bold').setBackground('#d9ead3');
-  sheet.getRange(4, startColumn + 1, 32, 6).setNumberFormat('0.00');
-  sheet.setFrozenRows(3);
+  sheet.getRange(1, startColumn, 34, 7).setVerticalAlignment('middle');
+  sheet.getRange(1, startColumn, 2, 7).setFontWeight('bold').setBackground('#d9eaf7');
+  sheet.getRange(34, startColumn, 1, 7).setFontWeight('bold').setBackground('#d9ead3');
+  sheet.getRange(3, startColumn + 1, 32, 6).setNumberFormat('0.00');
+  sheet.setFrozenRows(2);
   sheet.autoResizeColumns(startColumn, 7);
 }
 
