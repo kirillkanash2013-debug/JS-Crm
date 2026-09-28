@@ -36,6 +36,7 @@ function telegramSend_(chatId, text, markup) {
 function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('TELEGRAM_WEBHOOK_URL')) return;
   const allowedChatId = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID));
   const offset = Number(p.getProperty('TELEGRAM_UPDATE_OFFSET') || 0);
   const response = telegramApi_('getUpdates', {
@@ -60,6 +61,53 @@ function processTelegramUpdates_() {
       logError_('Telegram', e);
     }
   });
+}
+
+function doPost(e) {
+  const p = PropertiesService.getScriptProperties();
+  const secret = String(p.getProperty('TELEGRAM_WEBHOOK_SECRET') || '');
+  if (!secret || !e || !e.parameter || String(e.parameter.secret || '') !== secret) {
+    return ContentService.createTextOutput('forbidden');
+  }
+  try {
+    const update = JSON.parse(e.postData && e.postData.contents || '{}');
+    const chatId = telegramUpdateChatId_(update);
+    const allowed = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID) || '');
+    if (chatId && String(chatId) === allowed) {
+      if (update.callback_query) {
+        telegramApi_('answerCallbackQuery', {callback_query_id: update.callback_query.id});
+        telegramCommand_(chatId, String(update.callback_query.data || ''));
+      } else {
+        telegramCommand_(chatId, String(update.message && update.message.text || ''));
+      }
+    }
+  } catch (error) {
+    logError_('Telegram webhook', error);
+  }
+  return ContentService.createTextOutput('ok');
+}
+
+function ensureTelegramWebhook_() {
+  if (!isTelegramConfigured_()) return false;
+  const p = PropertiesService.getScriptProperties();
+  let secret = String(p.getProperty('TELEGRAM_WEBHOOK_SECRET') || '');
+  if (!secret) {
+    secret = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+    p.setProperty('TELEGRAM_WEBHOOK_SECRET', secret);
+  }
+  const baseUrl = ScriptApp.getService().getUrl();
+  if (!baseUrl) return false;
+  const url = baseUrl + '?secret=' + encodeURIComponent(secret);
+  if (p.getProperty('TELEGRAM_WEBHOOK_URL') === url) return true;
+  const result = telegramApi_('setWebhook', {
+    url: url,
+    allowed_updates: ['message', 'callback_query'],
+    drop_pending_updates: false
+  });
+  if (!result || result.ok !== true) throw new Error('Telegram webhook installation failed');
+  p.setProperty('TELEGRAM_WEBHOOK_URL', url);
+  logInfo_('Telegram', 'Webhook installed');
+  return true;
 }
 
 function telegramUpdateChatId_(update) {
