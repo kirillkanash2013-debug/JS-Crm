@@ -44,6 +44,19 @@ function telegramEdit_(chatId, messageId, text) {
   });
 }
 
+function telegramAnswerCallbackSafe_(callbackId) {
+  if (!callbackId) return false;
+  try {
+    telegramApi_('answerCallbackQuery', {callback_query_id: callbackId});
+    return true;
+  } catch (error) {
+    // With one-minute polling Telegram may expire the callback acknowledgement
+    // before Apps Script receives it. The command itself must still run.
+    logInfo_('Telegram', 'Expired callback acknowledgement skipped');
+    return false;
+  }
+}
+
 function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
@@ -65,7 +78,7 @@ function processTelegramUpdates_() {
     if (!chatId || String(chatId) !== allowedChatId) return;
     try {
       if (update.callback_query) {
-        telegramApi_('answerCallbackQuery', {callback_query_id: update.callback_query.id});
+        telegramAnswerCallbackSafe_(update.callback_query.id);
         telegramCommand_(chatId, String(update.callback_query.data || ''));
       } else {
         telegramCommand_(chatId, String(update.message && update.message.text || ''));
@@ -95,7 +108,7 @@ function doPost(e) {
       }
       if (updateId) p.setProperty('TELEGRAM_LAST_WEBHOOK_UPDATE_ID', updateId);
       if (update.callback_query) {
-        telegramApi_('answerCallbackQuery', {callback_query_id: update.callback_query.id});
+        telegramAnswerCallbackSafe_(update.callback_query.id);
       }
       telegramCommand_(chatId, String(update.callback_query
         ? update.callback_query.data || ''
@@ -157,7 +170,7 @@ function processTelegramWebhookQueue_() {
       lock.releaseLock();
     }
     try {
-      if (item.callbackId) telegramApi_('answerCallbackQuery', {callback_query_id: item.callbackId});
+      if (item.callbackId) telegramAnswerCallbackSafe_(item.callbackId);
       telegramCommand_(item.chatId, item.command);
     } catch (error) {
       telegramSend_(item.chatId, '⚠️ ' + escapeHtml_(error.message), telegramMenu_());
