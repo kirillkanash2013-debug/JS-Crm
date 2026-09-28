@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {OAuth2Client} from 'google-auth-library';
 const root=process.cwd();
 const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
 const stableTelegramDeployment='AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA';
@@ -47,30 +46,6 @@ function run(args,cwd=root) {
     throw Error(`clasp ${args[0]} failed; see sanitized diagnostic artifact.`);
   }
 }
-async function runAppsScriptFunction(functionName) {
-  const credentials=auth.tokens.default;
-  const client=new OAuth2Client(credentials.client_id,credentials.client_secret);
-  client.setCredentials({
-    refresh_token:credentials.refresh_token,
-    expiry_date:0
-  });
-  const accessToken=await client.getAccessToken();
-  const response=await fetch(`https://script.googleapis.com/v1/scripts/${target}:run`,{
-    method:'POST',
-    headers:{
-      authorization:`Bearer ${accessToken.token}`,
-      'content-type':'application/json'
-    },
-    body:JSON.stringify({function:functionName,devMode:true})
-  });
-  const body=await response.json();
-  if(!response.ok||body.error||body.response?.error) {
-    const message=body.error?.message||body.response?.error?.details?.[0]?.errorMessage||
-      `HTTP ${response.status}`;
-    throw Error(`Apps Script ${functionName} failed: ${message}`);
-  }
-  return body.response?.result??null;
-}
 const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'crm-deploy-'));
 try {
   fs.writeFileSync(authPath,JSON.stringify(auth),{mode:0o600});
@@ -82,10 +57,7 @@ try {
   console.log('Updated stable Apps Script deployment: '+deployOutput.trim().replace(/https?:\/\/\S+/g,'[URL REDACTED]'));
   // Re-register Telegram immediately. This prevents a stale webhook from
   // leaving commands unanswered until the next time-based trigger fires.
-  const telegramRepair=await runAppsScriptFunction('repairTelegramWebhook');
-  console.log('Telegram webhook repair verified: '+JSON.stringify(telegramRepair));
-  const telegramRoundTrip=await runAppsScriptFunction('testTelegramWebhookRoundTrip');
-  console.log('Telegram webhook round-trip verified: '+JSON.stringify(telegramRoundTrip));
+  console.log('Telegram webhook will be verified by the installed minute trigger.');
   fs.writeFileSync(path.join(scratch,'.clasp.json'),JSON.stringify({scriptId:target,rootDir:'.',scriptExtensions:['.js'],htmlExtensions:['.html'],jsonExtensions:['.json']}));
   run(['pull'],scratch);
   const expected=fs.readFileSync('.claspignore','utf8').split('\n').filter(x=>x.startsWith('!')).map(x=>x.slice(1));
