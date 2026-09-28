@@ -251,6 +251,7 @@ function scheduledHourlyRefresh() {
   // The existing five-minute scheduler also services Telegram without another trigger.
   try {
     processTelegramUpdates_();
+    ensureTelegramPollingTrigger_();
   } catch (e) {
     logError_('Telegram polling', e);
   }
@@ -265,6 +266,25 @@ function scheduledHourlyRefresh() {
 
   hourlyRefresh();
   properties.setProperty('CRM_LAST_HOURLY_SLOT', slot);
+}
+
+function telegramPolling() {
+  try {
+    processTelegramUpdates_();
+  } catch (e) {
+    logError_('Telegram polling', e);
+  }
+}
+
+function ensureTelegramPollingTrigger_() {
+  if (!isTelegramConfigured_()) return;
+  const exists = ScriptApp.getProjectTriggers().some(function (trigger) {
+    return trigger.getHandlerFunction() === 'telegramPolling';
+  });
+  if (!exists) {
+    ScriptApp.newTrigger('telegramPolling').timeBased().everyMinutes(1).create();
+    logInfo_('Telegram', 'One-minute polling trigger installed');
+  }
 }
 
 function ensureTopOfHourTrigger_() {
