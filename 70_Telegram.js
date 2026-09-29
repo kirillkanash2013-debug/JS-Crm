@@ -70,8 +70,7 @@ function processTelegramUpdates_() {
   }
   const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
   if (p.getProperty('TELEGRAM_DELIVERY_MODE') !== 'POLLING' &&
-      p.getProperty('TELEGRAM_WEBHOOK_URL') &&
-      verifiedAt && Date.now() - verifiedAt < 15 * 60 * 1000) return;
+      p.getProperty('TELEGRAM_WEBHOOK_URL')) return;
   const allowedChatId = String(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID));
   const offset = Number(p.getProperty('TELEGRAM_UPDATE_OFFSET') || 0);
   const response = telegramApi_('getUpdates', {
@@ -217,7 +216,7 @@ function ensureTelegramWebhook_() {
     : baseUrl + '?secret=' + encodeURIComponent(secret);
   const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
   if (p.getProperty('TELEGRAM_WEBHOOK_URL') === url &&
-      verifiedAt && Date.now() - verifiedAt < 10 * 60 * 1000) return true;
+      verifiedAt && Date.now() - verifiedAt < 24 * 60 * 60 * 1000) return true;
   const result = telegramApi_('setWebhook', {
     url: url,
     allowed_updates: ['message', 'callback_query'],
@@ -234,7 +233,8 @@ function ensureTelegramWebhook_() {
     pending: Number(info.pending_update_count || 0),
     lastErrorDate: info.last_error_date || '',
     lastErrorMessage: info.last_error_message || '',
-    maxConnections: info.max_connections || ''
+    maxConnections: info.max_connections || '',
+    endpoint: workerUrl ? 'CLOUDFLARE' : 'APPS_SCRIPT'
   }));
   return true;
 }
