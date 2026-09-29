@@ -55,13 +55,15 @@ function triggerDolphinSync_(socialInternalIds) {
   });
 }
 
-function waitForDolphinSync_(oldSyncMap, socialInternalIds) {
+function waitForDolphinSync_(oldSyncMap, socialInternalIds, onProgress) {
   if (!socialInternalIds.length) return [];
 
+  let latestSocials = [];
   for (let attempt = 1; attempt <= CONFIG.DOLPHIN_SYNC_MAX_ATTEMPTS; attempt++) {
     Utilities.sleep(CONFIG.DOLPHIN_SYNC_POLL_MS);
 
     const socials = getFbSocials_();
+    if (socials.length) latestSocials = socials;
     let readyCount = 0;
 
     socials.forEach(function (social) {
@@ -75,11 +77,24 @@ function waitForDolphinSync_(oldSyncMap, socialInternalIds) {
     });
 
     logInfo_('waitForDolphinSync_', readyCount + '/' + socialInternalIds.length);
+    if (typeof onProgress === 'function') {
+      onProgress({
+        ready: readyCount,
+        total: socialInternalIds.length,
+        attempt: attempt,
+        maxAttempts: CONFIG.DOLPHIN_SYNC_MAX_ATTEMPTS
+      });
+    }
 
     if (readyCount === socialInternalIds.length) return socials;
   }
 
-  throw new Error('Dolphin не успел обновить все соцы');
+  if (latestSocials.length) {
+    latestSocials._syncTimedOut = true;
+    logInfo_('waitForDolphinSync_', 'TIMEOUT; using latest available Dolphin snapshot');
+    return latestSocials;
+  }
+  throw new Error('Dolphin не вернул данные после запуска синхронизации');
 }
 
 function getBusinesses_(date) {
@@ -150,7 +165,7 @@ function dolphinPagedGet_(path, params) {
   return result;
 }
 
-function refreshDolphinCurrentState_() {
+function refreshDolphinCurrentState_(onProgress) {
   const socialsBefore = getFbSocials_();
   if (!socialsBefore.length) {
     throw new Error('Dolphin не вернул ни одного FB-соца');
@@ -167,7 +182,7 @@ function refreshDolphinCurrentState_() {
   });
 
   triggerDolphinSync_(internalIds);
-  const socials = waitForDolphinSync_(oldSyncMap, internalIds);
+  const socials = waitForDolphinSync_(oldSyncMap, internalIds, onProgress);
 
   const today = getToday_();
   const businesses = getBusinesses_(today);
@@ -177,6 +192,7 @@ function refreshDolphinCurrentState_() {
     socials: socials,
     businesses: businesses,
     cabs: cabs,
+    syncTimedOut: Boolean(socials._syncTimedOut),
     updatedAt: getCurrentTimestamp_()
   };
 
