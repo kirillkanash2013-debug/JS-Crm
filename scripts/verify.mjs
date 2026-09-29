@@ -17,6 +17,7 @@ for (const file of fs.readdirSync('.').filter(x=>x.endsWith('.js'))) {
 }
 assert.equal(JSON.parse(fs.readFileSync('.clasp.json')).scriptId,'1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd');
 assert.equal(JSON.parse(fs.readFileSync('appsscript.json')).timeZone,'Europe/Minsk');
+assert.equal(typeof names.has === 'function' && names.has('refreshKeitaroFlowCache_'),true,'Keitaro flow cache module must be deployed');
 const ctx = vm.createContext({});
 vm.runInContext(files.map(f=>fs.readFileSync(f,'utf8')).join('\n'),ctx);
 let writes=0;
