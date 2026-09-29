@@ -12,7 +12,7 @@ const CONFIG = Object.freeze({
   KEITARO_API_BASE: 'http://91.223.123.254/admin_api/v1',
 
   DOLPHIN_SYNC_POLL_MS: 15000,
-  DOLPHIN_SYNC_MAX_ATTEMPTS: 20,
+  DOLPHIN_SYNC_MAX_ATTEMPTS: 6,
   PAGE_SIZE: 100,
 
   // Stable Apps Script web-app deployment used by the Telegram webhook.
