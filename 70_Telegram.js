@@ -60,6 +60,14 @@ function telegramAnswerCallbackSafe_(callbackId) {
 function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING' &&
+      String(CONFIG.TELEGRAM_WORKER_URL || '').trim()) {
+    try {
+      if (ensureTelegramWebhook_()) return;
+    } catch (error) {
+      logError_('Telegram Worker activation', error);
+    }
+  }
   const verifiedAt = Number(p.getProperty('TELEGRAM_WEBHOOK_VERIFIED_AT') || 0);
   if (p.getProperty('TELEGRAM_DELIVERY_MODE') !== 'POLLING' &&
       p.getProperty('TELEGRAM_WEBHOOK_URL') &&
