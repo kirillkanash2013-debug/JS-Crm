@@ -275,6 +275,7 @@ function scheduledHourlyRefresh() {
 function telegramPolling() {
   try {
     ensureTelegramWebhook_();
+    runTelegramWorkerSmokeTestOnce_();
     processTelegramWebhookQueue_();
     processTelegramUpdates_();
   } catch (e) {
