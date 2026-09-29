@@ -284,6 +284,16 @@ function testTelegramWebhookRoundTrip() {
   return {ok: true, status: code};
 }
 
+function runTelegramWorkerSmokeTestOnce_() {
+  const p = PropertiesService.getScriptProperties();
+  const version = 'cloudflare-v1';
+  if (p.getProperty('TELEGRAM_WORKER_SMOKE_TESTED') === version) return true;
+  const result = testTelegramWebhookRoundTrip();
+  p.setProperty('TELEGRAM_WORKER_SMOKE_TESTED', version);
+  logInfo_('Telegram Worker smoke test', JSON.stringify(result));
+  return true;
+}
+
 function telegramUpdateChatId_(update) {
   if (update.message && update.message.chat) return String(update.message.chat.id);
   if (update.callback_query && update.callback_query.message) {
