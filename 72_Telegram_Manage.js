@@ -360,6 +360,17 @@ function manageConfirm_(chatId, state) {
  */
 function manageApplyChange_(pending) {
   if (!getCrmEnv_().devEndpoint) throw new Error('Управление доступно только в песочнице');
-  return {ok: false, retryable: false,
-    message: 'запись в Meta ещё не подключена (нужен доступ к Dolphin write API). Ничего не изменено.'};
+  if (pending.type === 'toggle') {
+    const on = (pending.targets || []).filter(function (t) { return t.turnOn; }).map(function (t) { return t.id; });
+    const off = (pending.targets || []).filter(function (t) { return !t.turnOn; }).map(function (t) { return t.id; });
+    let done = 0;
+    if (on.length) done += setDolphinUnitsStatus_(pending.kind, on, true).updated;
+    if (off.length) done += setDolphinUnitsStatus_(pending.kind, off, false).updated;
+    return {ok: true, message: 'Готово: обновлено ' + done + ' шт.'};
+  }
+  if (pending.type === 'budget') {
+    return {ok: false, retryable: false,
+      message: 'смена бюджета на текущем тарифе Dolphin недоступна — подключим через Facebook API.'};
+  }
+  return {ok: false, message: 'неизвестная операция'};
 }

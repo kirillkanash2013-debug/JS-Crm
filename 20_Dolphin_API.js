@@ -41,6 +41,36 @@ function dolphinPost_(path, payload) {
   return parseJsonResponseOrThrow_(response, 'Dolphin POST ' + url);
 }
 
+function dolphinPatch_(path, payload) {
+  const url = CONFIG.DOLPHIN_API_BASE + path;
+  const response = UrlFetchApp.fetch(url, {
+    method: 'patch',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + getDolphinToken_(),
+      Accept: 'application/json'
+    },
+    payload: JSON.stringify(payload || {}),
+    muteHttpExceptions: true
+  });
+  return parseJsonResponseOrThrow_(response, 'Dolphin PATCH ' + url);
+}
+
+/**
+ * Turns campaigns / adsets / ads on or off via Dolphin.
+ * Verified payload: PATCH /fb-campaigns {status, ids}. Adsets/ads use the same
+ * shape on their own endpoint.
+ */
+function setDolphinUnitsStatus_(level, ids, on) {
+  const paths = {campaign: '/fb-campaigns', adset: '/fb-adsets', ad: '/fb-ads'};
+  const path = paths[level];
+  if (!path) throw new Error('Unknown level: ' + level);
+  const cleanIds = (ids || []).map(String).filter(Boolean);
+  if (!cleanIds.length) return {updated: 0};
+  dolphinPatch_(path, {status: on ? 'ACTIVE' : 'PAUSED', ids: cleanIds});
+  return {updated: cleanIds.length};
+}
+
 function getFbSocials_() {
   const json = dolphinGet_('/fb-accounts?currency=' + encodeURIComponent(CONFIG.CURRENCY));
   return json.data || [];
