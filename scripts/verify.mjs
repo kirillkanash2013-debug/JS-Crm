@@ -120,7 +120,7 @@ const prodStorage=new Set(Object.values(ctx.getStorageIds_()));
 ctx.ScriptApp={getScriptId:()=> '1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP'};
 assert(Object.values(ctx.getStorageIds_()).every(id=>!prodStorage.has(id)),'Sandbox must not touch prod storage');
 assert.equal(new Set(Object.values(ctx.getStorageIds_())).size,5,'Sandbox keeps five separate spreadsheets like prod');
-assert.equal(ctx.getCrmEnv_().telegramWorkerUrl,'');
+assert.equal(ctx.getCrmEnv_().telegramWorkerUrl,'https://js-crm-telegram-claude.kirill-kanash2013.workers.dev');
 const devProps={CRM_CLAUDE_DEV_SECRET:'s'.repeat(64)};
 ctx.PropertiesService={getScriptProperties:()=>({getProperty:k=>devProps[k]||null})};
 ctx.ContentService={MimeType:{JSON:'json'},createTextOutput:t=>({text:t,setMimeType(){return this;}})};

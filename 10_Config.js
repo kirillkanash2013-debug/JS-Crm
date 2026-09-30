@@ -97,9 +97,10 @@ const CRM_ENVIRONMENTS = Object.freeze({
       ACCOUNTS: '1vvIUEF3lCCGDrnipsJxE_JSCkzfBDpvxFHuvQeGPZDw',
       LOGS: '1mFvZ7NDxg7iIBaE6y3HkssMDnTYv-HtOR7EgaP7P-s8'
     }),
-    // No webhook: the sandbox bot uses one-minute getUpdates polling.
-    telegramWebappDeploymentId: '',
-    telegramWorkerUrl: '',
+    // Instant delivery via the sandbox's own Cloudflare Worker; Apps Script
+    // deployment id lets the webhook fall back to /exec if the worker is down.
+    telegramWebappDeploymentId: 'AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ',
+    telegramWorkerUrl: 'https://js-crm-telegram-claude.kirill-kanash2013.workers.dev',
     devEndpoint: true
   })
 });

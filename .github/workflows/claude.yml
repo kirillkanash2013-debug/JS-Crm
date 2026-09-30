@@ -27,6 +27,23 @@ jobs:
         with:
           node-version: '22'
       - run: npm test
+  worker:
+    # Instant Telegram delivery for the sandbox bot via its own Cloudflare Worker.
+    needs: check
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Deploy sandbox Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy --config wrangler.claude.toml
   deploy:
     needs: check
     if: github.event_name == 'push' || inputs.deploy

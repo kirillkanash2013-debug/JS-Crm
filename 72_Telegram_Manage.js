@@ -104,21 +104,21 @@ function manageCampaignsView_() {
   const cs = readTodayCampaignState_();
   const kt = readTodayKeitaroByCampaign_().byId;
   const list = cs.list.slice().sort(function (a, b) { return b.spend - a.spend; }).slice(0, 40);
-  const lines = [TELEGRAM_ICON_META + ' <b>Компании · ' +
-    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>', ''];
-  list.forEach(function (c, i) {
+  const header = TELEGRAM_ICON_META + ' <b>Компании · ' +
+    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>';
+  const cards = list.map(function (c, i) {
     const m = kt[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
     const mark = adHealthMark_(c.activeAds, c.errorAds, c.warningAds);
-    lines.push(manageCard_(i + 1, c.status === 'ACTIVE', mark, c.name || c.id, c.budget, c.spend, m));
+    return manageCard_(i + 1, c.status === 'ACTIVE', mark, c.name || c.id, c.budget, c.spend, m);
   });
-  if (!list.length) lines.push('Запущенных кампаний сейчас нет.');
-  return {text: lines.join('\n'), keyboard: manageActionKeyboard_('campaigns', {}),
+  const text = header + '\n\n' + (cards.length ? cards.join('\n\n') : 'Запущенных кампаний сейчас нет.');
+  return {text: text, keyboard: manageActionKeyboard_('campaigns', {}),
     list: list.map(function (c) { return {id: c.id, name: c.name, cbo: c.budget > 0, budget: c.budget}; })};
 }
 
 function manageAdsetsView_(campaign) {
   const adsets = getCampaignAdsets_(campaign.id);
-  const lines = ['📂 <b>' + escapeHtml_(telegramTrim_(campaign.name, 34)) + '</b> · адсеты', ''];
+  const header = '📂 <b>' + escapeHtml_(telegramTrim_(campaign.name, 34)) + '</b> · адсеты';
   let anyBudget = false;
   const list = adsets.map(function (a) {
     const budget = getCampaignDailyBudget_(a);
@@ -131,30 +131,30 @@ function manageAdsetsView_(campaign) {
       m: {inst: num_(stats.clicks_tracker_keitaro), reg: num_(stats.registrations_tracker_keitaro),
         dep: num_(stats.deposits_tracker_keitaro), rev: num_(stats.revenue || stats.rev)}};
   });
-  list.forEach(function (a, i) {
-    lines.push(manageCard_(i + 1, a.active, a.mark, a.name, a.budget, a.spend, a.m));
+  const cards = list.map(function (a, i) {
+    return manageCard_(i + 1, a.active, a.mark, a.name, a.budget, a.spend, a.m);
   });
-  if (!list.length) lines.push('Адсетов не найдено.');
-  return {text: lines.join('\n'), keyboard: manageActionKeyboard_('adsets', {adsetBudget: anyBudget}),
+  const text = header + '\n\n' + (cards.length ? cards.join('\n\n') : 'Адсетов не найдено.');
+  return {text: text, keyboard: manageActionKeyboard_('adsets', {adsetBudget: anyBudget}),
     list: list.map(function (a) { return {id: a.id, name: a.name, budget: a.budget, on: a.active}; })};
 }
 
 function manageAdsView_(adset) {
   const ads = getAdsetAds_(adset.id);
-  const lines = ['🖼 <b>' + escapeHtml_(telegramTrim_(adset.name, 34)) + '</b> · объявления', ''];
+  const header = '🖼 <b>' + escapeHtml_(telegramTrim_(adset.name, 34)) + '</b> · объявления';
   const list = ads.map(function (a) {
     return {id: String(a.ad_id || a.id || ''), name: String(a.name || ''),
       active: String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE',
       mark: manageAdUnitMark_(a),
       reason: String(a.disapprove_reason || a.disapprove_comment || '').trim()};
   });
-  list.forEach(function (a, i) {
-    lines.push('<b>' + (i + 1) + '.</b> ' + manageDot_(a.active) + a.mark + ' ' +
+  const cards = list.map(function (a, i) {
+    return '<b>' + (i + 1) + '.</b> ' + manageDot_(a.active) + a.mark + ' ' +
       escapeHtml_(telegramTrim_(a.name, 28)) +
-      (a.reason ? '\n     ⛔ ' + escapeHtml_(telegramTrim_(a.reason, 70)) : ''));
+      (a.reason ? '\n⛔ ' + escapeHtml_(telegramTrim_(a.reason, 70)) : '');
   });
-  if (!list.length) lines.push('Объявлений не найдено.');
-  return {text: lines.join('\n'), keyboard: manageActionKeyboard_('ads', {}),
+  const text = header + '\n\n' + (cards.length ? cards.join('\n\n') : 'Объявлений не найдено.');
+  return {text: text, keyboard: manageActionKeyboard_('ads', {}),
     list: list.map(function (a) { return {id: a.id, name: a.name, on: a.active}; })};
 }
 
