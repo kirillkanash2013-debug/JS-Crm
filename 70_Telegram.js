@@ -568,7 +568,8 @@ function telegramNowGeoBlock_(spendIds, geoById) {
   const out = [];
   Object.keys(geos).sort().forEach(function (geo) {
     const offers = Object.keys(geos[geo]).map(function (k) { return geos[geo][k]; })
-      .filter(function (o) { return o.inst > 0; })
+      // Same threshold as the offers dashboard: a single install is долёт noise.
+      .filter(function (o) { return o.inst > 1; })
       .sort(function (a, b) { return b.inst - a.inst; });
     if (!offers.length) return;
     out.push('🌍 <b>' + escapeHtml_(geo) + '</b>');
