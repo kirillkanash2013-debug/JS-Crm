@@ -35,6 +35,12 @@ function render(s){
   $("connectToken").disabled=pending||running;
   $("sync").disabled=pending||running||!s.social||!s.hasMetaToken;
   $("cancel").disabled=pending||!running;$("export").disabled=pending||!s.social;
+  const trace=s.trace;
+  $("traceState").textContent=trace ? (trace.active && trace.expiresAt>Date.now() ? "Запись идёт" : "Запись остановлена")+" · запросов: "+trace.rows.length+" / 300" : "Запись не запускалась";
+  $("traceRows").replaceChildren();
+  for(const row of (trace?.rows || []).slice(-20)){const tr=document.createElement("tr");cell(tr,new Date(row.at).toLocaleTimeString());cell(tr,row.method+" "+(row.operation || row.path));cell(tr,row.failed ? "Ошибка сети" : row.status ?? "…");$("traceRows").append(tr);}
+  $("traceStart").disabled=pending||!!(trace?.active && trace.expiresAt>Date.now());
+  $("traceStop").disabled=pending||!trace?.active;$("traceExport").disabled=pending||!trace?.rows.length;
   if(s.status)message(s.status.text,s.status.error);
 }
 async function refresh(){render(await ask("STATE"));}
@@ -79,3 +85,16 @@ $("export").onclick=()=>{
 };
 chrome.storage.onChanged.addListener((c,area)=>{if(area==="local")void refresh().catch(()=>{});});
 void refresh().catch(e=>message(e.message,true));
+
+$("traceStart").onclick=async()=>{
+ const granted=await chrome.permissions.request({origins:["https://graph.facebook.com/*","https://adsmanager.facebook.com/*","https://business.facebook.com/*","https://www.facebook.com/*"]});
+ if(!granted){message("Для записи разрешите доступ к сайтам Facebook.",true);return;}
+ void task(async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});if(!tab?.id)throw new Error("Откройте Ads Manager.");await ask("TRACE_START",{tabId:tab.id});});
+};
+$("traceStop").onclick=()=>void task(()=>ask("TRACE_STOP"));
+$("traceClear").onclick=()=>void task(()=>ask("TRACE_CLEAR"));
+$("traceExport").onclick=()=>{
+ if(!state.trace)return;const {tabId,...trace}=state.trace;
+ const blob=new Blob([JSON.stringify({schemaVersion:1,extensionVersion:"0.4.0",trace},null,2)],{type:"application/json"});
+ const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="js-control-requests-"+today()+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};

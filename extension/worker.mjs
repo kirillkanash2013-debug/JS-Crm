@@ -1,3 +1,4 @@
+import {installRecorder} from "./recorder.mjs";
 import {pageFetcher} from "./page-transport.mjs";
 import {license,accountId,adsUrl,period,validatePageSnapshot} from "./core.mjs";
 import {captureVisible} from "./collector.mjs";
@@ -8,6 +9,7 @@ const init=Promise.all([
   chrome.storage.local.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"}),
   chrome.storage.session.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"})
 ]);
+const recorder=installRecorder(chrome);
 let busy=false;
 let captureQueue=Promise.resolve();
 chrome.webRequest?.onBeforeRequest.addListener(details=>{
@@ -25,7 +27,7 @@ chrome.webRequest?.onBeforeRequest.addListener(details=>{
     if(next.candidates.length)await status("Доступ обнаружен в запросе Ads Manager. Нажмите «Подключить соц» ещё раз для проверки.");
   }).catch(()=>{});
 },{urls:["https://graph.facebook.com/*"]},["requestBody"]);
-async function read(){await init;return chrome.storage.local.get(["license","binding","snapshot","status","auto","range","social","reports","job","sessionDiagnostics"]);}
+async function read(){await init;return chrome.storage.local.get(["license","binding","snapshot","status","auto","range","social","reports","job","sessionDiagnostics","trace"]);}
 async function status(text,error=false){await chrome.storage.local.set({status:{text,error,at:new Date().toISOString()}});}
 async function licensed(){const s=await read();if(!s.license) throw new Error("Сначала активируйте демонстрационный ключ.");return s;}
 async function run(mode){
@@ -167,6 +169,9 @@ async function processWhole(){
 
 async function command(m){
   switch(m.type){
+    case "TRACE_START":{await licensed();const tab=await chrome.tabs.get(m.tabId);if(!adsUrl(tab.url))throw new Error("Откройте вкладку Ads Manager.");await recorder.start(tab.id);await status("Запись включена на 15 минут. Работайте в этой вкладке Ads Manager.");return true;}
+    case "TRACE_STOP":{await recorder.stop();await status("Запись остановлена. Экспортируйте запись запросов.");return true;}
+    case "TRACE_CLEAR":{await recorder.clear();return true;}
     case "CONNECT_SOCIAL":{if(busy)throw new Error("Подождите окончания сбора.");return connectSocial(m.tabId,{since:m.since,until:m.until});}
     case "CONNECT_SOCIAL_TOKEN":{if(busy)throw new Error("Подождите окончания сбора.");return connectSocial(m.tabId,{since:m.since,until:m.until},m.token || "");}
     case "SYNC_SOCIAL":return startWholeSync();
@@ -200,9 +205,10 @@ async function command(m){
       await chrome.storage.local.set({auto:!!m.enabled});return true;
     }
     case "DISCONNECT":{
+      await recorder.clear();
       clearMetaTransport();
       await captureQueue;await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
-      await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics"]);
+      await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics","trace"]);
       await chrome.storage.session.remove(["metaToken","socialTabId"]);await chrome.storage.local.set({auto:false});
       await status("Кабинет отключён; локальные данные удалены.");return true;
     }
@@ -215,9 +221,10 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
   return true;
 });
 chrome.alarms.onAlarm.addListener(a=>{
+  if(a.name==="trace-expiry")void recorder.stop("expired").catch(()=>{});
   if(a.name==="capture-expiry")void (async()=>{await captureQueue;await chrome.storage.session.remove("networkCapture");const s=await read();if(s.sessionDiagnostics?.network?.state==="waiting"){await chrome.storage.local.set({sessionDiagnostics:{...s.sessionDiagnostics,network:{...s.sessionDiagnostics.network,state:"expired"}}});await status("Наблюдение завершено. Доступ не найден в запросах. Откройте диагностику подключения.",true);}})().catch(()=>{});
   if(a.name==="whole")void processWhole().catch(()=>{});if(a.name==="sync") void run("api").catch(()=>{});
 });
 chrome.runtime.onStartup.addListener(()=>{
-  void (async()=>{await init;await chrome.alarms.clear("sync");await chrome.storage.local.set({auto:false});const s=await read();if(s.job?.state==="running")await chrome.storage.local.set({job:{...s.job,state:"needs_auth",leaseUntil:0}});await chrome.alarms.clear("whole");await status("Браузер запущен. Подключите соц для восстановления локального доступа.");})().catch(()=>{});
+  void (async()=>{await init;await recorder.stop("browser-restart");await chrome.alarms.clear("sync");await chrome.storage.local.set({auto:false});const s=await read();if(s.job?.state==="running")await chrome.storage.local.set({job:{...s.job,state:"needs_auth",leaseUntil:0}});await chrome.alarms.clear("whole");await status("Браузер запущен. Подключите соц для восстановления локального доступа.");})().catch(()=>{});
 });
