@@ -578,12 +578,22 @@ function telegramNowGeoBlock_(spendIds, geoById) {
     out.push(TELEGRAM_ICON_KEITARO + ' <b>' + escapeHtml_(geo) + '</b>');
     offers.forEach(function (o) {
       out.push((o.offerId ? '<code>' + escapeHtml_(o.offerId) + '</code> ' : '') +
-        escapeHtml_(telegramTrim_(o.offer, 48)) +
-        '\n    ' + Math.round(o.inst) + ' - ' + Math.round(o.reg) +
-        ' - ' + Math.round(o.dep) + ' · uEPC $' + safeDiv_(o.rev, o.inst).toFixed(2));
+        escapeHtml_(telegramOfferName_(o.offer)) +
+        ' · ' + Math.round(o.inst) + ' - ' + Math.round(o.reg) + ' - ' + Math.round(o.dep) +
+        ' · $' + safeDiv_(o.rev, o.inst).toFixed(2));
     });
   });
   return out;
+}
+
+/**
+ * Compact offer label for one-line display: the part before the first "|"
+ * (drops landing/manager tail) with a leading "[Network]" bracket removed.
+ * Generic — works for any affiliate-network prefix, not one advertiser.
+ */
+function telegramOfferName_(offer) {
+  const head = String(offer || '').split('|')[0];
+  return telegramTrim_(head.replace(/^\s*\[[^\]]*\]\s*/, '').trim(), 28);
 }
 
 /** One systematic place to shorten long offer / campaign names for chat. */
