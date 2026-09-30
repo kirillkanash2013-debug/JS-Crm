@@ -3,9 +3,18 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const root=process.cwd();
-const target='1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd';
-const stableTelegramDeployment='AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA';
-if(JSON.parse(fs.readFileSync('.clasp.json')).scriptId!==target) throw Error('Wrong target');
+// CRM_TARGET selects the Apps Script project: prod (main) or claude (claude-code sandbox).
+const targets={
+  prod:{projectFile:'.clasp.json',scriptId:'1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd',
+    deploymentId:'AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA'},
+  claude:{projectFile:'.clasp.claude.json',scriptId:'1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP',
+    deploymentDescription:'Claude sandbox web app'}
+};
+const targetName=process.env.CRM_TARGET||'prod';
+const targetConfig=targets[targetName];
+if(!targetConfig) throw Error('Unknown CRM_TARGET: '+targetName);
+const target=targetConfig.scriptId;
+if(JSON.parse(fs.readFileSync(targetConfig.projectFile)).scriptId!==target) throw Error('Wrong target');
 if(!process.env.CLASP_AUTH_JSON) throw Error('Owner action required: add CLASP_AUTH_JSON to GitHub Actions secrets.');
 const authValue=process.env.CLASP_AUTH_JSON.trim();
 function parseAuth(value) {
@@ -37,24 +46,43 @@ const authPath=path.join(os.homedir(),'.clasprc.json');
 if(fs.existsSync(authPath)) throw Error('Refusing to overwrite existing credentials; use a clean runner');
 const clasp=path.join(root,'node_modules/.bin/clasp');
 function run(args,cwd=root) {
+  if(cwd===root) args=[...args,'--project',path.join(root,targetConfig.projectFile)];
   try{return execFileSync(clasp,args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});}
   catch (error) {
     const diagnostic={args:args,code:error?.status??error?.code??null,signal:error?.signal??null,message:String(error?.message||''),stdout:String(error?.stdout||''),stderr:String(error?.stderr||'')};
     const raw=JSON.stringify(diagnostic,null,2);
     const safe=raw.replace(/ya29\.[A-Za-z0-9._-]+/g,'[REDACTED]').replace(/("(?:access_token|refresh_token|client_secret)"\s*:\s*")[^"]+/gi,'$1[REDACTED]');
     fs.writeFileSync(path.join(root,'clasp-run-output.txt'),safe.slice(0,8000));
+    if(targetName==='claude') console.error(safe.slice(0,8000));
     throw Error(`clasp ${args[0]} failed; see sanitized diagnostic artifact.`);
   }
+}
+// The sandbox keeps one web-app deployment, found by its description prefix,
+// so its /exec URL stays stable across releases.
+function findDeployment(prefix) {
+  const list=JSON.parse(run(['list-deployments','--json']));
+  const match=list.find(d=>d.versionNumber&&String(d.description||'').startsWith(prefix));
+  return match?match.deploymentId:'';
 }
 const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'crm-deploy-'));
 try {
   fs.writeFileSync(authPath,JSON.stringify(auth),{mode:0o600});
   // A server-side version is a rollback checkpoint; never publish backup source as an artifact.
-  run(['create-version','Before CRM deployment '+(process.env.GITHUB_SHA||'manual')]);
+  // The sandbox has no production data to roll back; its deploy already adds a version.
+  if(targetName==='prod') run(['create-version','Before CRM deployment '+(process.env.GITHUB_SHA||'manual')]);
   run(['push','--force']);
-  const deployOutput=run(['deploy','--deploymentId',stableTelegramDeployment,
-    '--description','CRM '+(process.env.GITHUB_SHA||'manual')]);
+  const deploymentId=targetConfig.deploymentId||findDeployment(targetConfig.deploymentDescription);
+  const deployArgs=['deploy','--description',
+    (targetConfig.deploymentDescription||'CRM')+' '+(process.env.GITHUB_SHA||'manual')];
+  if(deploymentId) deployArgs.push('--deploymentId',deploymentId);
+  const deployOutput=run(deployArgs);
   console.log('Updated stable Apps Script deployment: '+deployOutput.trim().replace(/https?:\/\/\S+/g,'[URL REDACTED]'));
+  if(targetName==='claude') {
+    const id=deploymentId||findDeployment(targetConfig.deploymentDescription);
+    if(!id) throw Error('Sandbox deployment was not created');
+    console.log('Sandbox web app deployment: '+id);
+    if(process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT,'deployment_id='+id+'\n');
+  }
   // Re-register Telegram immediately. This prevents a stale webhook from
   // leaving commands unanswered until the next time-based trigger fires.
   console.log('Telegram webhook will be verified by the installed minute trigger.');

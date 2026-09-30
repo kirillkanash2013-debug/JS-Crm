@@ -61,7 +61,7 @@ function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
   if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING' &&
-      String(CONFIG.TELEGRAM_WORKER_URL || '').trim()) {
+      String(getCrmEnv_().telegramWorkerUrl || '').trim()) {
     try {
       if (ensureTelegramWebhook_()) return;
     } catch (error) {
@@ -98,6 +98,7 @@ function processTelegramUpdates_() {
 }
 
 function doPost(e) {
+  if (e && e.parameter && e.parameter.dev) return handleDevRequest_(e);
   const p = PropertiesService.getScriptProperties();
   const secret = String(p.getProperty('TELEGRAM_WEBHOOK_SECRET') || '');
   if (!secret || !e || !e.parameter || String(e.parameter.secret || '') !== secret) {
@@ -189,7 +190,9 @@ function processTelegramWebhookQueue_() {
 function ensureTelegramWebhook_() {
   if (!isTelegramConfigured_()) return false;
   const p = PropertiesService.getScriptProperties();
-  const workerUrl = String(CONFIG.TELEGRAM_WORKER_URL || '').replace(/\/$/, '');
+  const workerUrl = String(getCrmEnv_().telegramWorkerUrl || '').replace(/\/$/, '');
+  // An environment without a webhook endpoint (the Claude sandbox) always polls.
+  if (!workerUrl && !getCrmEnv_().telegramWebappDeploymentId) return false;
   if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING' && !workerUrl) return false;
   const currentInfoResponse = telegramApi_('getWebhookInfo', {});
   const currentInfo = currentInfoResponse && currentInfoResponse.result || {};
@@ -206,7 +209,7 @@ function ensureTelegramWebhook_() {
     secret = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
     p.setProperty('TELEGRAM_WEBHOOK_SECRET', secret);
   }
-  const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
+  const deploymentId = String(getCrmEnv_().telegramWebappDeploymentId || '').trim();
   const baseUrl = deploymentId
     ? 'https://script.google.com/macros/s/' + deploymentId + '/exec'
     : ScriptApp.getService().getUrl();
@@ -263,8 +266,8 @@ function testTelegramWebhookRoundTrip() {
   const p = PropertiesService.getScriptProperties();
   const secret = getRequiredScriptProperty_('TELEGRAM_WEBHOOK_SECRET');
   const chatId = getRequiredScriptProperty_(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID);
-  const workerUrl = String(CONFIG.TELEGRAM_WORKER_URL || '').replace(/\/$/, '');
-  const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
+  const workerUrl = String(getCrmEnv_().telegramWorkerUrl || '').replace(/\/$/, '');
+  const deploymentId = String(getCrmEnv_().telegramWebappDeploymentId || '').trim();
   if (!workerUrl && !deploymentId) throw new Error('Telegram webhook endpoint is not configured');
   const testUrl = workerUrl
     ? workerUrl + '/' + encodeURIComponent(secret)
@@ -286,6 +289,7 @@ function testTelegramWebhookRoundTrip() {
 
 function runTelegramWorkerSmokeTestOnce_() {
   const p = PropertiesService.getScriptProperties();
+  if (!getCrmEnv_().telegramWorkerUrl) return true;
   const version = 'cloudflare-v1';
   if (p.getProperty('TELEGRAM_WORKER_SMOKE_TESTED') === version) return true;
   const result = testTelegramWebhookRoundTrip();

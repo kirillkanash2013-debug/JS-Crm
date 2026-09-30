@@ -57,22 +57,23 @@ function getOrCreateSheet_(name) {
 
 function getStorageSpreadsheetForSheet_(name) {
   const sheetName = String(name || '');
-  let id = STORAGE_SPREADSHEET_IDS.CRM;
+  const storage = getStorageIds_();
+  let id = storage.CRM;
 
   if (sheetName === SHEETS.DB_CAMPAIGNS_TODAY || sheetName === SHEETS.FB_HISTORY ||
       /^\[FB_History_/.test(sheetName)) {
-    id = STORAGE_SPREADSHEET_IDS.FB;
+    id = storage.FB;
   } else if (sheetName === SHEETS.DB_KEITARO_TODAY || sheetName === SHEETS.KEITARO_HISTORY ||
       sheetName === SHEETS.DB_KEITARO_CONVERSIONS_TODAY ||
       sheetName === SHEETS.KEITARO_CONVERSIONS_HISTORY ||
       /^\[Keitaro_History_/.test(sheetName)) {
-    id = STORAGE_SPREADSHEET_IDS.KEITARO;
+    id = storage.KEITARO;
   } else if ([SHEETS.DB_SOCIALS, SHEETS.DB_BMS, SHEETS.DB_CABS,
       SHEETS.DB_STRUCTURE_HISTORY, SHEETS.AGENTS].includes(sheetName) ||
       /^\[(ACCOUNT_EVENTS|ACCOUNTS_HISTORY)_/.test(sheetName)) {
-    id = STORAGE_SPREADSHEET_IDS.ACCOUNTS;
+    id = storage.ACCOUNTS;
   } else if (sheetName === SHEETS.LOG) {
-    id = STORAGE_SPREADSHEET_IDS.LOGS;
+    id = storage.LOGS;
   }
 
   return SpreadsheetApp.openById(id);

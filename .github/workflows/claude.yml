@@ -1,0 +1,75 @@
+name: Claude sandbox deploy and check
+on:
+  push:
+    branches: [claude-code]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Upload the branch to the sandbox before the request
+        type: boolean
+        default: false
+      request:
+        description: Dev endpoint request JSON (without secret)
+        default: '{"action":"status"}'
+permissions:
+  contents: read
+concurrency:
+  group: claude-sandbox
+  cancel-in-progress: false
+env:
+  # Stable sandbox web-app deployment (filled in after the first deploy).
+  SANDBOX_DEPLOYMENT_ID: ''
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+  deploy:
+    needs: check
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      deployment_id: ${{ steps.deploy.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Push and verify sandbox source
+        id: deploy
+        run: node scripts/deploy.mjs
+        env:
+          CRM_TARGET: claude
+          CLASP_AUTH_JSON: ${{ secrets.CLASP_AUTH_JSON }}
+  request:
+    needs: [check, deploy]
+    if: always() && needs.check.result == 'success' && needs.deploy.result != 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Call sandbox dev endpoint
+        env:
+          DEV_SECRET: ${{ secrets.CRM_CLAUDE_DEV_SECRET }}
+          DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id || env.SANDBOX_DEPLOYMENT_ID }}
+          REQUEST: ${{ inputs.request || '{"action":"status"}' }}
+        run: |
+          if [ -z "$DEV_SECRET" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "Dev endpoint is not configured yet (secret or deployment missing); skipping."
+            exit 0
+          fi
+          body=$(jq -c --arg s "$DEV_SECRET" '. + {secret: $s}' <<< "$REQUEST")
+          curl -sS -L --max-time 400 -H 'Content-Type: application/json' --data "$body" \
+            "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1" | tee response.json
+          echo
+          jq -e '.ok == true' response.json > /dev/null
