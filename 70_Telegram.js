@@ -468,17 +468,14 @@ function telegramToday_() {
   const revAll = base.rev + dolet.rev;
   const roiAll = base.spend > 0 ? (revAll - base.spend) / base.spend * 100 : 0;
 
-  const period = formatTelegramDate_(getToday_());
-  const out = ['<b>📊 Сейчас</b>',
-    'за ' + escapeHtml_(period),
-    '<i>Dolphin: ' + escapeHtml_(campaigns.time || '—') +
-      ' · Keitaro: ' + escapeHtml_(keitaro.time || '—') + '</i>', '',
-    'Spend: <b>$' + base.spend.toFixed(2) + '</b>',
-    'Inst: <b>' + Math.round(base.inst) + '</b>',
-    'Reg: <b>' + Math.round(base.reg) + '</b>',
-    'Dep: <b>' + Math.round(base.dep) + '</b>' + (dolet.dep ? ' (' + Math.round(dolet.dep) + ')' : ''),
-    'Rev: <b>$' + base.rev.toFixed(2) + '</b>' + (dolet.rev ? ' ($' + revAll.toFixed(2) + ')' : ''),
-    'ROI: <b>' + Math.round(roiBase) + '%</b>' + (dolet.rev ? ' (' + Math.round(roiAll) + '%)' : '')];
+  const out = ['<b>📊 Сейчас · ' + escapeHtml_(formatTelegramDate_(getToday_())) + '</b>',
+    '<i>Dolphin ' + escapeHtml_(campaigns.time || '—') +
+      ' · Keitaro ' + escapeHtml_(keitaro.time || '—') + '</i>', '',
+    'Spend <b>$' + base.spend.toFixed(2) + '</b>',
+    'Inst <b>' + Math.round(base.inst) + '</b> · Reg <b>' + Math.round(base.reg) + '</b>',
+    'Dep <b>' + Math.round(base.dep) + '</b>' + (dolet.dep ? ' +' + Math.round(dolet.dep) + ' долёт' : ''),
+    'Rev <b>$' + base.rev.toFixed(2) + '</b>' + (dolet.rev ? ' → <b>$' + revAll.toFixed(2) + '</b>' : ''),
+    'ROI <b>' + Math.round(roiBase) + '%</b>' + (dolet.rev ? ' → <b>' + Math.round(roiAll) + '%</b>' : '')];
 
   const geoBlock = telegramNowGeoBlock_(campaigns.spendIds, campaigns.geoById);
   if (geoBlock.length) out.push('', geoBlock.join('\n'));
@@ -559,9 +556,10 @@ function telegramNowGeoBlock_(spendIds, geoById) {
       if (!geo) return;
       const offer = String(row[12] || '').trim();
       if (!offer) return;
-      const key = String(row[11] || offer);
+      const offerId = String(row[11] || '').trim();
+      const key = offerId || offer;
       const bucket = geos[geo] || (geos[geo] = {});
-      const o = bucket[key] || (bucket[key] = {offer: offer, inst: 0, reg: 0, dep: 0, rev: 0});
+      const o = bucket[key] || (bucket[key] = {offerId: offerId, offer: offer, inst: 0, reg: 0, dep: 0, rev: 0});
       o.inst += num_(row[6]); o.reg += num_(row[7]); o.dep += num_(row[8]); o.rev += num_(row[9]);
     });
   }
@@ -574,9 +572,10 @@ function telegramNowGeoBlock_(spendIds, geoById) {
     if (!offers.length) return;
     out.push('🌍 <b>' + escapeHtml_(geo) + '</b>');
     offers.forEach(function (o) {
-      out.push('  • ' + escapeHtml_(telegramTrim_(o.offer)) +
-        ' — I ' + Math.round(o.inst) + ' · R ' + Math.round(o.reg) +
-        ' · D ' + Math.round(o.dep) + ' · uEPC $' + safeDiv_(o.rev, o.inst).toFixed(2));
+      out.push((o.offerId ? '<code>' + escapeHtml_(o.offerId) + '</code> ' : '') +
+        escapeHtml_(telegramTrim_(o.offer)) +
+        '\n    I' + Math.round(o.inst) + ' R' + Math.round(o.reg) +
+        ' D' + Math.round(o.dep) + ' · uEPC $' + safeDiv_(o.rev, o.inst).toFixed(2));
     });
   });
   return out;
@@ -599,11 +598,9 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById) {
     if (!on && c.spend <= 0) return;
     const m = keitaroById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
     const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
-    lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
-      ' — бюджет $' + num_(c.budget).toFixed(0) +
-      ' · спенд $' + c.spend.toFixed(2) +
-      ' · I ' + Math.round(m.inst) + ' · R ' + Math.round(m.reg) + ' · D ' + Math.round(m.dep) +
-      ' · ROI ' + roi);
+    lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) + ' (' + roi + ')' +
+      '\n    $' + c.spend.toFixed(2) + '/$' + num_(c.budget).toFixed(0) +
+      ' · I' + Math.round(m.inst) + ' R' + Math.round(m.reg) + ' D' + Math.round(m.dep));
   });
   return lines.slice(0, 40);
 }
