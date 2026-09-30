@@ -91,7 +91,8 @@ function processTelegramUpdates_() {
     try {
       if (update.callback_query) {
         telegramAnswerCallbackSafe_(update.callback_query.id);
-        telegramCommand_(chatId, String(update.callback_query.data || ''));
+        telegramCommand_(chatId, String(update.callback_query.data || ''),
+          {messageId: update.callback_query.message && update.callback_query.message.message_id});
       } else {
         telegramCommand_(chatId, String(update.message && update.message.text || ''));
       }
@@ -125,7 +126,10 @@ function doPost(e) {
       }
       telegramCommand_(chatId, String(update.callback_query
         ? update.callback_query.data || ''
-        : update.message && update.message.text || ''));
+        : update.message && update.message.text || ''),
+        update.callback_query
+          ? {messageId: update.callback_query.message && update.callback_query.message.message_id}
+          : null);
     }
   } catch (error) {
     logError_('Telegram webhook', error);
@@ -311,8 +315,17 @@ function telegramUpdateChatId_(update) {
   return '';
 }
 
-function telegramCommand_(chatId, command) {
+function telegramCommand_(chatId, command, context) {
   const value = String(command || '').trim();
+  // Management drill-down (campaigns → adsets → ads) owns its own callbacks,
+  // and while it waits for a typed number/value it intercepts plain text.
+  if (value.indexOf('mng:') === 0) {
+    manageCallback_(chatId, value.substring(4), context || {});
+    return;
+  }
+  if (!/^[\/📊🎯🔀🔄❌❓Ⓜ️♾️📘]/.test(value) && manageHandlePendingInput_(chatId, value)) {
+    return;
+  }
   if (value === '/health') {
     telegramSend_(chatId, '✅ Бот подключён. Команды принимаются мгновенно.', telegramMenu_());
     return;
@@ -335,7 +348,7 @@ function telegramCommand_(chatId, command) {
   }
   if (value === '/campaigns' || value === TELEGRAM_ICON_META + ' Компании' ||
       value === '📣 Кампании') {
-    telegramSend_(chatId, telegramCampaignsScreen_(), telegramMenu_());
+    manageOpenCampaigns_(chatId);
     return;
   }
   if (value === '/flows' || value === '🔀 Потоки') {
