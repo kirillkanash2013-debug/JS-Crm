@@ -206,6 +206,7 @@ function runDevAction_(request) {
   if (action === 'assignSocials') return assignDevSocials_(String(request.agent || ''));
   if (action === 'dolphinShape') return getDolphinShape_(String(request.entity || ''));
   if (action === 'budgetSample') return getCampaignBudgetSample_();
+  if (action === 'statusSample') return getSpendingCampaignStatusSample_();
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -339,6 +340,21 @@ function getCampaignBudgetSample_() {
     });
   }
   return {count: campaigns.length, sample: sample};
+}
+
+/** Raw status values of campaigns that spent today, to fix status mapping. */
+function getSpendingCampaignStatusSample_() {
+  const campaigns = getCampaigns_(getToday_());
+  const byStatus = {};
+  let spending = 0;
+  campaigns.forEach(function (c) {
+    if (getCampaignSpend_(c) <= 0) return;
+    spending++;
+    const key = [getCampaignRawStatus_(c), String(c.status || ''),
+      String(c.effective_status || ''), String(c.configured_status || '')].join(' | ');
+    byStatus[key] = (byStatus[key] || 0) + 1;
+  });
+  return {spendingCampaigns: spending, rawStatusCombos: byStatus};
 }
 
 function getDolphinShape_(entity) {
