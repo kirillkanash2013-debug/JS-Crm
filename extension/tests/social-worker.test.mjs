@@ -9,7 +9,7 @@ test("social connector collects two accounts, keeps auth private and stops on ra
   globalThis.chrome={webRequest:{onBeforeRequest:{addListener:(fn,filter,extras)=>{networkListener=fn;assert.deepEqual(filter,{urls:["https://graph.facebook.com/*"]});assert.deepEqual(extras,["requestBody"]);}}},storage:{local:area(local),session:area(session)},
     runtime:{id:"social-test",getURL:p=>"chrome-extension://social-test/"+p,onMessage:{addListener:f=>listener=f},onStartup:{addListener:()=>{}}},
     tabs:{get:async()=>({id:7,url:"https://adsmanager.facebook.com/adsmanager/manage?act=123"})},
-    scripting:{executeScript:async options=>{assert.equal(options.world,"MAIN");return [{result:{userId:"999",candidates:[],diagnostics:{candidateCount:1}}}];}},
+    scripting:{executeScript:async options=>{assert.equal(options.world,"MAIN");if(options.func.name==="pageGraphRead"){assert.equal(options.target.tabId,7);assert.equal(options.args[2],"999");const r=await globalThis.fetch(options.args[0],{headers:{Authorization:"Bearer "+options.args[1]}});return [{result:{status:r.ok?200:400,body:await r.json()}}];}return [{result:{userId:"999",candidates:[],diagnostics:{candidateCount:1}}}];}},
     permissions:{contains:async()=>true},alarms:{create:async(name,opts)=>alarms.set(name,opts),clear:async name=>alarms.delete(name),onAlarm:{addListener:f=>alarmListener=f}}};
   globalThis.fetch=async(url,options)=>{
     assert.equal(options.headers.Authorization,"Bearer "+token);assert(!url.includes(token));calls.push(url);

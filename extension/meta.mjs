@@ -38,7 +38,7 @@ async function request(url,token,fetcher) {
   try{return await decodeResponse(r,token);}catch(error){
     // One read-only transport fallback for the exact observed rejection.
     // No fallback/retry for expired tokens, permissions or rate limits.
-    if(error.code!==1 || error.transient || error.detail!=="Invalid request.")throw error;
+    if(fetcher.pageContext || error.code!==1 || error.transient || error.detail!=="Invalid request.")throw error;
     const result=await batchRead(url,token,fetcher);
     if(batchTokens.size>=2)batchTokens.clear();batchTokens.add(token);
     return result;

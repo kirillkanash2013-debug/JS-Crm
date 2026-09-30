@@ -29,13 +29,13 @@ test("AdsAPIConfig works when AdsPEGlobal is absent",()=>{
   assert(!JSON.stringify(result.diagnostics).includes(token));
   delete globalThis.require;
 });
-test("escaped boot config fields are recognized without accepting unrelated strings",()=>{
+test("escaped fields and quoted EA candidates are recognized for owner validation",()=>{
   const token="EA"+"b".repeat(30);
   globalThis.location={href:"https://adsmanager.facebook.com/"};
   const config=JSON.stringify(JSON.stringify({access_token:token}));
   globalThis.document={querySelectorAll:()=>[{textContent:config},{textContent:JSON.stringify({other:"EA"+"c".repeat(30)})}]};
   const result=inspectAdsSession();
-  assert.equal(result.candidates.length,1);
+  assert.equal(result.candidates.length,2);
   assert.equal(result.candidates[0].token,token);
   assert(!JSON.stringify(result.diagnostics).includes(token));
 });
