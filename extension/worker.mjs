@@ -51,8 +51,9 @@ async function run(mode){
   }finally{busy=false;}
 }
 
-async function connectSocial(tabId,range) {
+async function connectSocial(tabId,range,suppliedToken) {
   range=period(range.since,range.until);
+  if(suppliedToken!==undefined && (typeof suppliedToken!=="string" || !/^EA[A-Za-z0-9_-]{18,4094}$/.test(suppliedToken)))throw new Error("Вставьте токен доступа Facebook. Демонстрационный ключ JS Control здесь не подходит.");
   await licensed();
   const tab=await chrome.tabs.get(tabId);
   if(!adsUrl(tab.url))throw new Error("Откройте Ads Manager в профиле подключаемого соца.");
@@ -61,9 +62,13 @@ async function connectSocial(tabId,range) {
   const found=result[0]?.result;
   if(!found)throw new Error("Не удалось прочитать контекст Ads Manager.");
   if(!/^\d{3,30}$/.test(found.userId || ""))throw new Error("Не найден ID авторизованного соца. Подождите загрузки Ads Manager и повторите.");
+  if(suppliedToken!==undefined){
+    found.candidates=[{token:suppliedToken,source:"local-token-import"}];
+    found.diagnostics={...found.diagnostics,method:"local-token-import"};
+  }
   await captureQueue;
   const {networkCapture}=await chrome.storage.session.get("networkCapture");
-  if(networkCapture?.tabId===tabId && networkCapture.userId===found.userId && networkCapture.expiresAt>Date.now())
+  if(suppliedToken===undefined && networkCapture?.tabId===tabId && networkCapture.userId===found.userId && networkCapture.expiresAt>Date.now())
     found.candidates=[...(found.candidates || []),...networkCapture.candidates].slice(0,2);
   await chrome.storage.local.set({sessionDiagnostics:found.diagnostics});
   if(!found.candidates?.length){
@@ -158,6 +163,7 @@ async function processWhole(){
 async function command(m){
   switch(m.type){
     case "CONNECT_SOCIAL":{if(busy)throw new Error("Подождите окончания сбора.");return connectSocial(m.tabId,{since:m.since,until:m.until});}
+    case "CONNECT_SOCIAL_TOKEN":{if(busy)throw new Error("Подождите окончания сбора.");return connectSocial(m.tabId,{since:m.since,until:m.until},m.token || "");}
     case "SYNC_SOCIAL":return startWholeSync();
     case "CANCEL_SOCIAL":{const s=await read();if(s.job)await chrome.storage.local.set({job:{...s.job,state:"cancelled"}});await chrome.alarms.clear("whole");await status("Сбор остановлен.");return true;}
     case "STATE":{const s=await read();const {metaToken}=await chrome.storage.session.get("metaToken");return {...s,hasMetaToken:!!metaToken,busy};}

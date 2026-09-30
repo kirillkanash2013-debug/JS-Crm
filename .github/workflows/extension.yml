@@ -26,9 +26,9 @@ jobs:
         run: node --test extension/tests/*.test.mjs
       - name: Package standalone extension
         working-directory: extension
-        run: zip -r ../JS-Control-0.2.2.zip manifest.json core.mjs collector.mjs meta.mjs worker.mjs session.mjs network.mjs panel.html panel.css panel.mjs README.md
+        run: zip -r ../JS-Control-0.2.3.zip manifest.json core.mjs collector.mjs meta.mjs worker.mjs session.mjs network.mjs panel.html panel.css panel.mjs README.md
       - uses: actions/upload-artifact@v4
         with:
-          name: JS-Control-0.2.2
-          path: JS-Control-0.2.2.zip
+          name: JS-Control-0.2.3
+          path: JS-Control-0.2.3.zip
           if-no-files-found: error

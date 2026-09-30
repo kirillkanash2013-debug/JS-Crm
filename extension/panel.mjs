@@ -32,6 +32,7 @@ function render(s){
   const running=j?.state==="running";
   document.querySelectorAll("button").forEach(b=>b.disabled=pending);
   $("connect").disabled=pending||running;$("disconnect").disabled=pending||running;
+  $("connectToken").disabled=pending||running;
   $("sync").disabled=pending||running||!s.social||!s.hasMetaToken;
   $("cancel").disabled=pending||!running;$("export").disabled=pending||!s.social;
   if(s.status)message(s.status.text,s.status.error);
@@ -57,6 +58,17 @@ $("sync").onclick=()=>void task(async()=>{
   await ask("RANGE",{since:$("since").value,until:$("until").value});
   await ask("SYNC_SOCIAL");
 });
+$("tokenForm").onsubmit=async event=>{
+  event.preventDefault();
+  const token=$("metaToken").value.trim();$("metaToken").value="";
+  const granted=await chrome.permissions.request({origins:["https://graph.facebook.com/*"]});
+  if(!granted){message("Разрешите доступ к Meta API для проверки токена.",true);return;}
+  void task(async()=>{
+    const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+    if(!tab?.id)throw new Error("Откройте Ads Manager нужного соца.");
+    await ask("CONNECT_SOCIAL_TOKEN",{tabId:tab.id,token,since:$("since").value,until:$("until").value});
+  });
+};
 $("cancel").onclick=()=>void task(()=>ask("CANCEL_SOCIAL"));
 $("disconnect").onclick=()=>void task(()=>ask("DISCONNECT"));
 $("export").onclick=()=>{

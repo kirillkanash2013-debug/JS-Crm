@@ -29,6 +29,18 @@ test("social connector collects two accounts, keeps auth private and stops on ra
   const sender={id:"social-test",url:"chrome-extension://social-test/panel.html"};
   const command=m=>new Promise(resolve=>listener(m,sender,resolve));
   await command({type:"ACTIVATE",key:DEMO_KEY});
+  const invalid=await command({type:"CONNECT_SOCIAL_TOKEN",tabId:7,token:DEMO_KEY,since:"2026-09-30",until:"2026-09-30"});
+  assert.equal(invalid.ok,false);assert.equal(session.metaToken,undefined);
+  const normalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:true,json:async()=>({id:"888",name:"Other"})});
+  const mismatched=await command({type:"CONNECT_SOCIAL_TOKEN",tabId:7,token,since:"2026-09-30",until:"2026-09-30"});
+  assert.equal(mismatched.ok,false);assert.equal(local.social,undefined);assert.equal(session.metaToken,undefined);
+  globalThis.fetch=normalFetch;
+  const imported=await command({type:"CONNECT_SOCIAL_TOKEN",tabId:7,token,since:"2026-09-30",until:"2026-09-30"});
+  assert.equal(imported.ok,true);assert.equal(local.social.accounts.length,2);
+  assert.equal(local.sessionDiagnostics.source,"local-token-import");
+  assert(!JSON.stringify((await command({type:"STATE"})).data).includes(token));
+  await command({type:"DISCONNECT"});assert.equal(session.metaToken,undefined);
   const armed=await command({type:"CONNECT_SOCIAL",tabId:7,since:"2026-09-30",until:"2026-09-30"});
   assert.equal(armed.data.pending,true);assert.equal(local.social,undefined);
   const request={tabId:7,initiator:"https://adsmanager.facebook.com",url:"https://graph.facebook.com/v25.0/act_123?access_token="+token};
