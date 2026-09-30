@@ -444,10 +444,10 @@ function runQueuedTelegramRefresh_() {
 /**
  * "Сейчас" — the operational snapshot.
  *
- * Base totals cover only campaigns that spent today (spend > 0). A deposit
- * whose FB campaign had no spend today is a "долёт": counted separately, and
- * folded into the bracketed Rev/ROI so both the launched-traffic picture and
- * the whole-day picture are visible.
+ * A deposit is counted as today's when its click happened today; a sale whose
+ * click was on an earlier day is a "долёт" (delayed conversion), even if its
+ * campaign also spends today. долёты are folded into the bracketed Rev/ROI so
+ * both the fresh-traffic picture and the whole-day picture are visible.
  */
 function telegramToday_() {
   const campaigns = readTodayCampaignState_();
@@ -460,14 +460,16 @@ function telegramToday_() {
   const base = {spend: 0, inst: 0, reg: 0, dep: 0, rev: 0};
   const dolet = {dep: 0, rev: 0};
   campaigns.list.forEach(function (c) { base.spend += c.spend; });
+  // Clicks/registrations come from the campaign report (spend campaigns).
   Object.keys(keitaro.byId).forEach(function (id) {
+    if (!spendIds[id]) return;
     const m = keitaro.byId[id];
-    if (spendIds[id]) {
-      base.inst += m.inst; base.reg += m.reg; base.dep += m.dep; base.rev += m.rev;
-    } else {
-      dolet.dep += m.dep; dolet.rev += m.rev;
-    }
+    base.inst += m.inst; base.reg += m.reg;
   });
+  // Deposits are split by click date: today's click = fresh, earlier = долёт.
+  const deposits = readTodayDepositsByClick_();
+  base.dep = deposits.today.dep; base.rev = deposits.today.rev;
+  dolet.dep = deposits.dolet.dep; dolet.rev = deposits.dolet.rev;
 
   const roiBase = base.spend > 0 ? (base.rev - base.spend) / base.spend * 100 : 0;
   const revAll = base.rev + dolet.rev;
@@ -520,6 +522,34 @@ function readTodayCampaignState_() {
     }
   });
   result.time = formatTelegramTime_(result.time);
+  return result;
+}
+
+/**
+ * Splits today's sale conversions into fresh (click today) and долёт (click on
+ * an earlier day) using the conversion log's Click At column.
+ */
+function readTodayDepositsByClick_() {
+  const result = {today: {dep: 0, rev: 0}, dolet: {dep: 0, rev: 0}};
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_CONVERSIONS_TODAY);
+  if (sheet.getLastRow() < 2) return result;
+  const headers = getKeitaroConversionHeaders_();
+  const statusIdx = headers.indexOf('Status');
+  const revIdx = headers.indexOf('Revenue');
+  const clickIdx = headers.indexOf('Click At');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  const today = getToday_();
+  const seen = {};
+  rows.forEach(function (row) {
+    if (String(row[statusIdx] || '').toLowerCase() !== 'sale') return;
+    const key = String(row[2] || '');
+    if (key && seen[key]) return;
+    if (key) seen[key] = true;
+    const clickDay = normalizeDateKey_(row[clickIdx]);
+    const bucket = clickDay === today ? result.today : result.dolet;
+    bucket.dep += 1;
+    bucket.rev += num_(row[revIdx]);
+  });
   return result;
 }
 
