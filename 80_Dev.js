@@ -27,7 +27,9 @@ const DEV_RUNNABLE = Object.freeze([
   'installSandboxTriggers',
   'alignSpreadsheetTimeZone',
   'rebuildSpendAgent_',
-  'refreshStructureFromDatabases_'
+  'refreshStructureFromDatabases_',
+  'createSandboxStorage',
+  'migrateLegacyStorage'
 ]);
 
 // Non-secret switches the sandbox may flip remotely.
@@ -73,6 +75,33 @@ function alignSpreadsheetTimeZone() {
   const before = ss.getSpreadsheetTimeZone();
   if (before !== CONFIG.TIMEZONE) ss.setSpreadsheetTimeZone(CONFIG.TIMEZONE);
   return {before: before, after: ss.getSpreadsheetTimeZone()};
+}
+
+/**
+ * One-time: creates the sandbox's source databases as separate spreadsheets,
+ * mirroring prod (CRM dashboard + FB, Keitaro, accounts, logs files).
+ * Idempotent: the IDs are kept in a Script Property. SpreadsheetApp.create
+ * needs no Drive scope; the files land in My Drive root until moved.
+ */
+function createSandboxStorage() {
+  if (getCrmEnv_().name !== 'claude') throw new Error('Only for the Claude sandbox');
+  const p = PropertiesService.getScriptProperties();
+  const existing = p.getProperty('CRM_SANDBOX_STORAGE');
+  if (existing) return JSON.parse(existing);
+  const names = {
+    FB: 'CRM Claude — FB (Dolphin)',
+    KEITARO: 'CRM Claude — Keitaro',
+    ACCOUNTS: 'CRM Claude — Аккаунты и структура',
+    LOGS: 'CRM Claude — Логи'
+  };
+  const ids = {};
+  Object.keys(names).forEach(function (key) {
+    const ss = SpreadsheetApp.create(names[key]);
+    ss.setSpreadsheetTimeZone(CONFIG.TIMEZONE);
+    ids[key] = ss.getId();
+  });
+  p.setProperty('CRM_SANDBOX_STORAGE', JSON.stringify(ids));
+  return ids;
 }
 
 /** Sandbox schedule: the normal CRM triggers plus one-minute Telegram polling. */
