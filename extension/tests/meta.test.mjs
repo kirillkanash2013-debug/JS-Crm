@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {pages,syncMeta,graph,discoverSocial,safeMetaFailure} from "../meta.mjs";
+import {pages,syncMeta,graph,discoverSocial,safeMetaFailure,redactMetaDetail} from "../meta.mjs";
 const response=(body,status=200)=>({ok:status===200,json:async()=>body});
 test("paginated API fetch uses bearer header, never URL credentials",async()=>{
   const requests=[];
@@ -54,10 +54,18 @@ test("connection failures identify the API stage without retaining raw error dat
       return {status:400,ok:false,json:async()=>({error:{code:1,error_subcode:99,is_transient:true,message:"An unknown error occurred secret-token",fbtrace_id:"private-trace"}})};
     };
     await assert.rejects(discoverSocial("secret-token","999",()=>{},fetcher),e=>{
-      assert.deepEqual(safeMetaFailure(e),{code:1,stage,httpStatus:400,subcode:99,transient:true,reason:"unknown-api-error"});
+      assert.deepEqual(safeMetaFailure(e),{code:1,stage,httpStatus:400,subcode:99,transient:true,reason:"unknown-api-error",detail:"An unknown error occurred [removed]"});
       assert(!JSON.stringify(e).includes("secret-token"));
       assert(!JSON.stringify(e).includes("private-trace"));return true;
     });
   }
   assert.equal(safeMetaFailure({code:"secret",stage:"secret",reason:"secret",message:"secret"}).code,"unknown");
+});
+
+test("Meta detail removes submitted token, other tokens, URLs and identifiers",()=>{
+  const token="EA"+"x".repeat(50),other="EA"+"y".repeat(50);
+  const text=redactMetaDetail("API unavailable "+token+" "+other+" https://example.com/?access_token=secret user@example.com 123456789",token);
+  assert(text.includes("API unavailable"));
+  for(const secret of [token,other,"example.com","user@","123456789"])assert(!text.includes(secret));
+  assert(redactMetaDetail("a".repeat(1000)).length<=350);
 });

@@ -2,6 +2,17 @@ import {accountId,period,apiSnapshot,nextPage} from "./core.mjs";
 export class MetaError extends Error {
   constructor(code,message) {super(message);this.code=code;}
 }
+export function redactMetaDetail(value,token=""){
+  let text=typeof value==="string" ? value : "";
+  if(token)text=text.split(token).join("[removed]");
+  return text.replace(/https?:\/\/\S+/gi,"[url removed]")
+    .replace(/\b(?:access_token|appsecret_proof|authorization|cookie)\s*[:=]\s*\S+/gi,"[credential removed]")
+    .replace(/\bEA[A-Za-z0-9_-]{18,4094}\b/g,"[token removed]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,"[email removed]")
+    .replace(/\b[A-Za-z0-9_|-]{20,}\b/g,"[identifier removed]")
+    .replace(/\b\d{5,}\b/g,"[id removed]")
+    .replace(/[\u0000-\u001f\u007f]/g," ").slice(0,350);
+}
 export function safeMetaFailure(error){
   return {
     code:typeof error.code==="number" && Number.isFinite(error.code) ? error.code : "unknown",
@@ -9,7 +20,8 @@ export function safeMetaFailure(error){
     httpStatus:Number.isInteger(error.httpStatus) ? error.httpStatus : null,
     subcode:Number.isInteger(error.subcode) ? error.subcode : null,
     transient:error.transient===true,
-    reason:["unknown-api-error","unsupported-request","token-validation","permission","unclassified"].includes(error.reason) ? error.reason : "unclassified"
+    reason:["unknown-api-error","unsupported-request","token-validation","permission","unclassified"].includes(error.reason) ? error.reason : "unclassified",
+    detail:redactMetaDetail(error.detail)
   };
 }
 export async function graph(path, params, token, fetcher=fetch) {
@@ -31,6 +43,7 @@ async function request(url,token,fetcher) {
     error.httpStatus=r.status;
     error.subcode=Number.isInteger(body.error?.error_subcode) ? body.error.error_subcode : null;
     error.transient=body.error?.is_transient===true;
+    error.detail=redactMetaDetail(body.error?.message,token);
     // Classify locally; never retain or export Meta's raw error text.
     const raw=String(body.error?.message || "").toLowerCase();
     error.reason=raw.includes("unknown error") ? "unknown-api-error" :
