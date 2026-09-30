@@ -211,6 +211,7 @@ function runDevAction_(request) {
   if (action === 'probeEndpoints') return probeDolphinEndpoints_(request.paths);
   if (action === 'campaignChildren') return probeCampaignChildren_(String(request.campaignId || ''));
   if (action === 'adsetsOf') return adsetsOfCampaign_(String(request.name || ''));
+  if (action === 'manageDump') return manageDump_(String(request.name || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -442,6 +443,31 @@ function adsetsOfCampaign_(name) {
       active_ads: a.active_status_ads_count, spend: getCampaignSpend_(a)};
   });
   return {campaignId: campaignId, count: adsets.length, adsets: adsets};
+}
+
+/** Renders the drill-down screens as text (no Telegram send) for verification. */
+function manageDump_(name) {
+  const out = {campaigns: manageRenderCampaigns_().text};
+  if (name) {
+    const camp = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
+    let campaignId = '', cbo = false;
+    if (camp.getLastRow() > 1) {
+      const rows = camp.getRange(2, 1, camp.getLastRow() - 1, 15).getValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (String(rows[i][6] || '') === name) {
+          campaignId = String(rows[i][5] || ''); cbo = num_(rows[i][10]) > 0; break;
+        }
+      }
+    }
+    if (campaignId) {
+      const adsets = manageRenderAdsets_({id: campaignId, name: name, cbo: cbo});
+      out.adsets = adsets.text;
+      if (adsets.list.length) {
+        out.ads = manageRenderAds_({id: adsets.list[0].id, name: adsets.list[0].name}).text;
+      }
+    }
+  }
+  return out;
 }
 
 function getDolphinShape_(entity) {
