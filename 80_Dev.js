@@ -208,6 +208,8 @@ function runDevAction_(request) {
   if (action === 'budgetSample') return getCampaignBudgetSample_();
   if (action === 'statusSample') return getSpendingCampaignStatusSample_();
   if (action === 'offerTrace') return traceOffer_(String(request.q || ''));
+  if (action === 'probeEndpoints') return probeDolphinEndpoints_(request.paths);
+  if (action === 'campaignChildren') return probeCampaignChildren_(String(request.campaignId || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -385,6 +387,39 @@ function traceOffer_(q) {
     });
   }
   return {matches: out.length, rows: out.slice(0, 30)};
+}
+
+/** Read-only GET probe of candidate Dolphin endpoints: keys only, no values. */
+function probeDolphinEndpoints_(paths) {
+  const today = getToday_();
+  const list = Array.isArray(paths) && paths.length ? paths : [
+    '/fb-adsets?from_date=' + today + '&to_date=' + today + '&currency=USD&perPage=1',
+    '/fb-ads?from_date=' + today + '&to_date=' + today + '&currency=USD&perPage=1'
+  ];
+  return list.map(function (path) {
+    try {
+      const json = dolphinGet_(path);
+      const items = json && (json.data || json.items) || json;
+      const first = Array.isArray(items) ? items[0] : items;
+      return {path: path, ok: true,
+        count: Array.isArray(items) ? items.length : null,
+        fields: first && typeof first === 'object' ? Object.keys(first).sort() : typeof first};
+    } catch (e) {
+      return {path: path, ok: false, error: String(e && e.message || e).slice(0, 200)};
+    }
+  });
+}
+
+/** Given a real campaign id, probe adsets/ads under it (keys only). */
+function probeCampaignChildren_(campaignId) {
+  const id = String(campaignId || '').trim();
+  const today = getToday_();
+  const attempts = [
+    '/fb-adsets?from_date=' + today + '&to_date=' + today + '&currency=USD&perPage=3&campaignIds[]=' + id,
+    '/fb-adsets?from_date=' + today + '&to_date=' + today + '&currency=USD&perPage=3&campaign_id=' + id,
+    '/fb-ads?from_date=' + today + '&to_date=' + today + '&currency=USD&perPage=3&campaignIds[]=' + id
+  ];
+  return probeDolphinEndpoints_(attempts);
 }
 
 function getDolphinShape_(entity) {
