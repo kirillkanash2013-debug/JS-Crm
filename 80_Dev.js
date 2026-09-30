@@ -211,6 +211,7 @@ function runDevAction_(request) {
   if (action === 'probeEndpoints') return probeDolphinEndpoints_(request.paths);
   if (action === 'campaignChildren') return probeCampaignChildren_(String(request.campaignId || ''));
   if (action === 'adsetsOf') return adsetsOfCampaign_(String(request.name || ''));
+  if (action === 'adsetStats') return adsetStatsSample_(String(request.name || ''));
   if (action === 'manageDump') return manageDump_(String(request.name || ''));
   throw new Error('Unknown dev action: ' + action);
 }
@@ -443,6 +444,29 @@ function adsetsOfCampaign_(name) {
       active_ads: a.active_status_ads_count, spend: getCampaignSpend_(a)};
   });
   return {campaignId: campaignId, count: adsets.length, adsets: adsets};
+}
+
+/** statsTotal (tracker fields + values) of the first adset of a campaign. */
+function adsetStatsSample_(name) {
+  const camp = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
+  let campaignId = '';
+  if (camp.getLastRow() > 1) {
+    const rows = camp.getRange(2, 1, camp.getLastRow() - 1, 10).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][6] || '') === name) { campaignId = String(rows[i][5] || ''); break; }
+    }
+  }
+  if (!campaignId) return {error: 'not found'};
+  const adsets = getCampaignAdsets_(campaignId);
+  const a = adsets[0] || {};
+  const stats = a.statsTotal || a.stats || {};
+  const picked = {};
+  Object.keys(stats).forEach(function (k) {
+    if (/keitaro|spend|revenue|^rev$|roi|clicks|install|lead|deposit|regist|approve/i.test(k)) {
+      picked[k] = stats[k];
+    }
+  });
+  return {campaignId: campaignId, adsetName: String(a.name || ''), picked: picked};
 }
 
 /** Renders the drill-down screens as text (no Telegram send) for verification. */
