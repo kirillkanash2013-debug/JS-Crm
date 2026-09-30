@@ -1,17 +1,21 @@
 {
   "manifest_version": 3,
   "name": "JS Control — FB Connector",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minimum_chrome_version": "120",
   "description": "Автономный прототип: один соц Meta, сбор данных, диагностика и экспорт.",
   "permissions": [
     "storage",
     "activeTab",
     "scripting",
-    "alarms"
+    "alarms",
+    "webRequest"
   ],
   "optional_host_permissions": [
-    "https://graph.facebook.com/*"
+    "https://graph.facebook.com/*",
+    "https://adsmanager.facebook.com/*",
+    "https://business.facebook.com/*",
+    "https://www.facebook.com/*"
   ],
   "background": {
     "service_worker": "worker.mjs",

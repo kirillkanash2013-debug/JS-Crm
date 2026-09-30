@@ -45,7 +45,7 @@ async function task(fn){
 $("demo").onclick=()=>{$("key").value=DEMO_KEY;};
 $("activateForm").onsubmit=e=>{e.preventDefault();void task(async()=>{await ask("ACTIVATE",{key:$("key").value});$("key").value="";});};
 $("connect").onclick=async()=>{
-  const granted=await chrome.permissions.request({origins:["https://graph.facebook.com/*"]});
+  const granted=await chrome.permissions.request({origins:["https://graph.facebook.com/*","https://adsmanager.facebook.com/*","https://business.facebook.com/*","https://www.facebook.com/*"]});
   if(!granted){message("Без разрешения на Meta API список кабинетов получить нельзя.",true);return;}
   void task(async()=>{
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});

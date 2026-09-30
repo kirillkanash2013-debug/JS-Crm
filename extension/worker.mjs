@@ -2,11 +2,28 @@ import {license,accountId,adsUrl,period,validatePageSnapshot} from "./core.mjs";
 import {captureVisible} from "./collector.mjs";
 import {syncMeta,discoverSocial,graph} from "./meta.mjs";
 import {inspectAdsSession} from "./session.mjs";
+import {requestCredential} from "./network.mjs";
 const init=Promise.all([
   chrome.storage.local.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"}),
   chrome.storage.session.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"})
 ]);
 let busy=false;
+let captureQueue=Promise.resolve();
+chrome.webRequest?.onBeforeRequest.addListener(details=>{
+  captureQueue=captureQueue.then(async()=>{
+    await init;
+    const {networkCapture}=await chrome.storage.session.get("networkCapture");
+    const credential=requestCredential(details,networkCapture);
+    if(!credential)return;
+    const next={...networkCapture,requests:networkCapture.requests+1};
+    if(credential.token && !next.candidates.some(c=>c.token===credential.token) && next.candidates.length<2)
+      next.candidates=[...next.candidates,{token:credential.token,source:"selected-tab-api-request"}];
+    await chrome.storage.session.set({networkCapture:next});
+    const s=await read();
+    await chrome.storage.local.set({sessionDiagnostics:{...s.sessionDiagnostics,network:{state:next.candidates.length ? "ready" : "waiting",requests:next.requests,candidateCount:next.candidates.length}}});
+    if(next.candidates.length)await status("Доступ обнаружен в запросе Ads Manager. Нажмите «Подключить соц» ещё раз для проверки.");
+  }).catch(()=>{});
+},{urls:["https://graph.facebook.com/*"]},["requestBody"]);
 async function read(){await init;return chrome.storage.local.get(["license","binding","snapshot","status","auto","range","social","reports","job","sessionDiagnostics"]);}
 async function status(text,error=false){await chrome.storage.local.set({status:{text,error,at:new Date().toISOString()}});}
 async function licensed(){const s=await read();if(!s.license) throw new Error("Сначала активируйте демонстрационный ключ.");return s;}
@@ -43,9 +60,24 @@ async function connectSocial(tabId,range) {
   const result=await chrome.scripting.executeScript({target:{tabId},world:"MAIN",func:inspectAdsSession});
   const found=result[0]?.result;
   if(!found)throw new Error("Не удалось прочитать контекст Ads Manager.");
-  await chrome.storage.local.set({sessionDiagnostics:found.diagnostics});
   if(!/^\d{3,30}$/.test(found.userId || ""))throw new Error("Не найден ID авторизованного соца. Подождите загрузки Ads Manager и повторите.");
-  if(!found.candidates?.length)throw new Error("Ads Manager не предоставил локальный API-доступ. Автоматическое подключение пока не поддержано для этой сессии.");
+  await captureQueue;
+  const {networkCapture}=await chrome.storage.session.get("networkCapture");
+  if(networkCapture?.tabId===tabId && networkCapture.userId===found.userId && networkCapture.expiresAt>Date.now())
+    found.candidates=[...(found.candidates || []),...networkCapture.candidates].slice(0,2);
+  await chrome.storage.local.set({sessionDiagnostics:found.diagnostics});
+  if(!found.candidates?.length){
+    if(networkCapture?.tabId===tabId && networkCapture.userId===found.userId && networkCapture.expiresAt>Date.now()){
+      await chrome.storage.local.set({sessionDiagnostics:{...found.diagnostics,network:{state:"waiting",requests:networkCapture.requests,candidateCount:0}}});
+      await status("В запросах пока нет доступа. Запросов Meta API: "+networkCapture.requests+". Перезагрузите эту вкладку Ads Manager и повторите подключение.");
+      return {pending:true};
+    }
+    await chrome.storage.session.set({networkCapture:{tabId,userId:found.userId,origin:new URL(tab.url).origin,expiresAt:Date.now()+300000,requests:0,candidates:[]}});
+    await chrome.alarms.create("capture-expiry",{delayInMinutes:5});
+    await chrome.storage.local.set({sessionDiagnostics:{...found.diagnostics,network:{state:"waiting",requests:0,candidateCount:0}}});
+    await status("Наблюдение включено на 5 минут. Закройте окно расширения, перезагрузите эту вкладку Ads Manager, затем снова нажмите «Подключить соц».");
+    return {pending:true};
+  }
   const old=await read();
   if(old.social && old.social.user.id!==found.userId)throw new Error("В профиле другой FB-соц. Сначала отключите прежний соц.");
   let lastError;
@@ -54,6 +86,7 @@ async function connectSocial(tabId,range) {
       const social=await discoverSocial(candidate.token,found.userId,t=>status(t));
       if(social.accounts.length>100)throw new Error("В прототипе поддерживается до 100 кабинетов на соц.");
       await chrome.storage.session.set({metaToken:candidate.token});
+      await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
       await chrome.storage.local.set({social,range,sessionDiagnostics:{...found.diagnostics,validated:true,source:candidate.source},reports:old.social ? old.reports || {} : {}});
       await status("Соц подключён: "+social.accounts.length+" доступных кабинетов. Вкладки кабинетов привязывать не нужно.");
       return social;
@@ -156,6 +189,7 @@ async function command(m){
       await chrome.storage.local.set({auto:!!m.enabled});return true;
     }
     case "DISCONNECT":{
+      await captureQueue;await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
       await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics"]);
       await chrome.storage.session.remove("metaToken");await chrome.storage.local.set({auto:false});
       await status("Кабинет отключён; локальные данные удалены.");return true;
@@ -168,7 +202,10 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
   command(m).then(data=>reply({ok:true,data})).catch(e=>reply({ok:false,error:e.message || "Ошибка."}));
   return true;
 });
-chrome.alarms.onAlarm.addListener(a=>{if(a.name==="whole")void processWhole().catch(()=>{});if(a.name==="sync") void run("api").catch(()=>{});});
+chrome.alarms.onAlarm.addListener(a=>{
+  if(a.name==="capture-expiry")void (async()=>{await captureQueue;await chrome.storage.session.remove("networkCapture");const s=await read();if(s.sessionDiagnostics?.network?.state==="waiting"){await chrome.storage.local.set({sessionDiagnostics:{...s.sessionDiagnostics,network:{...s.sessionDiagnostics.network,state:"expired"}}});await status("Наблюдение завершено. Доступ не найден в запросах. Откройте диагностику подключения.",true);}})().catch(()=>{});
+  if(a.name==="whole")void processWhole().catch(()=>{});if(a.name==="sync") void run("api").catch(()=>{});
+});
 chrome.runtime.onStartup.addListener(()=>{
   void (async()=>{await init;await chrome.alarms.clear("sync");await chrome.storage.local.set({auto:false});const s=await read();if(s.job?.state==="running")await chrome.storage.local.set({job:{...s.job,state:"needs_auth",leaseUntil:0}});await chrome.alarms.clear("whole");await status("Браузер запущен. Подключите соц для восстановления локального доступа.");})().catch(()=>{});
 });

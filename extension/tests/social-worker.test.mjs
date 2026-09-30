@@ -2,14 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {DEMO_KEY} from "../core.mjs";
 test("social connector collects two accounts, keeps auth private and stops on rate-limit",async()=>{
-  let listener,alarmListener;
+  let listener,alarmListener,networkListener;
   const local={},session={},alarms=new Map(),token="EA"+"a".repeat(30),calls=[];
   const area=obj=>({setAccessLevel:async()=>{},get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).filter(k=>k in obj).map(k=>[k,obj[k]])),
     set:async data=>Object.assign(obj,data),remove:async keys=>{for(const k of Array.isArray(keys)?keys:[keys])delete obj[k];}});
-  globalThis.chrome={storage:{local:area(local),session:area(session)},
+  globalThis.chrome={webRequest:{onBeforeRequest:{addListener:(fn,filter,extras)=>{networkListener=fn;assert.deepEqual(filter,{urls:["https://graph.facebook.com/*"]});assert.deepEqual(extras,["requestBody"]);}}},storage:{local:area(local),session:area(session)},
     runtime:{id:"social-test",getURL:p=>"chrome-extension://social-test/"+p,onMessage:{addListener:f=>listener=f},onStartup:{addListener:()=>{}}},
     tabs:{get:async()=>({id:7,url:"https://adsmanager.facebook.com/adsmanager/manage?act=123"})},
-    scripting:{executeScript:async options=>{assert.equal(options.world,"MAIN");return [{result:{userId:"999",candidates:[{token,source:"fixture"}],diagnostics:{candidateCount:1}}}];}},
+    scripting:{executeScript:async options=>{assert.equal(options.world,"MAIN");return [{result:{userId:"999",candidates:[],diagnostics:{candidateCount:1}}}];}},
     permissions:{contains:async()=>true},alarms:{create:async(name,opts)=>alarms.set(name,opts),clear:async name=>alarms.delete(name),onAlarm:{addListener:f=>alarmListener=f}}};
   globalThis.fetch=async(url,options)=>{
     assert.equal(options.headers.Authorization,"Bearer "+token);assert(!url.includes(token));calls.push(url);
@@ -29,9 +29,20 @@ test("social connector collects two accounts, keeps auth private and stops on ra
   const sender={id:"social-test",url:"chrome-extension://social-test/panel.html"};
   const command=m=>new Promise(resolve=>listener(m,sender,resolve));
   await command({type:"ACTIVATE",key:DEMO_KEY});
+  const armed=await command({type:"CONNECT_SOCIAL",tabId:7,since:"2026-09-30",until:"2026-09-30"});
+  assert.equal(armed.data.pending,true);assert.equal(local.social,undefined);
+  const request={tabId:7,initiator:"https://adsmanager.facebook.com",url:"https://graph.facebook.com/v25.0/act_123?access_token="+token};
+  networkListener({...request,tabId:8});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(session.networkCapture.candidates.length,0);
+  networkListener(request);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(session.networkCapture.candidates.length,1);
+  assert(!JSON.stringify(local).includes(token));
+  assert(!JSON.stringify((await command({type:"STATE"})).data).includes(token));
   const connected=await command({type:"CONNECT_SOCIAL",tabId:7,since:"2026-09-30",until:"2026-09-30"});
   assert.equal(connected.ok,true);assert.equal(local.social.accounts.length,2);assert.equal(local.binding,undefined);
-  assert.equal(session.metaToken,token);assert(!JSON.stringify(local).includes(token));
+  assert.equal(session.networkCapture,undefined);assert(!alarms.has("capture-expiry"));assert.equal(session.metaToken,token);assert(!JSON.stringify(local).includes(token));
   assert.equal((await command({type:"SYNC_SOCIAL"})).ok,true);
   for(let i=0;i<100 && local.job.state==="running";i++)await new Promise(resolve=>setImmediate(resolve));
   assert.equal(local.job.state,"done");assert.equal(local.job.index,2);
