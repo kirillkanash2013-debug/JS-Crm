@@ -58,3 +58,10 @@ test("unknown publishing routes retain masked metadata and no body",()=>{
  assert.equal(row.knownRoute,false);assert.equal(row.path,"/:segment/:segment/:id");assert.deepEqual(row.fields,[]);assert.deepEqual(row.changes,{});
  for(const secret of ["PRIVATE","private@example.test","token-in-path","123456789"])assert(!JSON.stringify(row).includes(secret));
 });
+test("observed Ads Manager field/old_value/new_value format records only allowed changes",()=>{
+ const values=[{field:"daily_budget",old_value:"10000",new_value:"11000"},{field:"name",old_value:"PRIVATE_OLD",new_value:"PRIVATE_NEW"},{field:"status",old_value:"ACTIVE",new_value:"PAUSED"}];
+ const row=traceRequest({...request,url:"https://adsmanager-graph.facebook.com/v22.0/123456789/addraft_fragments",requestBody:{formData:{_reqName:["AdsManagerEdit"],values:[JSON.stringify(values)],access_token:["SECRET"]}}},config);
+ assert.equal(row.path,"/v22.0/:id/addraft_fragments");assert.equal(row.operation,"AdsManagerEdit");assert.equal(row.kind,"mutation-candidate");
+ assert(row.changeCandidates.some(c=>c.field==="daily_budget" && c.oldValue==="10000" && c.value==="11000"));
+ assert.equal(row.changes.status,"PAUSED");for(const secret of ["PRIVATE_OLD","PRIVATE_NEW","SECRET","123456789"])assert(!JSON.stringify(row).includes(secret));
+});

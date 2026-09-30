@@ -1,3 +1,4 @@
+import {syncStructure} from "./structure.mjs";
 import {installRecorder} from "./recorder.mjs";
 import {pageFetcher} from "./page-transport.mjs";
 import {license,accountId,adsUrl,period,validatePageSnapshot} from "./core.mjs";
@@ -27,7 +28,7 @@ chrome.webRequest?.onBeforeRequest.addListener(details=>{
     if(next.candidates.length)await status("Доступ обнаружен в запросе Ads Manager. Нажмите «Подключить соц» ещё раз для проверки.");
   }).catch(()=>{});
 },{urls:["https://graph.facebook.com/*"]},["requestBody"]);
-async function read(){await init;return chrome.storage.local.get(["license","binding","snapshot","status","auto","range","social","reports","job","sessionDiagnostics","trace"]);}
+async function read(){await init;return chrome.storage.local.get(["license","binding","snapshot","status","auto","range","social","reports","job","sessionDiagnostics","trace","structures"]);}
 async function status(text,error=false){await chrome.storage.local.set({status:{text,error,at:new Date().toISOString()}});}
 async function licensed(){const s=await read();if(!s.license) throw new Error("Сначала активируйте демонстрационный ключ.");return s;}
 async function run(mode){
@@ -109,7 +110,7 @@ async function connectSocial(tabId,range,suppliedToken) {
   if(lastError){const stage=lastError.stage==="identity" ? "Проверка владельца токена" : lastError.stage==="adaccounts" ? "Получение списка кабинетов" : "Подключение";throw new Error(stage+": "+lastError.message);}
   throw new Error("Не удалось проверить доступ к соцy.");
 }
-async function startWholeSync(){
+async function startWholeSync(mode="statistics"){
   const s=await licensed();
   if(!s.social)throw new Error("Сначала подключите соц.");
   if(s.job?.state==="running")throw new Error("Сбор всего соца уже выполняется.");
@@ -118,7 +119,7 @@ async function startWholeSync(){
   period(s.range.since,s.range.until);
   const user=await graph("me",{fields:"id"},metaToken,pageFetcher(socialTabId,s.social.user.id));
   if(String(user.id)!==s.social.user.id)throw new Error("Доступ относится к другому соцу.");
-  const job={id:crypto.randomUUID(),state:s.social.accounts.length ? "running" : "done",userId:s.social.user.id,
+  const job={id:crypto.randomUUID(),mode,state:s.social.accounts.length ? "running" : "done",userId:s.social.user.id,
     ids:s.social.accounts.map(a=>a.id),index:0,range:s.range,startedAt:new Date().toISOString(),errors:[],leaseUntil:0};
   await chrome.storage.local.set({job});
   await status(job.ids.length ? "Сбор соца запущен: "+job.ids.length+" кабинетов." : "Доступных кабинетов нет.");
@@ -141,7 +142,7 @@ async function processWhole(){
     const id=job.ids[job.index];
     let snapshot;
     try{
-      snapshot=await syncMeta(id,job.range,metaToken,t=>status((job.index+1)+"/"+job.ids.length+" · "+t),pageFetcher(socialTabId,job.userId));
+      snapshot=job.mode==="structure" ? await syncStructure(id,metaToken,t=>status(t),pageFetcher(socialTabId,job.userId)) : await syncMeta(id,job.range,metaToken,t=>status((job.index+1)+"/"+job.ids.length+" · "+t),pageFetcher(socialTabId,job.userId));
     }catch(e){
       if([190,4,17,32,613,"identity"].includes(e.code)){
         await chrome.storage.local.set({job:{...job,state:"stopped",leaseUntil:0,errors:[...job.errors,{accountId:id,message:e.message}]}});
@@ -152,7 +153,7 @@ async function processWhole(){
     const fresh=await read();
     // Ignore results after disconnect/reconnect/cancellation.
     if(fresh.job?.id!==job.id || fresh.job.state!=="running")return;
-    if(snapshot)await chrome.storage.local.set({reports:{...(fresh.reports || {}),[id]:snapshot}});
+    if(snapshot){const key=job.mode==="structure" ? "structures" : "reports";await chrome.storage.local.set({[key]:{...(fresh[key] || {}),[id]:snapshot}});}
     job={...job,index:job.index+1,leaseUntil:0,state:job.index+1>=job.ids.length ? "done" : "running"};
     await chrome.storage.local.set({job});
     await status(job.state==="done" ? "Сбор соца завершён. Кабинетов: "+job.ids.length+", ошибок: "+job.errors.length+"." :
@@ -175,6 +176,7 @@ async function command(m){
     case "CONNECT_SOCIAL":{if(busy)throw new Error("Подождите окончания сбора.");return connectSocial(m.tabId,{since:m.since,until:m.until});}
     case "CONNECT_SOCIAL_TOKEN":{if(busy)throw new Error("Подождите окончания сбора.");return connectSocial(m.tabId,{since:m.since,until:m.until},m.token || "");}
     case "SYNC_SOCIAL":return startWholeSync();
+    case "SYNC_STRUCTURE":return startWholeSync("structure");
     case "CANCEL_SOCIAL":{const s=await read();if(s.job)await chrome.storage.local.set({job:{...s.job,state:"cancelled"}});await chrome.alarms.clear("whole");await status("Сбор остановлен.");return true;}
     case "STATE":{const s=await read();const {metaToken,socialTabId}=await chrome.storage.session.get(["metaToken","socialTabId"]);return {...s,hasMetaToken:!!metaToken,busy};}
     case "ACTIVATE":{await chrome.storage.local.set({license:license(m.key)});await status("Демо активировано. Откройте Ads Manager.");return true;}
@@ -208,7 +210,7 @@ async function command(m){
       await recorder.clear();
       clearMetaTransport();
       await captureQueue;await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
-      await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics","trace"]);
+      await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics","trace","structures"]);
       await chrome.storage.session.remove(["metaToken","socialTabId"]);await chrome.storage.local.set({auto:false});
       await status("Кабинет отключён; локальные данные удалены.");return true;
     }

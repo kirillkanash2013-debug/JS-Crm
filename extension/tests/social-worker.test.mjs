@@ -20,6 +20,7 @@ test("social connector collects two accounts, keeps auth private and stops on ra
     else {
       const id=p.includes("act_123") ? "123" : "456",currency=id==="123" ? "USD" : "EUR";
       if(p.endsWith("/campaigns"))data={data:[{id:id==="123" ? "888" : "777",name:"Campaign",account_id:id,status:"ACTIVE"}]};
+      else if(p.endsWith("/adsets") || p.endsWith("/ads"))data={data:[]};
       else if(p.endsWith("/insights"))data={data:[{account_id:id,campaign_id:id==="123" ? "888" : "777",spend:"5.01",account_currency:currency,date_start:"2026-09-30",date_stop:"2026-09-30"}]};
       else data={account_id:id,name:"Account",currency,timezone_name:"Asia/Bishkek"};
     }
@@ -60,6 +61,9 @@ test("social connector collects two accounts, keeps auth private and stops on ra
   assert.equal(local.job.state,"done");assert.equal(local.job.index,2);
   assert.equal(local.reports["123"].account.currency,"USD");assert.equal(local.reports["456"].account.currency,"EUR");
   assert(!alarms.has("whole"));assert.equal((await command({type:"STATE"})).data.metaToken,undefined);
+  assert.equal((await command({type:"SYNC_STRUCTURE"})).ok,true);
+  for(let i=0;i<100 && local.job.state==="running";i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(local.job.state,"done");assert.equal(local.job.mode,"structure");assert.equal(local.structures["123"].campaigns.length,1);assert.equal(local.structures["456"].complete,true);
   const previous=local.reports["123"];
   globalThis.fetch=async()=>({ok:false,json:async()=>({error:{code:4,message:"private token "+token}})});
   local.job={id:"stopped-test",state:"running",userId:"999",ids:["123","456"],index:0,range:{since:"2026-09-30",until:"2026-09-30"},errors:[],leaseUntil:0};

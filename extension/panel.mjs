@@ -20,8 +20,9 @@ function render(s){
   for(const a of s.social?.accounts || []){
     const r=s.reports?.[a.id],tr=document.createElement("tr");
     cell(tr,(a.name || "Кабинет")+" · "+a.id);cell(tr,a.business?.name || a.business?.id || "—");
-    cell(tr,r ? String(r.campaigns.length) : "—");
+    cell(tr,r ? String(r.campaigns.length) : s.structures?.[a.id]?.campaigns.length ?? "—");
     cell(tr,r ? r.metrics.reduce((n,m)=>n+m.spend,0).toFixed(2)+" "+r.account.currency : "—");
+    cell(tr,s.structures?.[a.id] ? s.structures[a.id].adsets.length+" / "+s.structures[a.id].ads.length : "—");
     cell(tr,r ? r.period.since+" — "+r.period.until+" · "+new Date(r.observedAt).toLocaleTimeString() : "Не собран");
     $("accounts").append(tr);
   }
@@ -33,8 +34,17 @@ function render(s){
   document.querySelectorAll("button").forEach(b=>b.disabled=pending);
   $("connect").disabled=pending||running;$("disconnect").disabled=pending||running;
   $("connectToken").disabled=pending||running;
+  $("structure").disabled=pending||running||!s.social||!s.hasMetaToken;
   $("sync").disabled=pending||running||!s.social||!s.hasMetaToken;
   $("cancel").disabled=pending||!running;$("export").disabled=pending||!s.social;
+  $("structureRows").replaceChildren();
+  let total=0,shown=0;
+  for(const [id,structure] of Object.entries(s.structures || {})){
+    for(const [kind,rows] of [["Кампания",structure.campaigns],["Группа",structure.adsets],["Объявление",structure.ads]]){
+      total+=rows.length;for(const row of rows){if(shown>=100)continue;const tr=document.createElement("tr");cell(tr,kind+": "+row.name);cell(tr,row.id);cell(tr,row.adsetId || row.campaignId || id);cell(tr,row.effectiveStatus || row.status || "—");$("structureRows").append(tr);shown++;}
+    }
+  }
+  $("structureCount").textContent=total ? "Объектов: "+total+". Показано: "+shown+". Все объекты доступны в экспорте JSON." : "Нажмите «Собрать структуру».";
   const trace=s.trace;
   $("traceState").textContent=trace ? (trace.active && trace.expiresAt>Date.now() ? "Запись идёт" : "Запись остановлена")+" · запросов: "+trace.rows.length+" / 300 · без названия: "+trace.rows.filter(r=>!r.operation).length+" · кандидатов мутаций: "+trace.rows.filter(r=>r.kind==="mutation-candidate").length+" · неизвестных адресов: "+trace.rows.filter(r=>r.knownRoute===false).length : "Запись не запускалась";
   $("traceRows").replaceChildren();
@@ -79,7 +89,7 @@ $("cancel").onclick=()=>void task(()=>ask("CANCEL_SOCIAL"));
 $("disconnect").onclick=()=>void task(()=>ask("DISCONNECT"));
 $("export").onclick=()=>{
   if(!state.social)return;
-  const payload={schemaVersion:2,social:state.social,reports:state.reports || {},job:state.job || null,diagnostics:state.sessionDiagnostics || null};
+  const payload={schemaVersion:2,social:state.social,reports:state.reports || {},structures:state.structures || {},job:state.job || null,diagnostics:state.sessionDiagnostics || null};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");
   a.href=url;a.download="js-control-social-"+state.social.user.id+"-"+today()+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
@@ -95,6 +105,8 @@ $("traceStop").onclick=()=>void task(()=>ask("TRACE_STOP"));
 $("traceClear").onclick=()=>void task(()=>ask("TRACE_CLEAR"));
 $("traceExport").onclick=()=>{
  if(!state.trace)return;const {tabId,...trace}=state.trace;
- const blob=new Blob([JSON.stringify({schemaVersion:2,extensionVersion:"0.4.2",trace},null,2)],{type:"application/json"});
+ const blob=new Blob([JSON.stringify({schemaVersion:2,extensionVersion:"0.5.0",trace},null,2)],{type:"application/json"});
  const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="js-control-requests-"+today()+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
+
+$("structure").onclick=()=>void task(()=>ask("SYNC_STRUCTURE"));

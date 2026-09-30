@@ -6,7 +6,7 @@ export async function pageGraphRead(url,token,expectedUserId) {
   try{current=String(globalThis.require("CurrentUserInitialData").USER_ID);}catch{}
   if(!/^\d{3,30}$/.test(expectedUserId) || current!==expectedUserId)throw new Error("Вкладка относится к другому соцy или сессия завершена.");
   const u=new URL(url);
-  if(u.origin!=="https://graph.facebook.com" || !/^\/v25\.0\/(?:me|\d{3,30}|act_\d{3,30})(?:\/(?:adaccounts|campaigns|insights))?$/.test(u.pathname) || u.username || u.password)throw new Error("Недопустимый запрос Meta.");
+  if(u.origin!=="https://graph.facebook.com" || !/^\/v25\.0\/(?:me|\d{3,30}|act_\d{3,30})(?:\/(?:adaccounts|campaigns|adsets|ads|insights))?$/.test(u.pathname) || u.username || u.password)throw new Error("Недопустимый запрос Meta.");
   for(const key of u.searchParams.keys())if(!["fields","limit","after","before","level","time_range","time_increment","since","until","locale"].includes(key))throw new Error("Недопустимый параметр Meta.");
   if(!/^EA[A-Za-z0-9_-]{18,4094}$/.test(token))throw new Error("Нет локального доступа Facebook.");
   u.searchParams.set("access_token",token);
