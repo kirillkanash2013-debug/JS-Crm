@@ -341,7 +341,9 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
     'Campaign',
     'Spend',
     'Campaign Status Raw',
-    'Campaign Status'
+    'Campaign Status',
+    'Daily Budget',
+    'Budget Remaining'
   ];
 
   const cabMap = buildCabMap_(context.cabs);
@@ -364,13 +366,15 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
       String(campaign.name || ''),
       spend,
       getCampaignRawStatus_(campaign),
-      getCampaignStatus_(campaign)
+      getCampaignStatus_(campaign),
+      getCampaignDailyBudget_(campaign),
+      getCampaignBudgetRemaining_(campaign)
     ]);
   });
 
   writeDbSheet_(SHEETS.DB_CAMPAIGNS_TODAY, headers, rows, {
     textColumns: [3, 5, 6, 9, 10],
-    numberColumns: [8]
+    numberColumns: [8, 11, 12]
   });
 }
 

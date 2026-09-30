@@ -487,6 +487,21 @@ function getCampaignSpend_(campaign) {
   return 0;
 }
 
+// Dolphin returns budgets in whole account-currency units (same scale as spend):
+// daily_budget - spend today == budget_remaining. lifetime_budget is 0 when a
+// daily budget is used.
+function getCampaignDailyBudget_(campaign) {
+  const daily = num_(campaign && campaign.daily_budget);
+  if (daily > 0) return daily;
+  return num_(campaign && campaign.lifetime_budget);
+}
+
+function getCampaignBudgetRemaining_(campaign) {
+  const remaining = campaign && campaign.budget_remaining;
+  if (remaining === undefined || remaining === null || remaining === '') return '';
+  return num_(remaining);
+}
+
 function getCampaignAccountId_(campaign) {
   return String(
     campaign && (campaign.account_id || campaign.ad_account_id ||
