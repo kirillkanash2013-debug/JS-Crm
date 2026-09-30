@@ -468,7 +468,11 @@ function telegramToday_() {
   const revAll = base.rev + dolet.rev;
   const roiAll = base.spend > 0 ? (revAll - base.spend) / base.spend * 100 : 0;
 
-  const out = ['<b>📊 Сейчас' + (campaigns.time ? ' · ' + escapeHtml_(campaigns.time) : '') + '</b>', '',
+  const period = formatTelegramDate_(getToday_());
+  const out = ['<b>📊 Сейчас</b>',
+    'за ' + escapeHtml_(period),
+    '<i>Dolphin: ' + escapeHtml_(campaigns.time || '—') +
+      ' · Keitaro: ' + escapeHtml_(keitaro.time || '—') + '</i>', '',
     'Spend: <b>$' + base.spend.toFixed(2) + '</b>',
     'Inst: <b>' + Math.round(base.inst) + '</b>',
     'Reg: <b>' + Math.round(base.reg) + '</b>',
@@ -521,8 +525,10 @@ function readTodayKeitaroByCampaign_() {
   const result = {byId: {}, any: false};
   if (sheet.getLastRow() < 2) return result;
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+  let time = '';
   rows.forEach(function (row) {
     result.any = true;
+    if (String(row[1] || '') > time) time = String(row[1] || '');
     const id = String(row[4] || '');
     const m = result.byId[id] || (result.byId[id] = {inst: 0, reg: 0, dep: 0, rev: 0});
     m.inst += num_(row[6]);
@@ -530,6 +536,7 @@ function readTodayKeitaroByCampaign_() {
     m.dep += num_(row[8]);
     m.rev += num_(row[9]);
   });
+  result.time = formatTelegramTime_(time);
   return result;
 }
 
@@ -573,6 +580,12 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById) {
       ' · ROI ' + roi);
   });
   return lines.slice(0, 40);
+}
+
+function formatTelegramDate_(value) {
+  const key = normalizeDateKey_(value);
+  const parts = key.split('-');
+  return parts.length === 3 ? parts[2] + '.' + parts[1] + '.' + parts[0] : key;
 }
 
 function formatTelegramTime_(value) {
