@@ -210,6 +210,7 @@ function runDevAction_(request) {
   if (action === 'offerTrace') return traceOffer_(String(request.q || ''));
   if (action === 'probeEndpoints') return probeDolphinEndpoints_(request.paths);
   if (action === 'campaignChildren') return probeCampaignChildren_(String(request.campaignId || ''));
+  if (action === 'adsetsOf') return adsetsOfCampaign_(String(request.name || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -420,6 +421,27 @@ function probeCampaignChildren_(campaignId) {
     '/fb-ads?from_date=' + today + '&to_date=' + today + '&currency=USD&perPage=3&campaignIds[]=' + id
   ];
   return probeDolphinEndpoints_(attempts);
+}
+
+/** Finds a campaign by name in today's FB DB, returns its adsets' key fields. */
+function adsetsOfCampaign_(name) {
+  const camp = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
+  let campaignId = '';
+  if (camp.getLastRow() > 1) {
+    const rows = camp.getRange(2, 1, camp.getLastRow() - 1, 10).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][6] || '') === name) { campaignId = String(rows[i][5] || ''); break; }
+    }
+  }
+  if (!campaignId) return {error: 'Campaign not found: ' + name};
+  const adsets = getCampaignAdsets_(campaignId).map(function (a) {
+    return {id: String(a.adset_id || a.id || ''), name: String(a.name || ''),
+      status: a.status, effective_status: a.effective_status,
+      daily_budget: a.daily_budget, lifetime_budget: a.lifetime_budget,
+      error_ads: a.error_status_ads_count, warning_ads: a.warning_status_ads_count,
+      active_ads: a.active_status_ads_count, spend: getCampaignSpend_(a)};
+  });
+  return {campaignId: campaignId, count: adsets.length, adsets: adsets};
 }
 
 function getDolphinShape_(entity) {

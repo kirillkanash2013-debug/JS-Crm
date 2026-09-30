@@ -103,6 +103,30 @@ function getCampaigns_(date) {
   });
 }
 
+function getCampaignAdsets_(campaignId, date) {
+  const day = date || getToday_();
+  return dolphinPagedGet_('/fb-adsets', {
+    from_date: day,
+    to_date: day,
+    currency: CONFIG.CURRENCY,
+    'aggregateColumns[]': ['spend'],
+    with_trashed: 1,
+    'campaignIds[]': [String(campaignId)]
+  });
+}
+
+function getAdsetAds_(adsetId, date) {
+  const day = date || getToday_();
+  return dolphinPagedGet_('/fb-ads', {
+    from_date: day,
+    to_date: day,
+    currency: CONFIG.CURRENCY,
+    'aggregateColumns[]': ['spend'],
+    with_trashed: 1,
+    'adsetIds[]': [String(adsetId)]
+  });
+}
+
 function getAllCabs_(fromDate, toDate) {
   return dolphinPagedGet_('/fb-cabs', {
     from_date: fromDate,
