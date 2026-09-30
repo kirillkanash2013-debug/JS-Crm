@@ -207,6 +207,7 @@ function runDevAction_(request) {
   if (action === 'dolphinShape') return getDolphinShape_(String(request.entity || ''));
   if (action === 'budgetSample') return getCampaignBudgetSample_();
   if (action === 'statusSample') return getSpendingCampaignStatusSample_();
+  if (action === 'offerTrace') return traceOffer_(String(request.q || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -355,6 +356,35 @@ function getSpendingCampaignStatusSample_() {
     byStatus[key] = (byStatus[key] || 0) + 1;
   });
   return {spendingCampaigns: spending, rawStatusCombos: byStatus};
+}
+
+/**
+ * For every Keitaro-today row whose offer name matches q: its FB campaign id,
+ * inst/dep, and that campaign's spend today. Shows why an offer appears.
+ */
+function traceOffer_(q) {
+  const query = q.toLowerCase();
+  const camp = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
+  const spendById = {};
+  if (camp.getLastRow() > 1) {
+    camp.getRange(2, 1, camp.getLastRow() - 1, 10).getValues().forEach(function (r) {
+      const id = String(r[5] || '');
+      if (id) spendById[id] = (spendById[id] || 0) + num_(r[7]);
+    });
+  }
+  const kt = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  const out = [];
+  if (kt.getLastRow() > 1) {
+    kt.getRange(2, 1, kt.getLastRow() - 1, getKeitaroHeaders_().length).getValues().forEach(function (r) {
+      const offer = String(r[12] || '');
+      if (query && offer.toLowerCase().indexOf(query) < 0) return;
+      const id = String(r[4] || '');
+      out.push({campaignId: id, campaign: String(r[3] || ''), offer: offer,
+        inst: num_(r[6]), reg: num_(r[7]), dep: num_(r[8]),
+        campaignSpendToday: spendById[id] === undefined ? null : spendById[id]});
+    });
+  }
+  return {matches: out.length, rows: out.slice(0, 30)};
 }
 
 function getDolphinShape_(entity) {
