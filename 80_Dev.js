@@ -34,6 +34,7 @@ const DEV_RUNNABLE = Object.freeze([
   'migrateLegacyStorage',
   'removeMigratedDashboardTabs'
 ]);
+// budgetSample is a dev action (not in DEV_RUNNABLE).
 
 // Non-secret switches the sandbox may flip remotely.
 const DEV_FLAGS = Object.freeze(['CRM_PIPELINE_VERIFIED', 'TELEGRAM_DELIVERY_MODE']);
@@ -204,6 +205,7 @@ function runDevAction_(request) {
   if (action === 'clearSheet') return clearDevSheet_(String(request.name || ''));
   if (action === 'assignSocials') return assignDevSocials_(String(request.agent || ''));
   if (action === 'dolphinShape') return getDolphinShape_(String(request.entity || ''));
+  if (action === 'budgetSample') return getCampaignBudgetSample_();
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -322,11 +324,29 @@ function assignDevSocials_(agent) {
  * Field names only (two levels deep) of the first Dolphin record, to find
  * where a value lives. Values are never returned.
  */
+/** Numbers only: budget/spend fields of up to 5 spending campaigns, to learn units. */
+function getCampaignBudgetSample_() {
+  const campaigns = getCampaigns_(getToday_());
+  const sample = [];
+  for (let i = 0; i < campaigns.length && sample.length < 5; i++) {
+    const c = campaigns[i];
+    if (getCampaignSpend_(c) <= 0) continue;
+    sample.push({
+      spend: getCampaignSpend_(c),
+      daily_budget: c.daily_budget, lifetime_budget: c.lifetime_budget,
+      budget_remaining: c.budget_remaining, currency: c.cab && c.cab.currency,
+      objective: c.objective ? 'set' : ''
+    });
+  }
+  return {count: campaigns.length, sample: sample};
+}
+
 function getDolphinShape_(entity) {
   const today = getToday_();
   const loaders = {
     businesses: function () { return getBusinesses_(today); },
-    cabs: function () { return getAllCabs_(today, today); }
+    cabs: function () { return getAllCabs_(today, today); },
+    campaigns: function () { return getCampaigns_(today); }
   };
   if (!loaders[entity]) throw new Error('Unknown entity: ' + entity);
   const items = loaders[entity]();
