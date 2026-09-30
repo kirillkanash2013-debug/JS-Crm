@@ -447,7 +447,7 @@ function adsetsOfCampaign_(name) {
 
 /** Renders the drill-down screens as text (no Telegram send) for verification. */
 function manageDump_(name) {
-  const out = {campaigns: manageRenderCampaigns_().text};
+  const out = {campaigns: manageCampaignsView_().text};
   if (name) {
     const camp = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
     let campaignId = '', cbo = false;
@@ -460,10 +460,14 @@ function manageDump_(name) {
       }
     }
     if (campaignId) {
-      const adsets = manageRenderAdsets_({id: campaignId, name: name, cbo: cbo});
+      out.card = manageCampaignCardView_(campaignId).text;
+      const campaign = {id: campaignId, name: name, cbo: cbo};
+      const adsets = manageAdsetsView_(campaign);
       out.adsets = adsets.text;
       if (adsets.list.length) {
-        out.ads = manageRenderAds_({id: adsets.list[0].id, name: adsets.list[0].name}).text;
+        out.adsetCard = manageAdsetCardView_(campaign, adsets.list[0].id).text;
+        const ads = manageAdsView_({id: adsets.list[0].id, name: adsets.list[0].name});
+        out.ads = ads.text;
       }
     }
   }
