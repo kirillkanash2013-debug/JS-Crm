@@ -57,6 +57,19 @@ function manageRoi_(rev, spend) {
   return spend > 0 ? Math.round((num_(rev) - spend) / spend * 100) + '%' : '—';
 }
 
+function manageFunnel_(m, spend) {
+  function unit(c) { return Math.round(c) + (c > 0 && spend > 0 ? '/' + safeDiv_(spend, c).toFixed(2) + '$' : ''); }
+  return unit(m.inst) + ' - ' + unit(m.reg) + ' - ' + unit(m.dep) + ' (' + manageRoi_(m.rev, spend) + ')';
+}
+
+/** Shared "Сейчас"-style 3-line card used at every level. */
+function manageCard_(index, active, mark, name, budget, spend, m) {
+  return '<b>' + index + '.</b> ' + manageDot_(active) + mark + ' ' +
+    escapeHtml_(telegramTrim_(name, 26)) +
+    '\n💰' + num_(budget).toFixed(0) + '$ 💸' + Math.round(spend) + '$ 🤑' + Math.round(m.rev) + '$' +
+    '\n' + manageFunnel_(m, spend);
+}
+
 /* ===================== Keyboards ===================== */
 
 function manageActionKeyboard_(level, opts) {
@@ -94,12 +107,9 @@ function manageCampaignsView_() {
   const lines = [TELEGRAM_ICON_META + ' <b>Компании · ' +
     escapeHtml_(formatTelegramDate_(getToday_())) + '</b>', ''];
   list.forEach(function (c, i) {
-    const m = kt[c.id] || {rev: 0, dep: 0};
+    const m = kt[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
     const mark = adHealthMark_(c.activeAds, c.errorAds, c.warningAds);
-    lines.push('<b>' + (i + 1) + '.</b> ' + manageDot_(c.status === 'ACTIVE') + mark + ' ' +
-      escapeHtml_(telegramTrim_(c.name || c.id, 26)) +
-      '\n     💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' +
-      Math.round(m.rev) + '$ · ROI ' + manageRoi_(m.rev, c.spend) + ' · D' + Math.round(m.dep));
+    lines.push(manageCard_(i + 1, c.status === 'ACTIVE', mark, c.name || c.id, c.budget, c.spend, m));
   });
   if (!list.length) lines.push('Запущенных кампаний сейчас нет.');
   return {text: lines.join('\n'), keyboard: manageActionKeyboard_('campaigns', {}),
@@ -113,19 +123,16 @@ function manageAdsetsView_(campaign) {
   const list = adsets.map(function (a) {
     const budget = getCampaignDailyBudget_(a);
     if (budget > 0) anyBudget = true;
+    const stats = a.statsTotal || a.stats || {};
     return {id: String(a.adset_id || a.id || ''), name: String(a.name || ''), budget: budget,
       active: String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE',
-      status: String(a.effective_status || a.status || ''),
       mark: adHealthMark_(a.active_status_ads_count, a.error_status_ads_count, a.warning_status_ads_count),
       spend: getCampaignSpend_(a),
-      err: num_(a.error_status_ads_count), warn: num_(a.warning_status_ads_count),
-      act: num_(a.active_status_ads_count)};
+      m: {inst: num_(stats.clicks_tracker_keitaro), reg: num_(stats.registrations_tracker_keitaro),
+        dep: num_(stats.deposits_tracker_keitaro), rev: num_(stats.revenue || stats.rev)}};
   });
   list.forEach(function (a, i) {
-    lines.push('<b>' + (i + 1) + '.</b> ' + manageDot_(a.active) + a.mark + ' ' +
-      escapeHtml_(telegramTrim_(a.name, 26)) +
-      '\n     💸' + Math.round(a.spend) + '$' + (a.budget > 0 ? ' · 💰' + num_(a.budget).toFixed(0) + '$' : '') +
-      ' · объяв ' + Math.round(a.act) + '/' + Math.round(a.err) + '❗/' + Math.round(a.warn) + '⚠️');
+    lines.push(manageCard_(i + 1, a.active, a.mark, a.name, a.budget, a.spend, a.m));
   });
   if (!list.length) lines.push('Адсетов не найдено.');
   return {text: lines.join('\n'), keyboard: manageActionKeyboard_('adsets', {adsetBudget: anyBudget}),
@@ -152,10 +159,10 @@ function manageAdsView_(adset) {
 }
 
 function manageAdUnitMark_(unit) {
+  // A single ad has no "partial": rejected/down → ⚠️.
   const es = String(unit.effective_status || '').toUpperCase();
   if (unit.disapprove_reason || es.indexOf('DISAPPROV') >= 0 ||
-      es.indexOf('REJECT') >= 0 || es === 'WITH_ISSUES') return '❗';
-  if (es.indexOf('PENDING') >= 0 || es.indexOf('REVIEW') >= 0 || es.indexOf('IN_PROCESS') >= 0) return '⚠️';
+      es.indexOf('REJECT') >= 0 || es === 'WITH_ISSUES') return '⚠️';
   return '';
 }
 

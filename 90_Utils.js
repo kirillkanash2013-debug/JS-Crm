@@ -512,10 +512,16 @@ function getCampaignAdCounts_(entity) {
   };
 }
 
-/** '' , '❗' (error/rejected) or '⚠️' (warning) suffix for a status dot. */
+/**
+ * Health of a unit that owns ads (campaign / adset):
+ *   ❗ — part rejected but ads still deliver (some active remain);
+ *   ⚠️ — everything is down (no active ads while some are rejected).
+ */
 function adHealthMark_(activeCount, errorCount, warningCount) {
-  if (num_(errorCount) > 0) return '❗';
-  if (num_(warningCount) > 0) return '⚠️';
+  const active = num_(activeCount);
+  const error = num_(errorCount);
+  if (error > 0 && active > 0) return '❗';
+  if (error > 0 && active === 0) return '⚠️';
   return '';
 }
 
