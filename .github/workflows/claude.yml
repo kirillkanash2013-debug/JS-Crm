@@ -70,11 +70,20 @@ jobs:
             exit 0
           fi
           body=$(jq -c --arg s "$DEV_SECRET" '. + {secret: $s}' <<< "$REQUEST")
-          curl -sS -L --max-time 400 -H 'Content-Type: application/json' --data "$body" \
-            -D headers.txt -o response.json \
-            "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1"
-          # Status chain only; redirect URLs carry one-time tokens.
-          grep -iE '^(HTTP/|location:)' headers.txt | sed -E 's/\?.*$//' || true
-          head -c 20000 response.json
-          echo
-          jq -e '.ok == true' response.json > /dev/null
+          url="https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1"
+          # Apps Script intermittently drops the response after its redirect,
+          # returning a Drive 404 page. The action itself still ran, so retry
+          # the read a few times until valid JSON comes back.
+          for attempt in 1 2 3 4 5; do
+            curl -sS -L --max-time 400 -H 'Content-Type: application/json' --data "$body" \
+              -D headers.txt -o response.json "$url" || true
+            grep -iE '^(HTTP/|location:)' headers.txt | sed -E 's/\?.*$//' || true
+            if jq -e '.ok == true' response.json > /dev/null 2>&1; then
+              head -c 20000 response.json; echo; exit 0
+            fi
+            echo "Attempt $attempt: no valid JSON yet; retrying in 10s"
+            sleep 10
+          done
+          echo "Dev endpoint did not return valid JSON after retries:"
+          head -c 2000 response.json; echo
+          exit 1
