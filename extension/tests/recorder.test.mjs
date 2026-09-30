@@ -29,3 +29,22 @@ test("recorder survives popup closure, serializes completion, stops and clears",
  before({...request,requestId:"2"});await recorder.stop();assert.equal(local.trace.rows.length,1);
  await recorder.clear();assert.equal(local.trace,undefined);assert(!alarms.has("trace-expiry"));
 });
+test("recorder recognizes non-Ads operation names and camel-case/nested encoded mutations",()=>{
+ const variables={input:JSON.stringify({dailyBudget:{amount:"11000"},configuredStatus:"PAUSED",isEnabled:false,access_token:"EA"+"z".repeat(30)})};
+ const row=traceRequest({...request,requestBody:{formData:{fb_api_req_friendly_name:["FBMarketingCampaignUpdateMutation"],variables:[JSON.stringify(variables)]}}},config);
+ assert.equal(row.kind,"mutation-candidate");assert.equal(row.operation,"FBMarketingCampaignUpdateMutation");
+ assert.equal(row.changes.amount,"11000");assert.equal(row.changes.configured_status,"PAUSED");assert.equal(row.changes.is_enabled,false);
+ assert(row.changeCandidates.some(c=>c.path==="variables.input.dailyBudget.amount"));assert(!JSON.stringify(row).includes("zzzzzz"));
+});
+test("batch root requests expose safe method and relative query changes without URL credentials",()=>{
+ const batch=JSON.stringify([{method:"POST",relative_url:"123456789?daily_budget=22000&access_token=PRIVATE&name=CampaignPrivate"}]);
+ const row=traceRequest({...request,url:"https://graph.facebook.com/v25.0/",requestBody:{formData:{batch:[batch],access_token:["PRIVATE"]}}},config);
+ assert.equal(row.changes.daily_budget,"22000");assert.deepEqual(row.batchMethods,["POST"]);
+ for(const value of ["PRIVATE","123456789","CampaignPrivate"])assert(!JSON.stringify(row).includes(value));
+});
+test("unknown keys retain only shape and bounded payloads omit sensitive subtrees",()=>{
+ const vars={updates:[{newDailyBudget:10000,customField:"PrivateValue"}],session_secret:{daily_budget:999},email:"private@example.test"};
+ const row=traceRequest({...request,requestBody:{formData:{operationName:["RelayUpdate"],variables:[JSON.stringify(vars)]}}},config);
+ assert.equal(row.operation,"RelayUpdate");assert(row.shape.some(s=>s.path.endsWith("customField") && s.type==="string"));
+ for(const value of ["PrivateValue","private@example.test","session_secret","999"])assert(!JSON.stringify(row).includes(value));
+});

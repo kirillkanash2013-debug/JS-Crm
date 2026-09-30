@@ -1,16 +1,33 @@
 const HOSTS=["graph.facebook.com","adsmanager.facebook.com","business.facebook.com","www.facebook.com"];
-const KEYS=new Set(["input","data","variables","campaign_id","campaign_ids","adset_id","adset_ids","ad_id","ad_ids","account_id","ad_account_id","status","effective_status","daily_budget","lifetime_budget","budget","budget_amount","name","objective","fields","level","time_range","time_increment","limit","after","before"]);
 const SECRET=/token|cookie|authorization|password|secret|fb_dtsg|jazoest|session/i;
-function shape(value,out,depth=0){
- if(depth>6 || !value || typeof value!=="object")return;
- for(const [key,item] of Object.entries(value).slice(0,100)){
-  if(SECRET.test(key))continue;
-  if(KEYS.has(key)){
-   out.fields.add(key);
-   if(["status","effective_status"].includes(key) && ["ACTIVE","PAUSED","ARCHIVED","DELETED"].includes(item))out.changes[key]=item;
-   if(["daily_budget","lifetime_budget","budget_amount"].includes(key) && /^\d{1,12}$/.test(String(item)))out.changes[key]=String(item);
-  }
-  if(item && typeof item==="object")shape(item,out,depth+1);
+function safeKey(key){return /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key) && !SECRET.test(key) && !/^EA[A-Za-z0-9]{18,}$/.test(key);}
+function operationName(value){
+ return typeof value==="string" && /^[A-Za-z_][A-Za-z0-9_]{1,159}$/.test(value) && !SECRET.test(value) && !/^EA/.test(value) && !/\d{12}/.test(value) ? value : null;
+}
+function shape(value,out,depth=0,path="",budgetContext=false){
+ if(depth>8 || out.nodes++>1500){out.truncated=true;return;}
+ if(typeof value==="string" && value.length<=262144 && /^[\s]*[\[{]/.test(value)){
+  try{shape(JSON.parse(value),out,depth+1,path,budgetContext);}catch{}return;
+ }
+ if(!value || typeof value!=="object")return;
+ if(Array.isArray(value)){for(const item of value.slice(0,50))shape(item,out,depth+1,path+"[]",budgetContext);return;}
+ for(const [key,item] of Object.entries(value).slice(0,150)){
+  if(!safeKey(key))continue;
+  const normalized=key.replace(/([a-z])([A-Z])/g,"$1_$2").toLowerCase();
+  const next=(path ? path+"." : "")+key;
+  if(out.fields.size<150)out.fields.add(key);else out.truncated=true;
+  if(out.shapes.length<150)out.shapes.push({path:next.slice(0,220),type:item===null?"null":Array.isArray(item)?"array":typeof item});
+  if(["fb_api_req_friendly_name","operation_name","operationname"].includes(normalized)){const name=operationName(item);if(name)out.operations.add(name);}
+  if(normalized==="doc_id" && /^\d{1,30}$/.test(String(item)))out.docIds.add(String(item));
+  if(normalized==="relative_url" && typeof item==="string" && item.length<=262144){try{const relative=new URL(item,"https://graph.facebook.com/");const parameters={};for(const [k,v] of relative.searchParams)if(safeKey(k))parameters[k]=v;shape(parameters,out,depth+1,next+".params",budgetContext);}catch{}}
+  if(normalized==="method" && ["GET","POST","DELETE"].includes(item))out.batchMethods.add(item);
+  let change;
+  if(["status","effective_status","configured_status"].includes(normalized) && ["ACTIVE","PAUSED","ARCHIVED","DELETED"].includes(item))change=item;
+  if(["is_enabled","is_active","enabled"].includes(normalized) && typeof item==="boolean")change=item;
+  const budget=["daily_budget","lifetime_budget","budget_amount","budget_value","budget"].includes(normalized);
+  if((budget || (budgetContext && ["amount","value"].includes(normalized))) && ["string","number"].includes(typeof item) && /^\d{1,12}(?:\.\d{1,4})?$/.test(String(item)))change=String(item);
+  if(change!==undefined && out.changeCandidates.length<60){out.changes[normalized]=change;out.changeCandidates.push({path:next.slice(0,220),field:normalized,value:change});}
+  if((item && typeof item==="object") || typeof item==="string")shape(item,out,depth+1,next,budgetContext||budget);
  }
 }
 export function traceRequest(details,recorder,now=Date.now()){
@@ -20,33 +37,31 @@ export function traceRequest(details,recorder,now=Date.now()){
  if(details.initiator){try{if(!HOSTS.includes(new URL(details.initiator).hostname))return null;}catch{return null;}}
  let path;
  if(u.hostname==="graph.facebook.com"){
-  if(!/^\/(?:v\d+\.\d+\/)?(?:me|\d+|act_\d+)(?:\/(?:adaccounts|campaigns|adsets|ads|insights|businesses))?\/?$/.test(u.pathname))return null;
+  if(u.pathname!=="/" && !/^\/v\d+\.\d+\/$/.test(u.pathname) && !/^\/(?:v\d+\.\d+\/)?(?:me|\d+|act_\d+)(?:\/(?:adaccounts|campaigns|adsets|ads|insights|businesses))?\/?$/.test(u.pathname))return null;
   path=u.pathname.replace(/act_\d+/g,"act_:id").replace(/\/\d+(?=\/|$)/g,"/:id");
  }else{
   if(!/^\/(?:api\/graphql|graphql|ajax\/ads\/[^?]*)(?:\/)?$/.test(u.pathname))return null;
   path=u.pathname.startsWith("/ajax/ads/") ? "/ajax/ads/:operation" : u.pathname;
  }
- const values={};for(const [k,v] of u.searchParams)if(["doc_id","fb_api_req_friendly_name","variables",...KEYS].includes(k))values[k]=v;
+ const values={};for(const [k,v] of u.searchParams)if(safeKey(k))values[k]=v;
  const body=details.requestBody;
  let bodyFormat="none";
- if(body?.formData){bodyFormat="form";for(const [k,v] of Object.entries(body.formData))if(["doc_id","fb_api_req_friendly_name","variables",...KEYS].includes(k))values[k]=v[0];}
+ if(body?.formData){bodyFormat="form";for(const [k,v] of Object.entries(body.formData))if(safeKey(k))values[k]=v[0];}
  else if(body?.raw){
   bodyFormat="unreadable";
   try{
    const chunks=body.raw.filter(x=>x.bytes).map(x=>new Uint8Array(x.bytes));const size=chunks.reduce((n,x)=>n+x.length,0);
    if(size>0 && size<=262144){const bytes=new Uint8Array(size);let i=0;for(const c of chunks){bytes.set(c,i);i+=c.length;}
     const text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);
-    if(text.trim().startsWith("{")){const obj=JSON.parse(text);bodyFormat="json";for(const [k,v] of Object.entries(obj))if(["doc_id","fb_api_req_friendly_name","variables",...KEYS].includes(k))values[k]=v;}
-    else {bodyFormat="form";for(const [k,v] of new URLSearchParams(text))if(["doc_id","fb_api_req_friendly_name","variables",...KEYS].includes(k))values[k]=v;}
+    if(/^[\s]*[\[{]/.test(text)){const obj=JSON.parse(text);bodyFormat="json";if(Array.isArray(obj))values.requests=obj;else for(const [k,v] of Object.entries(obj))if(safeKey(k))values[k]=v;}
+    else {bodyFormat="form";for(const [k,v] of new URLSearchParams(text))if(safeKey(k))values[k]=v;}
    }
   }catch{}
  }
- const out={fields:new Set(),changes:{}};shape(values,out);
- try{shape(typeof values.variables==="string" ? JSON.parse(values.variables) : values.variables,out);}catch{}
- // Deliberately allow only operation names from known Facebook families.
- const name=values.fb_api_req_friendly_name;
- const operation=typeof name==="string" && /^(?:Ads|Biz|Business|Comet|useAds|useBiz)[A-Za-z0-9_]{1,140}$/.test(name) && !SECRET.test(name) ? name : null;
- return {requestId:String(details.requestId),at:new Date(details.timeStamp || now).toISOString(),host:u.hostname,path,method:["GET","POST","OPTIONS"].includes(details.method)?details.method:"OTHER",operation,docId:/^\d{1,30}$/.test(String(values.doc_id || ""))?String(values.doc_id):null,fields:[...out.fields].sort(),changes:out.changes,bodyFormat,status:null,durationMs:null};
+ const out={fields:new Set(),changes:{},changeCandidates:[],shapes:[],operations:new Set(),docIds:new Set(),batchMethods:new Set(),nodes:0,truncated:false};shape(values,out);
+ const operation=[...out.operations][0] || null;
+ const kind=[...out.operations].some(n=>n.endsWith("Mutation")) ? "mutation-candidate" : operation?.endsWith("Query") ? "query" : "unknown";
+ return {requestId:String(details.requestId),at:new Date(details.timeStamp || now).toISOString(),host:u.hostname,path,method:["GET","POST","OPTIONS"].includes(details.method)?details.method:"OTHER",operation,operations:[...out.operations].slice(0,30),kind,batchMethods:[...out.batchMethods],docIds:[...out.docIds].slice(0,30),docId:/^\d{1,30}$/.test(String(values.doc_id || ""))?String(values.doc_id):null,fields:[...out.fields].sort(),changes:out.changes,changeCandidates:out.changeCandidates,shape:out.shapes,truncated:out.truncated,bodyFormat,status:null,durationMs:null};
 }
 export function installRecorder(chrome){
  let queue=Promise.resolve();
