@@ -102,7 +102,7 @@ function manageActionKeyboard_(level, opts) {
 
 function manageCampaignsView_() {
   const cs = readTodayCampaignState_();
-  const kt = readTodayKeitaroByCampaign_().byId;
+  const kt = getTodayCampaignCardMetrics_(cs.spendIds);
   const list = cs.list.slice().sort(function (a, b) { return b.spend - a.spend; }).slice(0, 40);
   const header = TELEGRAM_ICON_META + ' <b>Компании · ' +
     escapeHtml_(formatTelegramDate_(getToday_())) + '</b>';

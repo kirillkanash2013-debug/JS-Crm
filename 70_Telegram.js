@@ -515,7 +515,8 @@ function telegramToday_() {
   const geoBlock = telegramNowGeoBlock_(campaigns.spendIds, campaigns.geoById);
   if (geoBlock.length) out.push('', geoBlock.join('\n'));
 
-  const campBlock = telegramNowCampaignsBlock_(campaigns.list, keitaro.byId, deposits.byCampaign);
+  const cardMetrics = getTodayCampaignCardMetrics_(spendIds);
+  const campBlock = telegramNowCampaignsBlock_(campaigns.list, cardMetrics);
   if (campBlock.length) out.push('', TELEGRAM_ICON_META + ' <b>Кампании сейчас:</b>', campBlock.join('\n\n'));
 
   return out.join('\n');
@@ -581,10 +582,31 @@ function readTodayDepositsByClick_(spendIds) {
     const bucket = fresh ? result.today : result.dolet;
     bucket.dep += 1;
     bucket.rev += num_(row[revIdx]);
-    const c = result.byCampaign[id] || (result.byCampaign[id] = {today: 0, dolet: 0});
-    if (fresh) c.today += 1; else c.dolet += 1;
+    const c = result.byCampaign[id] || (result.byCampaign[id] = {today: 0, dolet: 0, todayRev: 0, doletRev: 0});
+    const rev = num_(row[revIdx]);
+    if (fresh) { c.today += 1; c.todayRev += rev; } else { c.dolet += 1; c.doletRev += rev; }
   });
   return result;
+}
+
+/**
+ * Per-campaign card metrics: clicks/regs from the report, but deposits and
+ * revenue counted as TODAY's (click today on a spend campaign), matching the
+ * top block. долёт is kept separately for callers that want to show it.
+ */
+function getTodayCampaignCardMetrics_(spendIds) {
+  const rep = readTodayKeitaroByCampaign_().byId;
+  const dep = readTodayDepositsByClick_(spendIds).byCampaign;
+  const out = {};
+  Object.keys(rep).forEach(function (id) {
+    out[id] = {inst: rep[id].inst, reg: rep[id].reg, dep: 0, rev: 0, dolet: 0, doletRev: 0};
+  });
+  Object.keys(dep).forEach(function (id) {
+    const o = out[id] || (out[id] = {inst: 0, reg: 0, dep: 0, rev: 0, dolet: 0, doletRev: 0});
+    o.dep = dep[id].today; o.rev = dep[id].todayRev;
+    o.dolet = dep[id].dolet; o.doletRev = dep[id].doletRev;
+  });
+  return out;
 }
 
 /** Keitaro today metrics aggregated per FB campaign id. */
@@ -681,7 +703,7 @@ function telegramCampaignsScreen_() {
   return [header, '', cards.join('\n\n')].join('\n');
 }
 
-function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
+function telegramNowCampaignsBlock_(campaignList, metricsById) {
   const lines = [];
   campaignList.forEach(function (c) {
     const on = c.status === 'ACTIVE';
@@ -689,7 +711,8 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
     // spend) is green; a campaign that spent but is now off (killed) is red.
     // Off campaigns with no spend are old junk and skipped.
     if (!on && c.spend <= 0) return;
-    const m = keitaroById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
+    // Deposits/revenue are today's (fresh); долёты live in the top block.
+    const m = metricsById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
     const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
     // count / cost-per-unit for each funnel step.
     function unit(count, spend) {
