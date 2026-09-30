@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {pages,syncMeta,graph,discoverSocial,safeMetaFailure,redactMetaDetail} from "../meta.mjs";
+import {pages,syncMeta,graph,discoverSocial,safeMetaFailure,redactMetaDetail,clearMetaTransport} from "../meta.mjs";
 const response=(body,status=200)=>({ok:status===200,json:async()=>body});
 test("paginated API fetch uses bearer header, never URL credentials",async()=>{
   const requests=[];
@@ -68,4 +68,27 @@ test("Meta detail removes submitted token, other tokens, URLs and identifiers",(
   assert(text.includes("API unavailable"));
   for(const secret of [token,other,"example.com","user@","123456789"])assert(!text.includes(secret));
   assert(redactMetaDetail("a".repeat(1000)).length<=350);
+});
+
+test("exact Invalid request gets one read-only batch fallback with body credentials",async()=>{
+  clearMetaTransport();let calls=0;const token="EA"+"q".repeat(30);
+  const fetcher=async(url,options)=>{
+    calls++;assert(!url.includes(token));assert.equal(options.credentials,"omit");assert.equal(options.redirect,"error");
+    if(options.method==="GET")return response({error:{code:1,message:"Invalid request."}},400);
+    assert.equal(url,"https://graph.facebook.com/v25.0/");
+    const body=new URLSearchParams(options.body);assert.equal(body.get("access_token"),token);
+    const batch=JSON.parse(body.get("batch"));assert.equal(batch.length,1);assert.equal(batch[0].method,"GET");
+    assert.equal(batch[0].relative_url,"me?fields=id");
+    return response([{code:200,body:JSON.stringify({id:"999"})}]);
+  };
+  assert.equal((await graph("me",{fields:"id"},token,fetcher)).id,"999");assert.equal(calls,2);
+  await graph("me",{fields:"id"},token,fetcher);assert.equal(calls,3);clearMetaTransport();
+});
+test("batch rejection does not retry and preserves sanitized Meta error",async()=>{
+  clearMetaTransport();let calls=0;
+  await assert.rejects(graph("me",{},"private-token",async(url,opts)=>{
+    calls++;return opts.method==="GET" ? response({error:{code:1,message:"Invalid request."}},400) :
+      response([{code:400,body:JSON.stringify({error:{code:190,message:"Invalid private-token"}})}]);
+  }),e=>e.code===190 && !JSON.stringify(e).includes("private-token"));
+  assert.equal(calls,2);clearMetaTransport();
 });

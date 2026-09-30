@@ -1,4 +1,6 @@
 import {accountId,period,apiSnapshot,nextPage} from "./core.mjs";
+const batchTokens=new Set();
+export function clearMetaTransport(){batchTokens.clear();}
 export class MetaError extends Error {
   constructor(code,message) {super(message);this.code=code;}
 }
@@ -31,7 +33,29 @@ export async function graph(path, params, token, fetcher=fetch) {
   return request(u.href,token,fetcher);
 }
 async function request(url,token,fetcher) {
+  if(batchTokens.has(token))return batchRead(url,token,fetcher);
   const r=await fetcher(url,{method:"GET",headers:{Authorization:"Bearer "+token},credentials:"omit",redirect:"error",signal:AbortSignal.timeout(20000)});
+  try{return await decodeResponse(r,token);}catch(error){
+    // One read-only transport fallback for the exact observed rejection.
+    // No fallback/retry for expired tokens, permissions or rate limits.
+    if(error.code!==1 || error.transient || error.detail!=="Invalid request.")throw error;
+    const result=await batchRead(url,token,fetcher);
+    if(batchTokens.size>=2)batchTokens.clear();batchTokens.add(token);
+    return result;
+  }
+}
+async function batchRead(url,token,fetcher){
+  const u=new URL(url);
+  if(u.origin!=="https://graph.facebook.com" || !/^\/v25\.0\//.test(u.pathname) || u.searchParams.has("access_token"))throw new MetaError("transport","Небезопасный адрес Meta API.");
+  const relative=u.pathname.slice("/v25.0/".length)+u.search;
+  const body=new URLSearchParams({access_token:token,batch:JSON.stringify([{method:"GET",relative_url:relative}])});
+  const response=await fetcher("https://graph.facebook.com/v25.0/",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:body.toString(),credentials:"omit",redirect:"error",signal:AbortSignal.timeout(20000)});
+  const replies=await decodeResponse(response,token);
+  if(!Array.isArray(replies) || replies.length!==1 || !Number.isInteger(replies[0]?.code) || typeof replies[0]?.body!=="string")throw new MetaError("response","Meta вернула некорректный пакетный ответ.");
+  const item=replies[0];
+  return decodeResponse({ok:item.code>=200 && item.code<300,status:item.code,json:async()=>JSON.parse(item.body)},token);
+}
+async function decodeResponse(r,token){
   let body;
   try {body=await r.json();} catch {throw new MetaError("response","Meta вернула ответ, который невозможно прочитать.");}
   if(!r.ok || body.error) {

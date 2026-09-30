@@ -1,6 +1,6 @@
 import {license,accountId,adsUrl,period,validatePageSnapshot} from "./core.mjs";
 import {captureVisible} from "./collector.mjs";
-import {syncMeta,discoverSocial,graph,safeMetaFailure} from "./meta.mjs";
+import {syncMeta,discoverSocial,graph,safeMetaFailure,clearMetaTransport} from "./meta.mjs";
 import {inspectAdsSession} from "./session.mjs";
 import {requestCredential} from "./network.mjs";
 const init=Promise.all([
@@ -199,6 +199,7 @@ async function command(m){
       await chrome.storage.local.set({auto:!!m.enabled});return true;
     }
     case "DISCONNECT":{
+      clearMetaTransport();
       await captureQueue;await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
       await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics"]);
       await chrome.storage.session.remove("metaToken");await chrome.storage.local.set({auto:false});
