@@ -75,7 +75,7 @@ const STORAGE_SPREADSHEET_IDS = Object.freeze({
  * projects; the running script ID selects its spreadsheet and Telegram setup.
  * - prod:   the working CRM (deployed from main).
  * - claude: the sandbox copy in the "Claude" Drive folder (deployed from
- *           claude-code). All raw DB tabs live in its single spreadsheet.
+ *           claude-code).
  */
 const CRM_ENVIRONMENTS = Object.freeze({
   '1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd': Object.freeze({
@@ -89,12 +89,13 @@ const CRM_ENVIRONMENTS = Object.freeze({
   }),
   '1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP': Object.freeze({
     name: 'claude',
+    // Same split as prod: dashboard spreadsheet plus separate source databases.
     storage: Object.freeze({
       CRM: '1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs',
-      FB: '1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs',
-      KEITARO: '1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs',
-      ACCOUNTS: '1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs',
-      LOGS: '1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs'
+      FB: '1r0z6Ptgvtki2rl3YDRiMUuyZe0IUTnMb3mGuQcv3dYg',
+      KEITARO: '1OYHFRkGhICso_wxRIPhkoZoZ_V3DiWvw569lhEQwSpM',
+      ACCOUNTS: '1vvIUEF3lCCGDrnipsJxE_JSCkzfBDpvxFHuvQeGPZDw',
+      LOGS: '1mFvZ7NDxg7iIBaE6y3HkssMDnTYv-HtOR7EgaP7P-s8'
     }),
     // No webhook: the sandbox bot uses one-minute getUpdates polling.
     telegramWebappDeploymentId: '',

@@ -29,7 +29,8 @@ const DEV_RUNNABLE = Object.freeze([
   'rebuildSpendAgent_',
   'refreshStructureFromDatabases_',
   'createSandboxStorage',
-  'migrateLegacyStorage'
+  'migrateLegacyStorage',
+  'removeMigratedDashboardTabs'
 ]);
 
 // Non-secret switches the sandbox may flip remotely.
@@ -102,6 +103,31 @@ function createSandboxStorage() {
   });
   p.setProperty('CRM_SANDBOX_STORAGE', JSON.stringify(ids));
   return ids;
+}
+
+/**
+ * After migrateLegacyStorage: drops raw DB tabs from the dashboard spreadsheet
+ * once the routed copy holds at least as many rows. Sandbox only.
+ */
+function removeMigratedDashboardTabs() {
+  if (getCrmEnv_().name !== 'claude') throw new Error('Only for the Claude sandbox');
+  const crmId = getStorageIds_().CRM;
+  const dashboard = SpreadsheetApp.openById(crmId);
+  const removed = [];
+  const kept = [];
+  dashboard.getSheets().forEach(function (sheet) {
+    const name = sheet.getName();
+    const target = getStorageSpreadsheetForSheet_(name);
+    if (target.getId() === crmId) return;
+    const copy = target.getSheetByName(name);
+    if (copy && copy.getLastRow() >= sheet.getLastRow()) {
+      dashboard.deleteSheet(sheet);
+      removed.push(name);
+    } else {
+      kept.push(name);
+    }
+  });
+  return {removed: removed, keptBecauseCopyMissing: kept};
 }
 
 /** Sandbox schedule: the normal CRM triggers plus one-minute Telegram polling. */

@@ -20,7 +20,7 @@
 |---|---|---|
 | Ветка / workflow | `main` → `crm.yml` | `claude-code` → `claude.yml` |
 | Script ID | `1eZEdgud…` (`.clasp.json`) | `1zBbm3wU…` (`.clasp.claude.json`) |
-| Таблица | рабочая CRM + 4 базы | `CRM Claude` (все вкладки в одной таблице) |
+| Таблица | рабочая CRM + 4 базы | `CRM Claude` + 4 базы (FB, Keitaro, аккаунты, логи) |
 | Telegram | рабочий бот, Cloudflare Worker | отдельный бот, опрос раз в минуту |
 | Служебный вход | выключен | `doPost?dev=1` (`80_Dev.js`) |
 
