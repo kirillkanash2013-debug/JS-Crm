@@ -32,7 +32,9 @@ const DEV_RUNNABLE = Object.freeze([
   'refreshStructureFromDatabases_',
   'createSandboxStorage',
   'migrateLegacyStorage',
-  'removeMigratedDashboardTabs'
+  'removeMigratedDashboardTabs',
+  'repairTelegramWebhook',
+  'testTelegramWebhookRoundTrip'
 ]);
 // budgetSample is a dev action (not in DEV_RUNNABLE).
 
