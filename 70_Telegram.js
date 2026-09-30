@@ -27,7 +27,8 @@ function telegramApi_(method, payload) {
 function telegramMenu_() {
   return {keyboard: [
     [{text: '📊 Сейчас'}, {text: '🎯 Офферы'}],
-    [{text: TELEGRAM_ICON_META + ' Компании'}, {text: '🔀 Потоки'}],
+    [{text: TELEGRAM_ICON_META + ' Компании'}, {text: TELEGRAM_ICON_KEITARO + ' Кейтаро'}],
+    [{text: '🔀 Потоки'}],
     [{text: '🔄 Обновить'}, {text: '❌ Отмена'}],
     [{text: '❓ Помощь'}]
   ], resize_keyboard: true, is_persistent: true};
@@ -323,7 +324,12 @@ function telegramCommand_(chatId, command, context) {
     manageCallback_(chatId, value.substring(4), context || {});
     return;
   }
-  if (!/^[\/📊🎯🔀🔄❌❓Ⓜ️♾️📘]/.test(value) && manageHandlePendingInput_(chatId, value)) {
+  if (value.indexOf('kt:') === 0) {
+    keitaroCallback_(chatId, value.substring(3), context || {});
+    return;
+  }
+  if (!/^[\/📊🎯🔀🔄❌❓Ⓜ️♾️📘]/.test(value) &&
+      (manageHandlePendingInput_(chatId, value) || keitaroHandlePendingInput_(chatId, value))) {
     return;
   }
   if (value === '/health') {
@@ -340,6 +346,10 @@ function telegramCommand_(chatId, command, context) {
   }
   if (value === '/today' || value === '/now' || value === '📊 Сейчас' || value === '📊 Сегодня') {
     telegramSend_(chatId, telegramToday_(), telegramMenu_());
+    return;
+  }
+  if (value === '/keitaro' || value === TELEGRAM_ICON_KEITARO + ' Кейтаро') {
+    keitaroOpen_(chatId);
     return;
   }
   if (value === '/offers' || value === '🎯 Офферы') {
@@ -762,6 +772,32 @@ function aggregateTelegramKeitaroTotals_(headers, rows) {
     totals.revenue += num_(row[columns.revenue]);
     return totals;
   }, {hasData: true, inst: 0, reg: 0, dep: 0, revenue: 0});
+}
+
+/** Keitaro campaigns with their I - R - D for today. */
+function telegramKeitaroScreen_() {
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  if (sheet.getLastRow() < 2) return TELEGRAM_ICON_KEITARO + ' <b>Кейтаро</b>\nДанных пока нет.';
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+  const byCampaign = {};
+  rows.forEach(function (row) {
+    const id = String(row[16] || '');
+    const name = String(row[17] || id);
+    const key = id || name;
+    const c = byCampaign[key] || (byCampaign[key] = {name: name, inst: 0, reg: 0, dep: 0});
+    c.inst += num_(row[6]); c.reg += num_(row[7]); c.dep += num_(row[8]);
+  });
+  const list = Object.keys(byCampaign).map(function (k) { return byCampaign[k]; })
+    .filter(function (c) { return c.inst > 0 || c.reg > 0 || c.dep > 0; })
+    .sort(function (a, b) { return b.inst - a.inst; });
+  const lines = [TELEGRAM_ICON_KEITARO + ' <b>Кейтаро · ' +
+    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>', ''];
+  list.forEach(function (c) {
+    lines.push(escapeHtml_(telegramTrim_(c.name, 34)) +
+      '\n' + Math.round(c.inst) + ' - ' + Math.round(c.reg) + ' - ' + Math.round(c.dep));
+  });
+  if (!list.length) lines.push('Кампаний с трафиком сегодня нет.');
+  return lines.join('\n\n');
 }
 
 function telegramOffers_() {
