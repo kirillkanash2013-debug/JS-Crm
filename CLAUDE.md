@@ -28,7 +28,8 @@
 код в песочницу → проверка через служебный вход.
 
 Служебный вход: POST JSON `{"secret": "...", "action": ...}` на
-`https://script.google.com/macros/s/<deploymentId>/exec?dev=1`.
+`https://script.google.com/macros/s/AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ/exec?dev=1`
+(постоянный деплой песочницы, `deploy.mjs` обновляет его на месте).
 Действия: `ping`, `status`, `run` (`fn` из `DEV_RUNNABLE`), `sheet`
 (`name`, `offset`, `limit`), `telegram` (`text` — команда бота),
 `preview` (`view`: today/offers/daily), `setFlag`.

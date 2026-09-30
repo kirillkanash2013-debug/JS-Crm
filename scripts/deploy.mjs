@@ -8,6 +8,7 @@ const targets={
   prod:{projectFile:'.clasp.json',scriptId:'1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd',
     deploymentId:'AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA'},
   claude:{projectFile:'.clasp.claude.json',scriptId:'1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP',
+    deploymentId:'AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ',
     deploymentDescription:'Claude sandbox web app'}
 };
 const targetName=process.env.CRM_TARGET||'prod';

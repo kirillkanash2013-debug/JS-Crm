@@ -17,8 +17,8 @@ concurrency:
   group: claude-sandbox
   cancel-in-progress: false
 env:
-  # Stable sandbox web-app deployment (filled in after the first deploy).
-  SANDBOX_DEPLOYMENT_ID: ''
+  # Stable sandbox web-app deployment; deploy.mjs updates it in place.
+  SANDBOX_DEPLOYMENT_ID: 'AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ'
 jobs:
   check:
     runs-on: ubuntu-latest
