@@ -30,3 +30,19 @@ test("full sync joins all campaigns including no-spend and insight-only records"
   const s=await syncMeta("123",{since:"2026-09-30",until:"2026-09-30"},"token",()=>{},fetcher);
   assert.equal(s.campaigns.length,2);assert.equal(s.metrics.length,1);assert.equal(s.campaigns[1].status,"UNKNOWN");
 });
+
+test("social discovery validates identity and discovers several accounts without tab binding",async()=>{
+  const {discoverSocial}=await import("../meta.mjs");
+  const fetcher=async url=>{
+    const u=new URL(url);
+    if(u.pathname.endsWith("/adaccounts"))return response({data:[
+      {account_id:"123",name:"A",currency:"USD",business:{id:"777",name:"BM"}},
+      {account_id:"456",name:"B",currency:"EUR",business:{id:"777",name:"BM"}}
+    ]});
+    return response({id:"999",name:"Owner"});
+  };
+  const s=await discoverSocial("local-token","999",()=>{},fetcher);
+  assert.equal(s.accounts.length,2);assert.equal(s.businesses.length,1);assert.equal(s.accountsComplete,true);
+  assert.equal(s.businessesComplete,false);
+  await assert.rejects(discoverSocial("local-token","888",()=>{},fetcher),/другому FB/);
+});

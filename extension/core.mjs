@@ -1,7 +1,7 @@
 export const DEMO_KEY = "js_demo_K7mQ2vN8xR4pT9cW6aY3";
 export function license(key) {
   if (String(key || "").trim() !== DEMO_KEY) throw new Error("Ключ не распознан. Для прототипа используйте демонстрационный ключ.");
-  return {mode:"demo",plan:"Prototype",accountLimit:1,expiresAt:null};
+  return {mode:"demo",plan:"Prototype",socialLimit:1,accountLimit:null,expiresAt:null};
 }
 export function accountId(value) {
   const id = String(value || "").replace(/^act_/, "");

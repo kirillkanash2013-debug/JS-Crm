@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {DEMO_KEY,license,accountId,adsUrl,period,decimal,apiSnapshot,validatePageSnapshot,nextPage} from "../core.mjs";
 test("demo activation does not imply Meta authentication",()=>{
-  assert.equal(license(DEMO_KEY).mode,"demo");assert.equal(license(DEMO_KEY).accountLimit,1);
+  assert.equal(license(DEMO_KEY).mode,"demo");assert.equal(license(DEMO_KEY).socialLimit,1);
   assert.throws(()=>license("js_live_bad"));assert.throws(()=>accountId("1<script>"));
   assert.equal(accountId("act_123456"),"123456");
 });

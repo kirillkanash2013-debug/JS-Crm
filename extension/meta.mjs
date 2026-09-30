@@ -47,3 +47,23 @@ export async function syncMeta(id,range,token,progress=()=>{},fetcher=fetch) {
   const insights=await pages("act_"+id+"/insights",{fields:"account_id,campaign_id,campaign_name,spend,account_currency,date_start,date_stop",level:"campaign",time_range:range,time_increment:1,limit:100},token,fetcher);
   return apiSnapshot(account,campaigns,insights,range,new Date().toISOString());
 }
+
+export async function discoverSocial(token,expectedUserId,progress=()=>{},fetcher=fetch) {
+  await progress("Проверяю Facebook-соц…");
+  const user=await graph("me",{fields:"id,name"},token,fetcher);
+  if(!/^\d{3,30}$/.test(String(user.id || ""))) throw new MetaError("identity","Meta не вернула FB user ID.");
+  if(expectedUserId && String(user.id)!==String(expectedUserId)) throw new MetaError("identity","Доступ относится к другому FB-пользователю. Подключение остановлено.");
+  await progress("Получаю список доступных кабинетов…");
+  const accounts=await pages(String(user.id)+"/adaccounts",{fields:"account_id,name,currency,timezone_name,account_status,business{id,name}",limit:100},token,fetcher);
+  const seen=new Set(),businesses=new Map();
+  const clean=accounts.map(a=>{
+    const id=accountId(a.account_id);
+    if(seen.has(id))throw new MetaError("duplicate","Повтор кабинета в ответе Meta.");seen.add(id);
+    const bm=a.business?.id ? {id:String(a.business.id),name:String(a.business.name || "")} : null;
+    if(bm)businesses.set(bm.id,bm);
+    return {id,name:String(a.name || ""),currency:String(a.currency || ""),timezone:a.timezone_name || null,statusRaw:a.account_status ?? null,business:bm};
+  });
+  return {schemaVersion:1,user:{id:String(user.id),name:String(user.name || "")},accounts:clean,businesses:[...businesses.values()],
+    discoveredAt:new Date().toISOString(),accountsComplete:true,businessesComplete:false,
+    scope:"Кабинеты, доступные через этот токен; БМ — только связанные с найденными кабинетами."};
+}

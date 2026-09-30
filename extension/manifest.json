@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "JS Control — FB Connector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "120",
-  "description": "Автономный прототип: один кабинет Meta, сбор данных, диагностика и экспорт.",
+  "description": "Автономный прототип: один соц Meta, сбор данных, диагностика и экспорт.",
   "permissions": [
     "storage",
     "activeTab",
