@@ -489,7 +489,7 @@ function telegramToday_() {
   if (geoBlock.length) out.push('', geoBlock.join('\n'));
 
   const campBlock = telegramNowCampaignsBlock_(campaigns.list, keitaro.byId, deposits.byCampaign);
-  if (campBlock.length) out.push('', TELEGRAM_ICON_META + ' <b>Кампании сейчас:</b>', campBlock.join('\n'));
+  if (campBlock.length) out.push('', TELEGRAM_ICON_META + ' <b>Кампании сейчас:</b>', campBlock.join('\n\n'));
 
   return out.join('\n');
 }
@@ -653,7 +653,7 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
       return Math.round(count) + per;
     }
     lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
-      ' 💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(m.rev) + '$' +
+      '\n💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(m.rev) + '$' +
       '\n' + unit(m.inst, c.spend) + ' - ' + unit(m.reg, c.spend) + ' - ' + unit(m.dep, c.spend) +
       ' (' + roi + ')');
   });
