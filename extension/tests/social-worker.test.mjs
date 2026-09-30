@@ -6,7 +6,7 @@ test("social connector collects two accounts, keeps auth private and stops on ra
   const local={},session={},alarms=new Map(),token="EA"+"a".repeat(30),calls=[];
   const area=obj=>({setAccessLevel:async()=>{},get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).filter(k=>k in obj).map(k=>[k,obj[k]])),
     set:async data=>Object.assign(obj,data),remove:async keys=>{for(const k of Array.isArray(keys)?keys:[keys])delete obj[k];}});
-  globalThis.chrome={webRequest:{onBeforeRequest:{addListener:(fn,filter,extras)=>{if(filter.urls.length>1)return;networkListener=fn;assert.deepEqual(filter,{urls:["https://graph.facebook.com/*"]});assert.deepEqual(extras,["requestBody"]);}}},storage:{local:area(local),session:area(session)},
+  globalThis.chrome={webRequest:{onBeforeRequest:{addListener:(fn,filter,extras)=>{if(filter.urls.includes("https://*.facebook.com/*"))return;networkListener=fn;assert.deepEqual(filter,{urls:["https://graph.facebook.com/*"]});assert.deepEqual(extras,["requestBody"]);}}},storage:{local:area(local),session:area(session)},
     runtime:{id:"social-test",getURL:p=>"chrome-extension://social-test/"+p,onMessage:{addListener:f=>listener=f},onStartup:{addListener:()=>{}}},
     tabs:{get:async()=>({id:7,url:"https://adsmanager.facebook.com/adsmanager/manage?act=123"})},
     scripting:{executeScript:async options=>{assert.equal(options.world,"MAIN");if(options.func.name==="pageGraphRead"){assert.equal(options.target.tabId,7);assert.equal(options.args[2],"999");const r=await globalThis.fetch(options.args[0],{headers:{Authorization:"Bearer "+options.args[1]}});return [{result:{status:r.ok?200:400,body:await r.json()}}];}return [{result:{userId:"999",candidates:[],diagnostics:{candidateCount:1}}}];}},

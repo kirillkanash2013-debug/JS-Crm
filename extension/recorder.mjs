@@ -1,4 +1,6 @@
-const HOSTS=["graph.facebook.com","adsmanager.facebook.com","business.facebook.com","www.facebook.com"];
+const facebookHost=host=>host==="facebook.com" || host.endsWith(".facebook.com");
+const PATH_WORDS=new Set(["api","graphql","graphqlbatch","ajax","ads","manage","creation","edit","update","publish","batch","campaigns","adsets","ads","insights","businesses","me"]);
+function safePath(path){return path.split("/").map(p=>!p?"":PATH_WORDS.has(p)?p:/^v\d+\.\d+$/.test(p)?p:/^(?:act_)?\d+$/.test(p)?":id":":segment").join("/").slice(0,220);}
 const SECRET=/token|cookie|authorization|password|secret|fb_dtsg|jazoest|session/i;
 function safeKey(key){return /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key) && !SECRET.test(key) && !/^EA[A-Za-z0-9]{18,}$/.test(key);}
 function operationName(value){
@@ -33,18 +35,15 @@ function shape(value,out,depth=0,path="",budgetContext=false){
 export function traceRequest(details,recorder,now=Date.now()){
  if(!recorder?.active || recorder.expiresAt<=now || details.tabId!==recorder.tabId)return null;
  let u;try{u=new URL(details.url);}catch{return null;}
- if(u.protocol!=="https:" || !HOSTS.includes(u.hostname))return null;
- if(details.initiator){try{if(!HOSTS.includes(new URL(details.initiator).hostname))return null;}catch{return null;}}
- let path;
- if(u.hostname==="graph.facebook.com"){
-  if(u.pathname!=="/" && !/^\/v\d+\.\d+\/$/.test(u.pathname) && !/^\/(?:v\d+\.\d+\/)?(?:me|\d+|act_\d+)(?:\/(?:adaccounts|campaigns|adsets|ads|insights|businesses))?\/?$/.test(u.pathname))return null;
-  path=u.pathname.replace(/act_\d+/g,"act_:id").replace(/\/\d+(?=\/|$)/g,"/:id");
- }else{
-  if(!/^\/(?:api\/graphql|graphql|ajax\/ads\/[^?]*)(?:\/)?$/.test(u.pathname))return null;
-  path=u.pathname.startsWith("/ajax/ads/") ? "/ajax/ads/:operation" : u.pathname;
- }
- const values={};for(const [k,v] of u.searchParams)if(safeKey(k))values[k]=v;
- const body=details.requestBody;
+ if(u.protocol!=="https:" || !facebookHost(u.hostname))return null;
+ if(details.initiator){try{if(!facebookHost(new URL(details.initiator).hostname))return null;}catch{return null;}}
+ const knownRoute=u.hostname==="graph.facebook.com" || u.hostname==="adsmanager-graph.facebook.com" || /(?:graphql|\/ajax\/ads\/)/.test(u.pathname);
+ // Unknown Facebook fetch/XHR/POST endpoints are retained as masked metadata.
+ // This reveals routing blind spots without storing page URLs or arbitrary bodies.
+ if(!knownRoute && !["xmlhttprequest","ping"].includes(details.type) && !["POST","PUT","PATCH","DELETE"].includes(details.method))return null;
+ const path=safePath(u.pathname);
+ const values={};for(const [k,v] of (knownRoute ? u.searchParams : []))if(safeKey(k))values[k]=v;
+ const body=knownRoute ? details.requestBody : null;
  let bodyFormat="none";
  if(body?.formData){bodyFormat="form";for(const [k,v] of Object.entries(body.formData))if(safeKey(k))values[k]=v[0];}
  else if(body?.raw){
@@ -61,12 +60,12 @@ export function traceRequest(details,recorder,now=Date.now()){
  const out={fields:new Set(),changes:{},changeCandidates:[],shapes:[],operations:new Set(),docIds:new Set(),batchMethods:new Set(),nodes:0,truncated:false};shape(values,out);
  const operation=[...out.operations][0] || null;
  const kind=[...out.operations].some(n=>n.endsWith("Mutation")) ? "mutation-candidate" : operation?.endsWith("Query") ? "query" : "unknown";
- return {requestId:String(details.requestId),at:new Date(details.timeStamp || now).toISOString(),host:u.hostname,path,method:["GET","POST","OPTIONS"].includes(details.method)?details.method:"OTHER",operation,operations:[...out.operations].slice(0,30),kind,batchMethods:[...out.batchMethods],docIds:[...out.docIds].slice(0,30),docId:/^\d{1,30}$/.test(String(values.doc_id || ""))?String(values.doc_id):null,fields:[...out.fields].sort(),changes:out.changes,changeCandidates:out.changeCandidates,shape:out.shapes,truncated:out.truncated,bodyFormat,status:null,durationMs:null};
+ return {requestId:String(details.requestId),at:new Date(details.timeStamp || now).toISOString(),host:u.hostname,path,knownRoute,resourceType:["xmlhttprequest","ping","other","main_frame","sub_frame"].includes(details.type)?details.type:"other",method:["GET","POST","OPTIONS","PUT","PATCH","DELETE"].includes(details.method)?details.method:"OTHER",operation,operations:[...out.operations].slice(0,30),kind,batchMethods:[...out.batchMethods],docIds:[...out.docIds].slice(0,30),docId:/^\d{1,30}$/.test(String(values.doc_id || ""))?String(values.doc_id):null,fields:[...out.fields].sort(),changes:out.changes,changeCandidates:out.changeCandidates,shape:out.shapes,truncated:out.truncated,bodyFormat,status:null,durationMs:null};
 }
 export function installRecorder(chrome){
  let queue=Promise.resolve();
  const enqueue=fn=>{const result=queue.then(fn);queue=result.catch(()=>{});return result;};
- const urls=HOSTS.map(h=>"https://"+h+"/*");
+ const urls=["https://*.facebook.com/*"];
  chrome.webRequest?.onBeforeRequest.addListener(d=>enqueue(async()=>{
   const {trace}=await chrome.storage.local.get("trace");const row=traceRequest(d,trace);
   if(!row)return;

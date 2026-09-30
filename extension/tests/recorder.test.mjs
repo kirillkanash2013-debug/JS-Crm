@@ -14,10 +14,10 @@ test("raw JSON/form and Graph URLs are reduced to safe metadata",()=>{
  const row=traceRequest({...request,requestBody:{raw:[{bytes:bytes.buffer}]}},config);
  assert.deepEqual(row.changes,{lifetime_budget:"20000",status:"ACTIVE"});assert(!JSON.stringify(row).includes("secret"));
  const graph=traceRequest({...request,url:"https://graph.facebook.com/v25.0/act_123456789/campaigns?access_token=SECRET&fields=name",method:"GET"},config);
- assert.equal(graph.path,"/v25.0/act_:id/campaigns");assert(!JSON.stringify(graph).includes("123456789"));assert(!JSON.stringify(graph).includes("SECRET"));
+ assert.equal(graph.path,"/v25.0/:id/campaigns");assert(!JSON.stringify(graph).includes("123456789"));assert(!JSON.stringify(graph).includes("SECRET"));
 });
 test("trace excludes unrelated tabs/sites/routes, inactive and expired sessions",()=>{
- for(const d of [{...request,tabId:8},{...request,url:"https://evil.test/api/graphql/"},{...request,initiator:"https://evil.test"},{...request,url:"https://www.facebook.com/messages/private"}])assert.equal(traceRequest(d,config),null);
+ for(const d of [{...request,tabId:8},{...request,url:"https://evil.test/api/graphql/"},{...request,initiator:"https://evil.test"},{...request,url:"https://www.facebook.com/messages/private",method:"GET",type:"image"}])assert.equal(traceRequest(d,config),null);
  assert.equal(traceRequest(request,{...config,active:false}),null);assert.equal(traceRequest(request,{...config,expiresAt:0}),null);
 });
 test("recorder survives popup closure, serializes completion, stops and clears",async()=>{
@@ -47,4 +47,14 @@ test("unknown keys retain only shape and bounded payloads omit sensitive subtree
  const row=traceRequest({...request,requestBody:{formData:{operationName:["RelayUpdate"],variables:[JSON.stringify(vars)]}}},config);
  assert.equal(row.operation,"RelayUpdate");assert(row.shape.some(s=>s.path.endsWith("customField") && s.type==="string"));
  for(const value of ["PrivateValue","private@example.test","session_secret","999"])assert(!JSON.stringify(row).includes(value));
+});
+test("record publishing API on Facebook subdomains without expanding beyond Facebook",()=>{
+ const row=traceRequest({...request,url:"https://adsmanager-graph.facebook.com/v25.0/123456789",requestBody:{formData:{daily_budget:["12000"],access_token:["PRIVATE"]}}},config);
+ assert.equal(row.changes.daily_budget,"12000");assert.equal(row.path,"/v25.0/:id");assert.equal(row.knownRoute,true);
+ assert.equal(traceRequest({...request,url:"https://facebook.com.evil.test/api/graphql/"},config),null);
+});
+test("unknown publishing routes retain masked metadata and no body",()=>{
+ const row=traceRequest({...request,url:"https://edge.facebook.com/private/token-in-path/123456789?access_token=PRIVATE",type:"xmlhttprequest",requestBody:{formData:{daily_budget:["12000"],email:["private@example.test"]}}},config);
+ assert.equal(row.knownRoute,false);assert.equal(row.path,"/:segment/:segment/:id");assert.deepEqual(row.fields,[]);assert.deepEqual(row.changes,{});
+ for(const secret of ["PRIVATE","private@example.test","token-in-path","123456789"])assert(!JSON.stringify(row).includes(secret));
 });
