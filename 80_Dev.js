@@ -24,7 +24,8 @@ const DEV_RUNNABLE = Object.freeze([
   'refreshStructureOnly',
   'testCampaignPipeline',
   'verifyInstallAndRecover',
-  'installSandboxTriggers'
+  'installSandboxTriggers',
+  'alignSpreadsheetTimeZone'
 ]);
 
 // Non-secret switches the sandbox may flip remotely.
@@ -44,6 +45,7 @@ const DEV_REQUIRED_PROPERTIES = Object.freeze([
 function setupClaudeEnvironment() {
   if (getCrmEnv_().name !== 'claude') throw new Error('Only for the Claude sandbox');
   assertTargetSpreadsheet_();
+  alignSpreadsheetTimeZone();
   const p = PropertiesService.getScriptProperties();
   let secret = p.getProperty(DEV_SECRET_PROPERTY);
   if (!secret) {
@@ -58,6 +60,17 @@ function setupClaudeEnvironment() {
     ? 'Не заданы Свойства скрипта: ' + missing.join(', ')
     : 'Все обязательные Свойства скрипта заданы');
   return {secretCreated: true, missingProperties: missing};
+}
+
+/**
+ * Timestamps are written as Minsk-time strings; a spreadsheet in another zone
+ * parses them with the wrong offset. A new spreadsheet takes the owner's zone.
+ */
+function alignSpreadsheetTimeZone() {
+  const ss = SpreadsheetApp.openById(getStorageIds_().CRM);
+  const before = ss.getSpreadsheetTimeZone();
+  if (before !== CONFIG.TIMEZONE) ss.setSpreadsheetTimeZone(CONFIG.TIMEZONE);
+  return {before: before, after: ss.getSpreadsheetTimeZone()};
 }
 
 /** Sandbox schedule: the normal CRM triggers plus one-minute Telegram polling. */
