@@ -26,7 +26,8 @@ const DEV_RUNNABLE = Object.freeze([
   'verifyInstallAndRecover',
   'installSandboxTriggers',
   'alignSpreadsheetTimeZone',
-  'rebuildSpendAgent_'
+  'rebuildSpendAgent_',
+  'refreshStructureFromDatabases_'
 ]);
 
 // Non-secret switches the sandbox may flip remotely.
@@ -120,6 +121,7 @@ function runDevAction_(request) {
   if (action === 'preview') return previewTelegramView_(String(request.view || ''));
   if (action === 'setFlag') return setDevFlag_(String(request.name || ''), request.value);
   if (action === 'clearSheet') return clearDevSheet_(String(request.name || ''));
+  if (action === 'assignSocials') return assignDevSocials_(String(request.agent || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -198,6 +200,40 @@ function clearDevSheet_(name) {
   if (!sheet) throw new Error('Sheet not found: ' + name);
   sheet.clear();
   return {cleared: name};
+}
+
+/**
+ * Sandbox-only: puts every Dolphin social not yet on the "Соцы" tab under
+ * one agent column. Existing manual assignments are kept.
+ */
+function assignDevSocials_(agent) {
+  const agentIndex = CONFIG.STRUCTURE_AGENTS.indexOf(agent);
+  if (agentIndex < 0) throw new Error('Unknown agent: ' + agent);
+  const db = getStorageSpreadsheetForSheet_(SHEETS.DB_SOCIALS).getSheetByName(SHEETS.DB_SOCIALS);
+  if (!db || db.getLastRow() < 2) throw new Error('DB_Socials is empty; run updateToday first');
+  const names = db.getRange(2, 3, db.getLastRow() - 1, 1).getValues()
+    .map(function (row) { return String(row[0] || '').trim(); }).filter(Boolean);
+
+  ensureAgentsFromSocials_([]);
+  const sheet = getOrCreateSheet_(SHEETS.SOCIALS);
+  const width = CONFIG.STRUCTURE_AGENTS.length;
+  const rows = sheet.getLastRow() > 1
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues() : [];
+  const assigned = {};
+  rows.forEach(function (row) {
+    row.forEach(function (value) { assigned[normalizeJoinName_(value)] = true; });
+  });
+  const column = rows.map(function (row) { return row[agentIndex]; })
+    .filter(function (value) { return String(value || '').trim(); });
+  const added = names.filter(function (name) {
+    const key = normalizeJoinName_(name);
+    if (assigned[key]) return false;
+    assigned[key] = true;
+    return true;
+  });
+  const values = column.concat(added).map(function (name) { return [name]; });
+  if (values.length) sheet.getRange(2, agentIndex + 1, values.length, 1).setValues(values);
+  return {agent: agent, added: added, total: values.length};
 }
 
 function sendDevTelegramCommand_(text) {

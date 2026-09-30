@@ -32,7 +32,8 @@
 (постоянный деплой песочницы, `deploy.mjs` обновляет его на месте).
 Действия: `ping`, `status`, `run` (`fn` из `DEV_RUNNABLE`), `sheet`
 (`name`, `offset`, `limit`), `telegram` (`text` — команда бота),
-`preview` (`view`: today/offers/daily), `setFlag`, `clearSheet` (`name`).
+`preview` (`view`: today/offers/daily), `setFlag`, `clearSheet` (`name`),
+`assignSocials` (`agent`: соцы без агента → колонка агента на листе «Соцы»).
 Секрет лежит в Свойстве скрипта `CRM_CLAUDE_DEV_SECRET`, а также в GitHub
 Actions secret и в переменной среды с тем же именем. Не выводи его в логи
 и не коммить.
