@@ -646,13 +646,16 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
     // Off campaigns with no spend are old junk and skipped.
     if (!on && c.spend <= 0) return;
     const m = keitaroById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
-    const dep = (depByCampaign && depByCampaign[c.id]) || {today: 0, dolet: 0};
     const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
-    const depText = dep.today + (dep.dolet ? ' +' + dep.dolet : '');
+    // count / cost-per-unit for each funnel step.
+    function unit(count, spend) {
+      const per = count > 0 && spend > 0 ? '/' + safeDiv_(spend, count).toFixed(2) + '$' : '';
+      return Math.round(count) + per;
+    }
     lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
-      ' Budget ' + num_(c.budget).toFixed(0) + '$' +
-      '\nSpend ' + c.spend.toFixed(2) + '$ [' + Math.round(m.inst) + ' - ' +
-      Math.round(m.reg) + ' - ' + depText + '] ROI ' + roi);
+      ' 💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(m.rev) + '$' +
+      '\n' + unit(m.inst, c.spend) + ' - ' + unit(m.reg, c.spend) + ' - ' + unit(m.dep, c.spend) +
+      ' (' + roi + ')');
   });
   return lines.slice(0, 40);
 }
