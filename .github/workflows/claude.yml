@@ -70,6 +70,10 @@ jobs:
           fi
           body=$(jq -c --arg s "$DEV_SECRET" '. + {secret: $s}' <<< "$REQUEST")
           curl -sS -L --max-time 400 -H 'Content-Type: application/json' --data "$body" \
-            "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1" | tee response.json
+            -D headers.txt -o response.json \
+            "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1"
+          # Status chain only; redirect URLs carry one-time tokens.
+          grep -iE '^HTTP/' headers.txt || true
+          head -c 20000 response.json
           echo
           jq -e '.ok == true' response.json > /dev/null
