@@ -13,9 +13,6 @@ on:
         default: '{"action":"status"}'
 permissions:
   contents: read
-concurrency:
-  group: claude-sandbox
-  cancel-in-progress: false
 env:
   # Stable sandbox web-app deployment; deploy.mjs updates it in place.
   SANDBOX_DEPLOYMENT_ID: 'AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ'
@@ -35,6 +32,10 @@ jobs:
     if: github.event_name == 'push' || inputs.deploy
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Only uploads are serialized; read requests may run side by side.
+    concurrency:
+      group: claude-sandbox-deploy
+      cancel-in-progress: false
     outputs:
       deployment_id: ${{ steps.deploy.outputs.deployment_id }}
     steps:
@@ -73,7 +74,7 @@ jobs:
             -D headers.txt -o response.json \
             "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1"
           # Status chain only; redirect URLs carry one-time tokens.
-          grep -iE '^HTTP/' headers.txt || true
+          grep -iE '^(HTTP/|location:)' headers.txt | sed -E 's/\?.*$//' || true
           head -c 20000 response.json
           echo
           jq -e '.ok == true' response.json > /dev/null
