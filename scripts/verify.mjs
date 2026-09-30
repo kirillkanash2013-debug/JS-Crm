@@ -128,4 +128,16 @@ ctx.ScriptApp={getScriptId:()=> '1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg
 assert.equal(devCall(devProps.CRM_CLAUDE_DEV_SECRET,{action:'ping'}),'forbidden');
 ctx.ScriptApp={getScriptId:()=> 'unknown'};
 assert.throws(()=>ctx.getCrmEnv_(),/Unknown CRM environment/);
+// Dolphin has no BM status field: it is derived from the BM's accounts.
+assert.equal(ctx.summarizeBmStatus_(['POLICY','ACTIVE']),'ACTIVE');
+assert.equal(ctx.summarizeBmStatus_(['POLICY','CLOSED']),'POLICY');
+assert.equal(ctx.summarizeBmStatus_(['CLOSED','DISABLED']),'DISABLED');
+assert.equal(ctx.summarizeBmStatus_([]),'UNKNOWN');
+const derivedBm=ctx.deriveBmStatusesFromCabs_([
+  {_resolved_bm_id:'bm1',status:'POLICY'},{_resolved_bm_id:'bm1',status:'ACTIVE'},
+  {_resolved_bm_id:'bm2',account_status:101},{_resolved_bm_id:'',status:'ACTIVE'}]);
+assert.deepEqual(JSON.parse(JSON.stringify(derivedBm)),{bm1:'ACTIVE',bm2:'DISABLED'});
+assert.equal(ctx.resolveBmStatus_('bm1','UNKNOWN',derivedBm),'ACTIVE');
+assert.equal(ctx.resolveBmStatus_('bm1','POLICY',derivedBm),'POLICY');
+assert.equal(ctx.resolveBmStatus_('bm9','',derivedBm),'UNKNOWN');
 console.log(`PASS: ${files.length} modules; unique entry points; target, secret scan, history protection, error redaction`);
