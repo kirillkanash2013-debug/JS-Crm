@@ -343,7 +343,10 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
     'Campaign Status Raw',
     'Campaign Status',
     'Daily Budget',
-    'Budget Remaining'
+    'Budget Remaining',
+    'Active Ads',
+    'Error Ads',
+    'Warning Ads'
   ];
 
   const cabMap = buildCabMap_(context.cabs);
@@ -355,6 +358,7 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
     const accountId = getCampaignAccountId_(campaign);
     const cab = cabMap[accountId] || campaign.cab || {};
     const social = getSocialMetaFromCab_(cab, context.socials);
+    const ads = getCampaignAdCounts_(campaign);
 
     rows.push([
       getToday_(),
@@ -368,13 +372,17 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
       getCampaignRawStatus_(campaign),
       getCampaignStatus_(campaign),
       getCampaignDailyBudget_(campaign),
-      getCampaignBudgetRemaining_(campaign)
+      getCampaignBudgetRemaining_(campaign),
+      ads.active,
+      ads.error,
+      ads.warning
     ]);
   });
 
   writeDbSheet_(SHEETS.DB_CAMPAIGNS_TODAY, headers, rows, {
     textColumns: [3, 5, 6, 9, 10],
-    numberColumns: [8, 11, 12]
+    numberColumns: [8, 11, 12],
+    integerColumns: [13, 14, 15]
   });
 }
 

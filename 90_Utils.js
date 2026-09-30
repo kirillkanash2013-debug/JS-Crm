@@ -502,6 +502,23 @@ function getCampaignBudgetRemaining_(campaign) {
   return num_(remaining);
 }
 
+// Ad-status counts on a campaign or adset object; used to flag "!" when a unit
+// looks on but nothing is actually delivering (rejects / errors).
+function getCampaignAdCounts_(entity) {
+  return {
+    active: num_(entity && entity.active_status_ads_count),
+    error: num_(entity && entity.error_status_ads_count),
+    warning: num_(entity && entity.warning_status_ads_count)
+  };
+}
+
+/** '' , '❗' (error/rejected) or '⚠️' (warning) suffix for a status dot. */
+function adHealthMark_(activeCount, errorCount, warningCount) {
+  if (num_(errorCount) > 0) return '❗';
+  if (num_(warningCount) > 0) return '⚠️';
+  return '';
+}
+
 function getCampaignAccountId_(campaign) {
   return String(
     campaign && (campaign.account_id || campaign.ad_account_id ||

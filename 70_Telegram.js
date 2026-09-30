@@ -503,7 +503,7 @@ function readTodayCampaignState_() {
   const sheet = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
   const result = {list: [], spendIds: {}, geoById: {}, time: ''};
   if (sheet.getLastRow() < 2) return result;
-  const width = Math.max(sheet.getLastColumn(), 12);
+  const width = Math.max(sheet.getLastColumn(), 15);
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
   values.forEach(function (row) {
     const id = String(row[5] || '');
@@ -512,7 +512,8 @@ function readTodayCampaignState_() {
     const status = String(row[9] || 'UNKNOWN');
     const item = {id: id, name: name, spend: spend,
       statusRaw: String(row[8] || ''), status: status,
-      budget: num_(row[10]), remaining: row[11], geo: parseGeoFromCampaign_(name)};
+      budget: num_(row[10]), remaining: row[11], geo: parseGeoFromCampaign_(name),
+      activeAds: num_(row[12]), errorAds: num_(row[13]), warningAds: num_(row[14])};
     const updated = String(row[1] || '');
     if (updated > result.time) result.time = updated;
     if (spend > 0) {
@@ -672,7 +673,8 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
       const per = count > 0 && spend > 0 ? '/' + safeDiv_(spend, count).toFixed(2) + '$' : '';
       return Math.round(count) + per;
     }
-    lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
+    const mark = adHealthMark_(c.activeAds, c.errorAds, c.warningAds);
+    lines.push((on ? '🟢' : '🔴') + mark + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
       '\n💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(m.rev) + '$' +
       '\n' + unit(m.inst, c.spend) + ' - ' + unit(m.reg, c.spend) + ' - ' + unit(m.dep, c.spend) +
       ' (' + roi + ')');
