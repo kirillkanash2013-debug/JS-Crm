@@ -25,7 +25,8 @@ const DEV_RUNNABLE = Object.freeze([
   'testCampaignPipeline',
   'verifyInstallAndRecover',
   'installSandboxTriggers',
-  'alignSpreadsheetTimeZone'
+  'alignSpreadsheetTimeZone',
+  'rebuildSpendAgent_'
 ]);
 
 // Non-secret switches the sandbox may flip remotely.
@@ -118,6 +119,7 @@ function runDevAction_(request) {
   if (action === 'telegram') return sendDevTelegramCommand_(String(request.text || ''));
   if (action === 'preview') return previewTelegramView_(String(request.view || ''));
   if (action === 'setFlag') return setDevFlag_(String(request.name || ''), request.value);
+  if (action === 'clearSheet') return clearDevSheet_(String(request.name || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -188,6 +190,14 @@ function readDevSheet_(request) {
   const count = Math.min(limit, dataRows - offset);
   const rows = count > 0 ? sheet.getRange(2 + offset, 1, count, lastColumn).getValues() : [];
   return {name: name, lastRow: lastRow, offset: offset, headers: headers, rows: rows};
+}
+
+/** Sandbox-only: wipes a generated tab so the next pipeline run rebuilds it. */
+function clearDevSheet_(name) {
+  const sheet = getStorageSpreadsheetForSheet_(name).getSheetByName(name);
+  if (!sheet) throw new Error('Sheet not found: ' + name);
+  sheet.clear();
+  return {cleared: name};
 }
 
 function sendDevTelegramCommand_(text) {
