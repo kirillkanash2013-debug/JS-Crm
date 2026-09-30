@@ -1,6 +1,6 @@
 import {license,accountId,adsUrl,period,validatePageSnapshot} from "./core.mjs";
 import {captureVisible} from "./collector.mjs";
-import {syncMeta,discoverSocial,graph} from "./meta.mjs";
+import {syncMeta,discoverSocial,graph,safeMetaFailure} from "./meta.mjs";
 import {inspectAdsSession} from "./session.mjs";
 import {requestCredential} from "./network.mjs";
 const init=Promise.all([
@@ -64,7 +64,7 @@ async function connectSocial(tabId,range,suppliedToken) {
   if(!/^\d{3,30}$/.test(found.userId || ""))throw new Error("Не найден ID авторизованного соца. Подождите загрузки Ads Manager и повторите.");
   if(suppliedToken!==undefined){
     found.candidates=[{token:suppliedToken,source:"local-token-import"}];
-    found.diagnostics={...found.diagnostics,method:"local-token-import"};
+    found.diagnostics={...found.diagnostics,method:"local-token-import",candidateCount:1};
   }
   await captureQueue;
   const {networkCapture}=await chrome.storage.session.get("networkCapture");
@@ -97,10 +97,14 @@ async function connectSocial(tabId,range,suppliedToken) {
       return social;
     }catch(e){
       lastError=e;
+      const failure=safeMetaFailure(e);
+      await chrome.storage.local.set({sessionDiagnostics:{...found.diagnostics,failure}});
+      await status((failure.stage==="identity" ? "Проверка владельца токена" : failure.stage==="adaccounts" ? "Получение списка кабинетов" : "Подключение")+": "+e.message,true);
       if(e.code!=="auth" && e.code!==190)break; // No retries on rate-limit/identity/permission errors.
     }
   }
-  throw lastError || new Error("Не удалось проверить доступ к соцy.");
+  if(lastError){const stage=lastError.stage==="identity" ? "Проверка владельца токена" : lastError.stage==="adaccounts" ? "Получение списка кабинетов" : "Подключение";throw new Error(stage+": "+lastError.message);}
+  throw new Error("Не удалось проверить доступ к соцy.");
 }
 async function startWholeSync(){
   const s=await licensed();

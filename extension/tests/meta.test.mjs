@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {pages,syncMeta,graph} from "../meta.mjs";
+import {pages,syncMeta,graph,discoverSocial,safeMetaFailure} from "../meta.mjs";
 const response=(body,status=200)=>({ok:status===200,json:async()=>body});
 test("paginated API fetch uses bearer header, never URL credentials",async()=>{
   const requests=[];
@@ -45,4 +45,19 @@ test("social discovery validates identity and discovers several accounts without
   assert.equal(s.accounts.length,2);assert.equal(s.businesses.length,1);assert.equal(s.accountsComplete,true);
   assert.equal(s.businessesComplete,false);
   await assert.rejects(discoverSocial("local-token","888",()=>{},fetcher),/другому FB/);
+});
+
+test("connection failures identify the API stage without retaining raw error data",async()=>{
+  for(const stage of ["identity","adaccounts"]){
+    const fetcher=async url=>{
+      if(stage==="adaccounts" && new URL(url).pathname.endsWith("/me"))return response({id:"999"});
+      return {status:400,ok:false,json:async()=>({error:{code:1,error_subcode:99,is_transient:true,message:"An unknown error occurred secret-token",fbtrace_id:"private-trace"}})};
+    };
+    await assert.rejects(discoverSocial("secret-token","999",()=>{},fetcher),e=>{
+      assert.deepEqual(safeMetaFailure(e),{code:1,stage,httpStatus:400,subcode:99,transient:true,reason:"unknown-api-error"});
+      assert(!JSON.stringify(e).includes("secret-token"));
+      assert(!JSON.stringify(e).includes("private-trace"));return true;
+    });
+  }
+  assert.equal(safeMetaFailure({code:"secret",stage:"secret",reason:"secret",message:"secret"}).code,"unknown");
 });

@@ -2,6 +2,16 @@ import {accountId,period,apiSnapshot,nextPage} from "./core.mjs";
 export class MetaError extends Error {
   constructor(code,message) {super(message);this.code=code;}
 }
+export function safeMetaFailure(error){
+  return {
+    code:typeof error.code==="number" && Number.isFinite(error.code) ? error.code : "unknown",
+    stage:["identity","adaccounts"].includes(error.stage) ? error.stage : "unknown",
+    httpStatus:Number.isInteger(error.httpStatus) ? error.httpStatus : null,
+    subcode:Number.isInteger(error.subcode) ? error.subcode : null,
+    transient:error.transient===true,
+    reason:["unknown-api-error","unsupported-request","token-validation","permission","unclassified"].includes(error.reason) ? error.reason : "unclassified"
+  };
+}
 export async function graph(path, params, token, fetcher=fetch) {
   if(!token) throw new MetaError("auth","Введите разрешённый токен Meta API в расширении.");
   const u=new URL("https://graph.facebook.com/v25.0/"+path);
@@ -17,7 +27,17 @@ async function request(url,token,fetcher) {
     const message=code===190 ? "Токен Meta недействителен или истёк." :
       [4,17,32,613].includes(code) ? "Meta ограничила частоту запросов. Автообновление остановлено." :
       [10,200,294].includes(code) ? "У токена нет нужного доступа к этому кабинету." : "Ошибка Meta API (код "+code+").";
-    throw new MetaError(code,message);
+    const error=new MetaError(code,message);
+    error.httpStatus=r.status;
+    error.subcode=Number.isInteger(body.error?.error_subcode) ? body.error.error_subcode : null;
+    error.transient=body.error?.is_transient===true;
+    // Classify locally; never retain or export Meta's raw error text.
+    const raw=String(body.error?.message || "").toLowerCase();
+    error.reason=raw.includes("unknown error") ? "unknown-api-error" :
+      raw.includes("unsupported get request") || raw.includes("unknown path") ? "unsupported-request" :
+      raw.includes("validating access token") ? "token-validation" :
+      raw.includes("permission") ? "permission" : "unclassified";
+    throw error;
   }
   return body;
 }
@@ -50,11 +70,13 @@ export async function syncMeta(id,range,token,progress=()=>{},fetcher=fetch) {
 
 export async function discoverSocial(token,expectedUserId,progress=()=>{},fetcher=fetch) {
   await progress("Проверяю Facebook-соц…");
-  const user=await graph("me",{fields:"id,name"},token,fetcher);
+  let user;
+  try{user=await graph("me",{fields:"id,name"},token,fetcher);}catch(e){e.stage="identity";throw e;}
   if(!/^\d{3,30}$/.test(String(user.id || ""))) throw new MetaError("identity","Meta не вернула FB user ID.");
   if(expectedUserId && String(user.id)!==String(expectedUserId)) throw new MetaError("identity","Доступ относится к другому FB-пользователю. Подключение остановлено.");
   await progress("Получаю список доступных кабинетов…");
-  const accounts=await pages(String(user.id)+"/adaccounts",{fields:"account_id,name,currency,timezone_name,account_status,business{id,name}",limit:100},token,fetcher);
+  let accounts;
+  try{accounts=await pages(String(user.id)+"/adaccounts",{fields:"account_id,name,currency,timezone_name,account_status,business{id,name}",limit:100},token,fetcher);}catch(e){e.stage="adaccounts";throw e;}
   const seen=new Set(),businesses=new Map();
   const clean=accounts.map(a=>{
     const id=accountId(a.account_id);
