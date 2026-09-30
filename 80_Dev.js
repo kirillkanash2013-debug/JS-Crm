@@ -101,6 +101,7 @@ function handleDevRequest_(e) {
   }
   result.action = String(request.action || '');
   result.ms = Date.now() - startedAt;
+  recordDevRun_(request, result, startedAt);
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -144,8 +145,24 @@ function getDevStatus_() {
   const sheets = SpreadsheetApp.openById(getStorageIds_().CRM).getSheets().map(function (sheet) {
     return {name: sheet.getName(), rows: sheet.getLastRow(), columns: sheet.getLastColumn()};
   });
-  return {env: getCrmEnv_().name, properties: properties, flags: flags,
+  let devRuns = [];
+  try { devRuns = JSON.parse(p.getProperty('CRM_DEV_RUNS') || '[]'); } catch (_) {}
+  return {env: getCrmEnv_().name, properties: properties, flags: flags, devRuns: devRuns,
     triggers: listTriggers_(), sheets: sheets, now: getCurrentTimestamp_()};
+}
+
+// Google sometimes loses the web-app response after a redirect; this journal
+// shows whether the request ran and how it ended.
+function recordDevRun_(request, result, startedAt) {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let runs = [];
+    try { runs = JSON.parse(p.getProperty('CRM_DEV_RUNS') || '[]'); } catch (_) {}
+    runs.push({at: new Date(startedAt).toISOString(), action: result.action,
+      fn: String(request.fn || request.text || request.view || request.name || ''),
+      ok: result.ok, ms: result.ms, error: result.error ? String(result.error).slice(0, 300) : ''});
+    p.setProperty('CRM_DEV_RUNS', JSON.stringify(runs.slice(-15)));
+  } catch (_) {}
 }
 
 function listTriggers_() {
