@@ -2,6 +2,11 @@
  * Telegram operational panel. Secrets are stored only in Script Properties.
  */
 
+// Section icons in one place. Keitaro and Meta have no Unicode brand emoji, so
+// these are stand-ins; swap for custom emoji later if needed.
+const TELEGRAM_ICON_KEITARO = '🎯';
+const TELEGRAM_ICON_META = 'Ⓜ️';
+
 function isTelegramConfigured_() {
   const p = PropertiesService.getScriptProperties();
   return Boolean(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_BOT_TOKEN) &&
@@ -481,7 +486,7 @@ function telegramToday_() {
   if (geoBlock.length) out.push('', geoBlock.join('\n'));
 
   const campBlock = telegramNowCampaignsBlock_(campaigns.list, keitaro.byId);
-  if (campBlock.length) out.push('', '<b>Кампании сейчас:</b>', campBlock.join('\n'));
+  if (campBlock.length) out.push('', TELEGRAM_ICON_META + ' <b>Кампании сейчас:</b>', campBlock.join('\n'));
 
   return out.join('\n');
 }
@@ -570,12 +575,12 @@ function telegramNowGeoBlock_(spendIds, geoById) {
       .filter(function (o) { return o.inst > 1; })
       .sort(function (a, b) { return b.inst - a.inst; });
     if (!offers.length) return;
-    out.push('🌍 <b>' + escapeHtml_(geo) + '</b>');
+    out.push(TELEGRAM_ICON_KEITARO + ' <b>' + escapeHtml_(geo) + '</b>');
     offers.forEach(function (o) {
       out.push((o.offerId ? '<code>' + escapeHtml_(o.offerId) + '</code> ' : '') +
-        escapeHtml_(telegramTrim_(o.offer)) +
-        '\n    I' + Math.round(o.inst) + ' R' + Math.round(o.reg) +
-        ' D' + Math.round(o.dep) + ' · uEPC $' + safeDiv_(o.rev, o.inst).toFixed(2));
+        escapeHtml_(telegramTrim_(o.offer, 48)) +
+        '\n    ' + Math.round(o.inst) + ' - ' + Math.round(o.reg) +
+        ' - ' + Math.round(o.dep) + ' · uEPC $' + safeDiv_(o.rev, o.inst).toFixed(2));
     });
   });
   return out;
@@ -598,9 +603,10 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById) {
     if (!on && c.spend <= 0) return;
     const m = keitaroById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
     const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
-    lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) + ' (' + roi + ')' +
-      '\n    $' + c.spend.toFixed(2) + '/$' + num_(c.budget).toFixed(0) +
-      ' · I' + Math.round(m.inst) + ' R' + Math.round(m.reg) + ' D' + Math.round(m.dep));
+    lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
+      ' Budget ' + num_(c.budget).toFixed(0) + '$' +
+      '\nSpend ' + c.spend.toFixed(2) + '$ [' + Math.round(m.inst) + ' - ' +
+      Math.round(m.reg) + ' - ' + Math.round(m.dep) + '] ROI ' + roi);
   });
   return lines.slice(0, 40);
 }
