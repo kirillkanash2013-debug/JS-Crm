@@ -466,8 +466,9 @@ function telegramToday_() {
     const m = keitaro.byId[id];
     base.inst += m.inst; base.reg += m.reg;
   });
-  // Deposits are split by click date: today's click = fresh, earlier = долёт.
-  const deposits = readTodayDepositsByClick_();
+  // A fresh deposit = clicked today AND on a campaign that spends today.
+  // Everything else (click on an earlier day, or a campaign with no spend) is долёт.
+  const deposits = readTodayDepositsByClick_(spendIds);
   base.dep = deposits.today.dep; base.rev = deposits.today.rev;
   dolet.dep = deposits.dolet.dep; dolet.rev = deposits.dolet.rev;
 
@@ -487,7 +488,7 @@ function telegramToday_() {
   const geoBlock = telegramNowGeoBlock_(campaigns.spendIds, campaigns.geoById);
   if (geoBlock.length) out.push('', geoBlock.join('\n'));
 
-  const campBlock = telegramNowCampaignsBlock_(campaigns.list, keitaro.byId);
+  const campBlock = telegramNowCampaignsBlock_(campaigns.list, keitaro.byId, deposits.byCampaign);
   if (campBlock.length) out.push('', TELEGRAM_ICON_META + ' <b>Кампании сейчас:</b>', campBlock.join('\n'));
 
   return out.join('\n');
@@ -529,14 +530,15 @@ function readTodayCampaignState_() {
  * Splits today's sale conversions into fresh (click today) and долёт (click on
  * an earlier day) using the conversion log's Click At column.
  */
-function readTodayDepositsByClick_() {
-  const result = {today: {dep: 0, rev: 0}, dolet: {dep: 0, rev: 0}};
+function readTodayDepositsByClick_(spendIds) {
+  const result = {today: {dep: 0, rev: 0}, dolet: {dep: 0, rev: 0}, byCampaign: {}};
   const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_CONVERSIONS_TODAY);
   if (sheet.getLastRow() < 2) return result;
   const headers = getKeitaroConversionHeaders_();
   const statusIdx = headers.indexOf('Status');
   const revIdx = headers.indexOf('Revenue');
   const clickIdx = headers.indexOf('Click At');
+  const campaignIdx = headers.indexOf('FB Campaign ID');
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
   const today = getToday_();
   const seen = {};
@@ -545,10 +547,14 @@ function readTodayDepositsByClick_() {
     const key = String(row[2] || '');
     if (key && seen[key]) return;
     if (key) seen[key] = true;
-    const clickDay = normalizeDateKey_(row[clickIdx]);
-    const bucket = clickDay === today ? result.today : result.dolet;
+    const id = String(row[campaignIdx] || '');
+    const clickedToday = normalizeDateKey_(row[clickIdx]) === today;
+    const fresh = clickedToday && Boolean(spendIds && spendIds[id]);
+    const bucket = fresh ? result.today : result.dolet;
     bucket.dep += 1;
     bucket.rev += num_(row[revIdx]);
+    const c = result.byCampaign[id] || (result.byCampaign[id] = {today: 0, dolet: 0});
+    if (fresh) c.today += 1; else c.dolet += 1;
   });
   return result;
 }
@@ -631,7 +637,7 @@ function telegramTrim_(text, max) {
   return value.length > limit ? value.slice(0, limit - 1).trim() + '…' : value;
 }
 
-function telegramNowCampaignsBlock_(campaignList, keitaroById) {
+function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
   const lines = [];
   campaignList.forEach(function (c) {
     const on = c.status === 'ACTIVE';
@@ -640,11 +646,13 @@ function telegramNowCampaignsBlock_(campaignList, keitaroById) {
     // Off campaigns with no spend are old junk and skipped.
     if (!on && c.spend <= 0) return;
     const m = keitaroById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
+    const dep = (depByCampaign && depByCampaign[c.id]) || {today: 0, dolet: 0};
     const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
+    const depText = dep.today + (dep.dolet ? ' +' + dep.dolet : '');
     lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
       ' Budget ' + num_(c.budget).toFixed(0) + '$' +
       '\nSpend ' + c.spend.toFixed(2) + '$ [' + Math.round(m.inst) + ' - ' +
-      Math.round(m.reg) + ' - ' + Math.round(m.dep) + '] ROI ' + roi);
+      Math.round(m.reg) + ' - ' + depText + '] ROI ' + roi);
   });
   return lines.slice(0, 40);
 }
