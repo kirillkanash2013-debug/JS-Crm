@@ -25,6 +25,8 @@ const DEV_RUNNABLE = Object.freeze([
   'testCampaignPipeline',
   'verifyInstallAndRecover',
   'installSandboxTriggers',
+  'installBotOnlySchedule',
+  'removeAllTriggers',
   'alignSpreadsheetTimeZone',
   'rebuildSpendAgent_',
   'refreshStructureFromDatabases_',
@@ -134,6 +136,30 @@ function removeMigratedDashboardTabs() {
 function installSandboxTriggers() {
   installTriggers();
   ensureTelegramPollingTrigger_();
+  return listTriggers_();
+}
+
+/**
+ * Bot-only schedule for the sandbox: removes every time-based trigger, then
+ * installs just one-minute Telegram polling. No hourly refresh, so the bot
+ * answers buttons quickly while spending the least trigger quota. Data is
+ * refreshed by the "🔄 Обновить" button or the dev endpoint.
+ */
+function installBotOnlySchedule() {
+  if (getCrmEnv_().name !== 'claude') throw new Error('Only for the Claude sandbox');
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    ScriptApp.deleteTrigger(trigger);
+  });
+  ensureTelegramPollingTrigger_();
+  return listTriggers_();
+}
+
+/** Removes every time-based trigger in the sandbox (stops all quota use). */
+function removeAllTriggers() {
+  if (getCrmEnv_().name !== 'claude') throw new Error('Only for the Claude sandbox');
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    ScriptApp.deleteTrigger(trigger);
+  });
   return listTriggers_();
 }
 
