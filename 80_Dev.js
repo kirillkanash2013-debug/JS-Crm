@@ -122,6 +122,7 @@ function runDevAction_(request) {
   if (action === 'setFlag') return setDevFlag_(String(request.name || ''), request.value);
   if (action === 'clearSheet') return clearDevSheet_(String(request.name || ''));
   if (action === 'assignSocials') return assignDevSocials_(String(request.agent || ''));
+  if (action === 'dolphinShape') return getDolphinShape_(String(request.entity || ''));
   throw new Error('Unknown dev action: ' + action);
 }
 
@@ -234,6 +235,38 @@ function assignDevSocials_(agent) {
   const values = column.concat(added).map(function (name) { return [name]; });
   if (values.length) sheet.getRange(2, agentIndex + 1, values.length, 1).setValues(values);
   return {agent: agent, added: added, total: values.length};
+}
+
+/**
+ * Field names only (two levels deep) of the first Dolphin record, to find
+ * where a value lives. Values are never returned.
+ */
+function getDolphinShape_(entity) {
+  const today = getToday_();
+  const loaders = {
+    businesses: function () { return getBusinesses_(today); },
+    cabs: function () { return getAllCabs_(today, today); }
+  };
+  if (!loaders[entity]) throw new Error('Unknown entity: ' + entity);
+  const items = loaders[entity]();
+  function shape(value) {
+    if (Array.isArray(value)) return value.length ? ['[]', shape(value[0])] : '[]';
+    if (value && typeof value === 'object') {
+      const out = {};
+      Object.keys(value).sort().forEach(function (key) {
+        const child = value[key];
+        out[key] = child && typeof child === 'object'
+          ? (Array.isArray(child)
+            ? ['[' + child.length + ']'].concat(child[0] && typeof child[0] === 'object'
+              ? Object.keys(child[0]).sort() : [])
+            : Object.keys(child).sort())
+          : typeof child;
+      });
+      return out;
+    }
+    return typeof value;
+  }
+  return {entity: entity, count: items.length, shape: items.length ? shape(items[0]) : null};
 }
 
 function sendDevTelegramCommand_(text) {
