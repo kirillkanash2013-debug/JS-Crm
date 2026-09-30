@@ -27,7 +27,7 @@ function telegramApi_(method, payload) {
 function telegramMenu_() {
   return {keyboard: [
     [{text: '📊 Сейчас'}, {text: '🎯 Офферы'}],
-    [{text: '📣 Кампании'}, {text: '🔀 Потоки'}],
+    [{text: TELEGRAM_ICON_META + ' Компании'}, {text: '🔀 Потоки'}],
     [{text: '🔄 Обновить'}, {text: '❌ Отмена'}],
     [{text: '❓ Помощь'}]
   ], resize_keyboard: true, is_persistent: true};
@@ -333,8 +333,12 @@ function telegramCommand_(chatId, command) {
     telegramSend_(chatId, telegramOffers_(), telegramMenu_());
     return;
   }
-  if (value === '/campaigns' || value === '/flows' ||
-      value === '📣 Кампании' || value === '🔀 Потоки') {
+  if (value === '/campaigns' || value === TELEGRAM_ICON_META + ' Компании' ||
+      value === '📣 Кампании') {
+    telegramSend_(chatId, telegramCampaignsScreen_(), telegramMenu_());
+    return;
+  }
+  if (value === '/flows' || value === '🔀 Потоки') {
     telegramCampaignButtons_(chatId);
     return;
   }
@@ -635,6 +639,22 @@ function telegramTrim_(text, max) {
   const value = String(text || '').trim();
   const limit = max || 32;
   return value.length > limit ? value.slice(0, limit - 1).trim() + '…' : value;
+}
+
+/** Full "Компании" screen: every today campaign as a card, highest spend first. */
+function telegramCampaignsScreen_() {
+  const campaigns = readTodayCampaignState_();
+  const keitaro = readTodayKeitaroByCampaign_();
+  if (!campaigns.list.length) {
+    return TELEGRAM_ICON_META + ' <b>Компании</b>\nЗапущенных кампаний сейчас нет.';
+  }
+  const deposits = readTodayDepositsByClick_(campaigns.spendIds);
+  const sorted = campaigns.list.slice().sort(function (a, b) { return b.spend - a.spend; });
+  const cards = telegramNowCampaignsBlock_(sorted, keitaro.byId, deposits.byCampaign);
+  const header = TELEGRAM_ICON_META + ' <b>Компании · ' +
+    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>' +
+    (campaigns.time ? '\n<i>Dolphin ' + escapeHtml_(campaigns.time) + '</i>' : '');
+  return [header, '', cards.join('\n\n')].join('\n');
 }
 
 function telegramNowCampaignsBlock_(campaignList, keitaroById, depByCampaign) {
