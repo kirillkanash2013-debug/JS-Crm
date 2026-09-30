@@ -1,13 +1,12 @@
 /**
  * Meta management panel for Telegram: Кампании → Адсеты → Объявления.
  *
- * Tap-driven: every list item is a button, so navigation is one tap and only a
- * budget amount is ever typed. One browsing message is edited in place as you
- * drill in and back out; changes (budget, on/off) happen in a separate message
- * with a confirm step so the structure stays visible behind them.
- *
- * Phase 1: browsing + the confirm flow are live; the actual Meta write is
- * stubbed until the Dolphin write API and a safe test target are confirmed.
+ * Each level shows a numbered stat list (so you can decide) with a small fixed
+ * set of action buttons — this scales to many campaigns. "Осмотреть" / "Бюджет"
+ * / "Вкл-Выкл" ask for a number in a SEPARATE message; the list message stays
+ * put and is edited in place as you drill in and back out. Changes go through a
+ * confirm step; the actual Meta write is stubbed until the Dolphin write API
+ * and a safe test target are confirmed.
  */
 
 function manageNavKey_(chatId) { return 'TELEGRAM_NAV_' + String(chatId); }
@@ -43,7 +42,7 @@ function telegramEditInline_(chatId, messageId, text, inlineKeyboard) {
   });
 }
 
-/** Edits the browsing message if we have one, else sends a new one and stores its id. */
+/** Edits the browsing (list) message in place, or sends it the first time. */
 function manageRender_(chatId, state, text, keyboard) {
   if (state.messageId) {
     try { telegramEditInline_(chatId, state.messageId, text, keyboard); return; } catch (_) {}
@@ -54,144 +53,102 @@ function manageRender_(chatId, state, text, keyboard) {
 
 function manageDot_(active) { return active ? '🟢' : '🔴'; }
 
-/* ===================== Entry ===================== */
+function manageRoi_(rev, spend) {
+  return spend > 0 ? Math.round((num_(rev) - spend) / spend * 100) + '%' : '—';
+}
 
-function manageOpenCampaigns_(chatId) {
-  const state = {level: 'campaigns', messageId: null};
-  const view = manageCampaignsView_();
-  const sent = telegramSend_(chatId, view.text, view.keyboard);
-  if (sent && sent.result) state.messageId = sent.result.message_id;
-  state.campaignsList = view.list;
-  manageSaveNav_(chatId, state);
+/* ===================== Keyboards ===================== */
+
+function manageActionKeyboard_(level, opts) {
+  const o = opts || {};
+  if (level === 'campaigns') {
+    return {inline_keyboard: [
+      [{text: '🔍 Осмотреть', callback_data: 'mng:ins'}],
+      [{text: '💰 Бюджет', callback_data: 'mng:bud'}, {text: '🔀 Вкл/Выкл', callback_data: 'mng:onoff'}],
+      [{text: '🏠 Меню', callback_data: 'mng:menu'}]
+    ]};
+  }
+  if (level === 'adsets') {
+    const actions = [];
+    if (o.adsetBudget) actions.push({text: '💰 Бюджет', callback_data: 'mng:bud'});
+    actions.push({text: '🔀 Вкл/Выкл', callback_data: 'mng:onoff'});
+    return {inline_keyboard: [
+      [{text: '🔍 Осмотреть', callback_data: 'mng:ins'}],
+      actions,
+      [{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]
+    ]};
+  }
+  // ads
+  return {inline_keyboard: [
+    [{text: '🔀 Вкл/Выкл', callback_data: 'mng:onoff'}],
+    [{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]
+  ]};
 }
 
 /* ===================== Views ===================== */
 
 function manageCampaignsView_() {
   const cs = readTodayCampaignState_();
+  const kt = readTodayKeitaroByCampaign_().byId;
   const list = cs.list.slice().sort(function (a, b) { return b.spend - a.spend; }).slice(0, 40);
-  const rows = list.map(function (c, i) {
+  const lines = [TELEGRAM_ICON_META + ' <b>Компании · ' +
+    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>', ''];
+  list.forEach(function (c, i) {
+    const m = kt[c.id] || {rev: 0, dep: 0};
     const mark = adHealthMark_(c.activeAds, c.errorAds, c.warningAds);
-    return [{text: (i + 1) + '. ' + manageDot_(c.status === 'ACTIVE') + mark + ' ' +
-      telegramTrim_(c.name || c.id, 30), callback_data: 'mng:c:' + i}];
+    lines.push('<b>' + (i + 1) + '.</b> ' + manageDot_(c.status === 'ACTIVE') + mark + ' ' +
+      escapeHtml_(telegramTrim_(c.name || c.id, 26)) +
+      '\n     💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' +
+      Math.round(m.rev) + '$ · ROI ' + manageRoi_(m.rev, c.spend) + ' · D' + Math.round(m.dep));
   });
-  rows.push([{text: '🏠 Меню', callback_data: 'mng:menu'}]);
-  const text = TELEGRAM_ICON_META + ' <b>Компании · ' +
-    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>\n' +
-    (list.length ? 'Выбери кампанию:' : 'Запущенных кампаний сейчас нет.');
-  return {text: text, keyboard: {inline_keyboard: rows},
-    list: list.map(function (c) {
-      return {id: c.id, name: c.name, cbo: c.budget > 0};
-    })};
-}
-
-function manageCampaignCardView_(campaignId) {
-  const cs = readTodayCampaignState_();
-  let c = null;
-  cs.list.forEach(function (x) { if (x.id === campaignId) c = x; });
-  if (!c) return null;
-  const kt = readTodayKeitaroByCampaign_().byId[campaignId] || {inst: 0, reg: 0, dep: 0, rev: 0};
-  const on = c.status === 'ACTIVE';
-  const mark = adHealthMark_(c.activeAds, c.errorAds, c.warningAds);
-  const lines = [manageDot_(on) + mark + ' <b>' + escapeHtml_(c.name) + '</b>',
-    '💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(kt.rev) + '$',
-    manageFunnelLine_(kt, c.spend),
-    'Объявления: ' + Math.round(c.activeAds) + ' актив · ' +
-      Math.round(c.errorAds) + ' ошибка · ' + Math.round(c.warningAds) + ' предупр.'];
-  const budgetRow = [];
-  if (c.budget > 0) budgetRow.push({text: '💰 Бюджет', callback_data: 'mng:budget'});
-  budgetRow.push({text: on ? '🔴 Выключить' : '🟢 Включить', callback_data: 'mng:toggle'});
-  const keyboard = {inline_keyboard: [
-    [{text: '📂 Адсеты', callback_data: 'mng:adsets'}],
-    budgetRow,
-    [{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]
-  ]};
-  return {text: lines.join('\n'), keyboard: keyboard,
-    campaign: {id: c.id, name: c.name, cbo: c.budget > 0, budget: c.budget, on: on}};
-}
-
-function manageFunnelLine_(m, spend) {
-  function unit(count) {
-    const per = count > 0 && spend > 0 ? '/' + safeDiv_(spend, count).toFixed(2) + '$' : '';
-    return Math.round(count) + per;
-  }
-  const roi = spend > 0 ? Math.round((m.rev - spend) / spend * 100) + '%' : '—';
-  return unit(m.inst) + ' - ' + unit(m.reg) + ' - ' + unit(m.dep) + ' (' + roi + ')';
+  if (!list.length) lines.push('Запущенных кампаний сейчас нет.');
+  return {text: lines.join('\n'), keyboard: manageActionKeyboard_('campaigns', {}),
+    list: list.map(function (c) { return {id: c.id, name: c.name, cbo: c.budget > 0, budget: c.budget}; })};
 }
 
 function manageAdsetsView_(campaign) {
   const adsets = getCampaignAdsets_(campaign.id);
-  const rows = adsets.map(function (a, i) {
-    const active = String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE';
-    const mark = adHealthMark_(a.active_status_ads_count, a.error_status_ads_count, a.warning_status_ads_count);
-    return [{text: (i + 1) + '. ' + manageDot_(active) + mark + ' ' +
-      telegramTrim_(a.name || a.adset_id, 28), callback_data: 'mng:a:' + i}];
+  const lines = ['📂 <b>' + escapeHtml_(telegramTrim_(campaign.name, 34)) + '</b> · адсеты', ''];
+  let anyBudget = false;
+  const list = adsets.map(function (a) {
+    const budget = getCampaignDailyBudget_(a);
+    if (budget > 0) anyBudget = true;
+    return {id: String(a.adset_id || a.id || ''), name: String(a.name || ''), budget: budget,
+      active: String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE',
+      status: String(a.effective_status || a.status || ''),
+      mark: adHealthMark_(a.active_status_ads_count, a.error_status_ads_count, a.warning_status_ads_count),
+      spend: getCampaignSpend_(a),
+      err: num_(a.error_status_ads_count), warn: num_(a.warning_status_ads_count),
+      act: num_(a.active_status_ads_count)};
   });
-  rows.push([{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]);
-  const text = '📂 <b>' + escapeHtml_(telegramTrim_(campaign.name, 40)) + '</b> · адсеты\n' +
-    (adsets.length ? 'Выбери адсет:' : 'Адсетов не найдено.');
-  return {text: text, keyboard: {inline_keyboard: rows},
-    list: adsets.map(function (a) {
-      return {id: String(a.adset_id || a.id || ''), name: String(a.name || ''),
-        budget: getCampaignDailyBudget_(a)};
-    })};
-}
-
-function manageAdsetCardView_(campaign, adsetId) {
-  const adsets = getCampaignAdsets_(campaign.id);
-  let a = null;
-  adsets.forEach(function (x) { if (String(x.adset_id || x.id || '') === adsetId) a = x; });
-  if (!a) return null;
-  const active = String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE';
-  const mark = adHealthMark_(a.active_status_ads_count, a.error_status_ads_count, a.warning_status_ads_count);
-  const budget = getCampaignDailyBudget_(a);
-  const lines = [manageDot_(active) + mark + ' <b>' + escapeHtml_(a.name || adsetId) + '</b>',
-    'Статус: ' + escapeHtml_(String(a.effective_status || a.status || '—')),
-    '💸' + Math.round(getCampaignSpend_(a)) + '$' + (budget > 0 ? ' · 💰' + num_(budget).toFixed(0) + '$' : ''),
-    'Объявления: ' + Math.round(num_(a.active_status_ads_count)) + ' актив · ' +
-      Math.round(num_(a.error_status_ads_count)) + ' ошибка · ' +
-      Math.round(num_(a.warning_status_ads_count)) + ' предупр.'];
-  const actionRow = [];
-  if (budget > 0) actionRow.push({text: '💰 Бюджет', callback_data: 'mng:budget'});
-  actionRow.push({text: active ? '🔴 Выключить' : '🟢 Включить', callback_data: 'mng:toggle'});
-  const keyboard = {inline_keyboard: [
-    [{text: '🖼 Объявления', callback_data: 'mng:ads'}],
-    actionRow,
-    [{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]
-  ]};
-  return {text: lines.join('\n'), keyboard: keyboard,
-    adset: {id: adsetId, name: String(a.name || ''), budget: budget, on: active}};
+  list.forEach(function (a, i) {
+    lines.push('<b>' + (i + 1) + '.</b> ' + manageDot_(a.active) + a.mark + ' ' +
+      escapeHtml_(telegramTrim_(a.name, 26)) +
+      '\n     💸' + Math.round(a.spend) + '$' + (a.budget > 0 ? ' · 💰' + num_(a.budget).toFixed(0) + '$' : '') +
+      ' · объяв ' + Math.round(a.act) + '/' + Math.round(a.err) + '❗/' + Math.round(a.warn) + '⚠️');
+  });
+  if (!list.length) lines.push('Адсетов не найдено.');
+  return {text: lines.join('\n'), keyboard: manageActionKeyboard_('adsets', {adsetBudget: anyBudget}),
+    list: list.map(function (a) { return {id: a.id, name: a.name, budget: a.budget, on: a.active}; })};
 }
 
 function manageAdsView_(adset) {
   const ads = getAdsetAds_(adset.id);
-  const rows = ads.map(function (a, i) {
-    const active = String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE';
-    return [{text: (i + 1) + '. ' + manageDot_(active) + manageAdUnitMark_(a) + ' ' +
-      telegramTrim_(a.name || a.ad_id, 28), callback_data: 'mng:d:' + i}];
+  const lines = ['🖼 <b>' + escapeHtml_(telegramTrim_(adset.name, 34)) + '</b> · объявления', ''];
+  const list = ads.map(function (a) {
+    return {id: String(a.ad_id || a.id || ''), name: String(a.name || ''),
+      active: String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE',
+      mark: manageAdUnitMark_(a),
+      reason: String(a.disapprove_reason || a.disapprove_comment || '').trim()};
   });
-  rows.push([{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]);
-  const text = '🖼 <b>' + escapeHtml_(telegramTrim_(adset.name, 40)) + '</b> · объявления\n' +
-    (ads.length ? 'Выбери объявление:' : 'Объявлений не найдено.');
-  return {text: text, keyboard: {inline_keyboard: rows},
-    list: ads.map(function (a) { return {id: String(a.ad_id || a.id || ''), name: String(a.name || '')}; })};
-}
-
-function manageAdCardView_(adset, adId) {
-  const ads = getAdsetAds_(adset.id);
-  let a = null;
-  ads.forEach(function (x) { if (String(x.ad_id || x.id || '') === adId) a = x; });
-  if (!a) return null;
-  const active = String(a.effective_status || a.status || '').toUpperCase() === 'ACTIVE';
-  const lines = [manageDot_(active) + manageAdUnitMark_(a) + ' <b>' + escapeHtml_(a.name || adId) + '</b>',
-    'Статус: ' + escapeHtml_(String(a.effective_status || a.status || '—'))];
-  const reason = String(a.disapprove_reason || a.disapprove_comment || '').trim();
-  if (reason) lines.push('⛔ ' + escapeHtml_(telegramTrim_(reason, 120)));
-  const keyboard = {inline_keyboard: [
-    [{text: active ? '🔴 Выключить' : '🟢 Включить', callback_data: 'mng:toggle'}],
-    [{text: '⬅️ Назад', callback_data: 'mng:back'}, {text: '🏠 Меню', callback_data: 'mng:menu'}]
-  ]};
-  return {text: lines.join('\n'), keyboard: keyboard, ad: {id: adId, name: String(a.name || ''), on: active}};
+  list.forEach(function (a, i) {
+    lines.push('<b>' + (i + 1) + '.</b> ' + manageDot_(a.active) + a.mark + ' ' +
+      escapeHtml_(telegramTrim_(a.name, 28)) +
+      (a.reason ? '\n     ⛔ ' + escapeHtml_(telegramTrim_(a.reason, 70)) : ''));
+  });
+  if (!list.length) lines.push('Объявлений не найдено.');
+  return {text: lines.join('\n'), keyboard: manageActionKeyboard_('ads', {}),
+    list: list.map(function (a) { return {id: a.id, name: a.name, on: a.active}; })};
 }
 
 function manageAdUnitMark_(unit) {
@@ -202,147 +159,158 @@ function manageAdUnitMark_(unit) {
   return '';
 }
 
+/* ===================== Entry & rebuild ===================== */
+
+function manageOpenCampaigns_(chatId) {
+  const view = manageCampaignsView_();
+  const state = {level: 'campaigns', messageId: null, list: view.list,
+    campaign: null, adset: null, pending: null, promptMessageId: null};
+  const sent = telegramSend_(chatId, view.text, view.keyboard);
+  if (sent && sent.result) state.messageId = sent.result.message_id;
+  manageSaveNav_(chatId, state);
+}
+
+/** Builds the view for the current level and refreshes state.list. */
+function manageCurrentView_(state) {
+  if (state.level === 'campaigns') return manageCampaignsView_();
+  if (state.level === 'adsets' && state.campaign) return manageAdsetsView_(state.campaign);
+  if (state.level === 'ads' && state.adset) return manageAdsView_(state.adset);
+  return null;
+}
+
+function manageRerender_(chatId, state) {
+  const view = manageCurrentView_(state);
+  if (!view) return;
+  state.list = view.list;
+  manageRender_(chatId, state, view.text, view.keyboard);
+}
+
 /* ===================== Callbacks ===================== */
 
 function manageCallback_(chatId, action, context) {
   const state = manageLoadNav_(chatId);
   if (context && context.messageId && !state.messageId) state.messageId = context.messageId;
 
-  if (action === 'menu') {
-    manageClearNav_(chatId);
-    telegramSend_(chatId, '🏠 Главное меню', telegramMenu_());
-    return;
-  }
+  if (action === 'menu') { manageClearNav_(chatId); telegramSend_(chatId, '🏠 Главное меню', telegramMenu_()); return; }
   if (action === 'back') { manageBack_(chatId, state); return; }
   if (action === 'confirm') { manageConfirm_(chatId, state); return; }
   if (action === 'cancel') { manageCancel_(chatId, state); return; }
-  if (action === 'budget') { manageAskBudget_(chatId, state); return; }
-  if (action === 'toggle') { manageAskToggle_(chatId, state); return; }
-
-  // Navigation into a list item: c:i / a:i / d:i
-  const parts = action.split(':');
-  if (parts[0] === 'c') return manageOpenCampaignCard_(chatId, state, Number(parts[1]));
-  if (parts[0] === 'a') return manageOpenAdsetCard_(chatId, state, Number(parts[1]));
-  if (parts[0] === 'd') return manageOpenAdCard_(chatId, state, Number(parts[1]));
-  if (action === 'adsets') return manageOpenAdsets_(chatId, state);
-  if (action === 'ads') return manageOpenAds_(chatId, state);
+  if (action === 'ins') { managePrompt_(chatId, state, {action: 'inspect'}, 'Введите номер ' + manageLevelWord_(state) + ':'); return; }
+  if (action === 'bud') { manageStartBudget_(chatId, state); return; }
+  if (action === 'onoff') { manageStartToggle_(chatId, state); return; }
 }
 
-function manageOpenCampaignCard_(chatId, state, index) {
-  const list = state.campaignsList || [];
-  if (!(index >= 0 && index < list.length)) return;
-  const view = manageCampaignCardView_(list[index].id);
-  if (!view) { telegramSend_(chatId, 'Кампания больше не доступна, обнови список.'); return; }
-  state.level = 'campaign';
-  state.campaign = view.campaign;
-  manageRender_(chatId, state, view.text, view.keyboard);
+function manageLevelWord_(state) {
+  return state.level === 'campaigns' ? 'кампании' : state.level === 'adsets' ? 'адсета' : 'объявления';
+}
+
+function managePrompt_(chatId, state, pending, promptText) {
+  state.pending = pending;
+  const sent = telegramSend_(chatId, '✍️ ' + promptText);
+  state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
   manageSaveNav_(chatId, state);
 }
 
-function manageOpenAdsets_(chatId, state) {
-  if (!state.campaign) return;
-  const view = manageAdsetsView_(state.campaign);
-  state.level = 'adsets';
-  state.adsetsList = view.list;
-  manageRender_(chatId, state, view.text, view.keyboard);
-  manageSaveNav_(chatId, state);
+function manageStartBudget_(chatId, state) {
+  if (state.level === 'ads') { telegramSend_(chatId, 'У объявления нет бюджета.'); return; }
+  managePrompt_(chatId, state, {action: 'budget', step: 'pick'},
+    'Введите номер ' + manageLevelWord_(state) + ' для смены бюджета:');
 }
 
-function manageOpenAdsetCard_(chatId, state, index) {
-  const list = state.adsetsList || [];
-  if (!state.campaign || !(index >= 0 && index < list.length)) return;
-  const view = manageAdsetCardView_(state.campaign, list[index].id);
-  if (!view) { telegramSend_(chatId, 'Адсет больше не доступен, обнови список.'); return; }
-  state.level = 'adset';
-  state.adset = view.adset;
-  manageRender_(chatId, state, view.text, view.keyboard);
-  manageSaveNav_(chatId, state);
-}
-
-function manageOpenAds_(chatId, state) {
-  if (!state.adset) return;
-  const view = manageAdsView_(state.adset);
-  state.level = 'ads';
-  state.adsList = view.list;
-  manageRender_(chatId, state, view.text, view.keyboard);
-  manageSaveNav_(chatId, state);
-}
-
-function manageOpenAdCard_(chatId, state, index) {
-  const list = state.adsList || [];
-  if (!state.adset || !(index >= 0 && index < list.length)) return;
-  const view = manageAdCardView_(state.adset, list[index].id);
-  if (!view) { telegramSend_(chatId, 'Объявление больше не доступно, обнови список.'); return; }
-  state.level = 'ad';
-  state.ad = view.ad;
-  manageRender_(chatId, state, view.text, view.keyboard);
-  manageSaveNav_(chatId, state);
+function manageStartToggle_(chatId, state) {
+  managePrompt_(chatId, state, {action: 'toggle', step: 'pick'},
+    'Введите номер ' + manageLevelWord_(state) +
+    ' для вкл/выкл (можно несколько через пробел, напр. 1 3 5):');
 }
 
 function manageBack_(chatId, state) {
-  const go = {campaign: 'campaigns', adsets: 'campaign', adset: 'adsets', ads: 'adset', ad: 'ads'};
-  const target = go[state.level] || 'menu';
-  if (target === 'campaigns') {
-    const view = manageCampaignsView_();
-    state.level = 'campaigns'; state.campaignsList = view.list;
-    manageRender_(chatId, state, view.text, view.keyboard);
-  } else if (target === 'campaign' && state.campaign) {
-    const view = manageCampaignCardView_(state.campaign.id);
-    state.level = 'campaign';
-    manageRender_(chatId, state, view.text, view.keyboard);
-  } else if (target === 'adsets' && state.campaign) {
-    const view = manageAdsetsView_(state.campaign);
-    state.level = 'adsets'; state.adsetsList = view.list;
-    manageRender_(chatId, state, view.text, view.keyboard);
-  } else if (target === 'adset' && state.adset) {
-    const view = manageAdsetCardView_(state.campaign, state.adset.id);
-    state.level = 'adset';
-    manageRender_(chatId, state, view.text, view.keyboard);
-  } else {
-    manageClearNav_(chatId);
-    telegramSend_(chatId, '🏠 Главное меню', telegramMenu_());
-    return;
-  }
+  state.pending = null;
+  if (state.level === 'ads') { state.level = 'adsets'; state.adset = null; }
+  else if (state.level === 'adsets') { state.level = 'campaigns'; state.campaign = null; }
+  else { manageClearNav_(chatId); telegramSend_(chatId, '🏠 Главное меню', telegramMenu_()); return; }
+  manageRerender_(chatId, state);
   manageSaveNav_(chatId, state);
 }
 
-/* ===================== Changes (budget / on-off) ===================== */
+/* ===================== Typed input ===================== */
 
-function manageCurrentUnit_(state) {
-  if (state.level === 'campaign' && state.campaign) {
-    return {kind: 'campaign', id: state.campaign.id, name: state.campaign.name,
-      on: state.campaign.on, budget: state.campaign.budget};
+function manageParseNumbers_(text, max) {
+  const nums = String(text).trim().split(/\s+/).map(function (t) { return Number(t); });
+  const out = [];
+  for (let i = 0; i < nums.length; i++) {
+    const n = nums[i];
+    if (!Number.isInteger(n) || n < 1 || n > max) return null;
+    if (out.indexOf(n) < 0) out.push(n);
   }
-  if (state.level === 'adset' && state.adset) {
-    return {kind: 'adset', id: state.adset.id, name: state.adset.name,
-      on: state.adset.on, budget: state.adset.budget};
-  }
-  if (state.level === 'ad' && state.ad) {
-    return {kind: 'ad', id: state.ad.id, name: state.ad.name, on: state.ad.on};
-  }
-  return null;
+  return out.length ? out : null;
 }
 
-function manageAskBudget_(chatId, state) {
-  const unit = manageCurrentUnit_(state);
-  if (!unit || unit.kind === 'ad') { telegramSend_(chatId, 'Здесь бюджет не меняется.'); return; }
-  state.pending = {type: 'budget', kind: unit.kind, id: unit.id, name: unit.name, current: unit.budget};
-  const sent = telegramSend_(chatId, '✍️ Введите новый дневной бюджет в $ для <b>' +
-    escapeHtml_(unit.name) + '</b> (сейчас ' + num_(unit.budget).toFixed(0) + '$):');
-  state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
-  manageSaveNav_(chatId, state);
+/** Returns true when a typed message was consumed by an open management prompt. */
+function manageHandlePendingInput_(chatId, text) {
+  const state = manageLoadNav_(chatId);
+  const p = state && state.pending;
+  if (!p) return false;
+  const list = state.list || [];
+
+  if (p.action === 'inspect') {
+    const nums = manageParseNumbers_(text, list.length);
+    if (!nums || nums.length !== 1) { telegramSend_(chatId, '⚠️ Нужен один номер от 1 до ' + list.length + '.'); return true; }
+    telegramDelete_(chatId, state.promptMessageId); state.promptMessageId = null; state.pending = null;
+    const chosen = list[nums[0] - 1];
+    if (state.level === 'campaigns') { state.campaign = {id: chosen.id, name: chosen.name, cbo: chosen.cbo}; state.level = 'adsets'; }
+    else if (state.level === 'adsets') { state.adset = {id: chosen.id, name: chosen.name}; state.level = 'ads'; }
+    else { return true; }
+    manageRerender_(chatId, state); manageSaveNav_(chatId, state); return true;
+  }
+
+  if (p.action === 'budget' && p.step === 'pick') {
+    const nums = manageParseNumbers_(text, list.length);
+    if (!nums || nums.length !== 1) { telegramSend_(chatId, '⚠️ Нужен один номер от 1 до ' + list.length + '.'); return true; }
+    const chosen = list[nums[0] - 1];
+    if (state.level === 'campaigns' && !chosen.cbo) {
+      telegramDelete_(chatId, state.promptMessageId); state.promptMessageId = null; state.pending = null;
+      manageSaveNav_(chatId, state);
+      telegramSend_(chatId, 'У этой кампании бюджет на адсете — зайди в неё (Осмотреть) и меняй бюджет там.');
+      return true;
+    }
+    telegramDelete_(chatId, state.promptMessageId);
+    state.pending = {action: 'budget', step: 'value', id: chosen.id, name: chosen.name,
+      kind: state.level === 'campaigns' ? 'campaign' : 'adset', current: num_(chosen.budget)};
+    const sent = telegramSend_(chatId, '✍️ Введите новый дневной бюджет в $ для <b>' +
+      escapeHtml_(chosen.name) + '</b> (сейчас ' + num_(chosen.budget).toFixed(0) + '$):');
+    state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
+    manageSaveNav_(chatId, state); return true;
+  }
+
+  if (p.action === 'budget' && p.step === 'value') {
+    const value = Number(String(text).replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(value) || value <= 0) { telegramSend_(chatId, '⚠️ Введите бюджет числом, напр. 25.'); return true; }
+    telegramDelete_(chatId, state.promptMessageId); state.promptMessageId = null;
+    state.pending = {action: 'apply', type: 'budget', kind: p.kind, id: p.id, name: p.name, current: p.current, value: value};
+    const sent = telegramSend_(chatId, 'Сменить дневной бюджет <b>' + escapeHtml_(p.name) + '</b>: ' +
+      num_(p.current).toFixed(0) + '$ → <b>' + value.toFixed(0) + '$</b>?', manageConfirmKeyboard_());
+    state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
+    manageSaveNav_(chatId, state); return true;
+  }
+
+  if (p.action === 'toggle' && p.step === 'pick') {
+    const nums = manageParseNumbers_(text, list.length);
+    if (!nums) { telegramSend_(chatId, '⚠️ Номера от 1 до ' + list.length + ' через пробел.'); return true; }
+    telegramDelete_(chatId, state.promptMessageId); state.promptMessageId = null;
+    const targets = nums.map(function (n) {
+      const u = list[n - 1];
+      return {id: u.id, name: u.name, turnOn: !u.on};
+    });
+    state.pending = {action: 'apply', type: 'toggle', kind: state.level === 'campaigns' ? 'campaign' : state.level === 'adsets' ? 'adset' : 'ad', targets: targets};
+    const desc = targets.map(function (t) { return (t.turnOn ? '🟢 ' : '🔴 ') + escapeHtml_(telegramTrim_(t.name, 24)); }).join('\n');
+    const sent = telegramSend_(chatId, 'Применить?\n' + desc, manageConfirmKeyboard_());
+    state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
+    manageSaveNav_(chatId, state); return true;
+  }
+  return false;
 }
 
-function manageAskToggle_(chatId, state) {
-  const unit = manageCurrentUnit_(state);
-  if (!unit) { telegramSend_(chatId, 'Нечего переключать.'); return; }
-  const turnOn = !unit.on;
-  state.pending = {type: 'toggle', kind: unit.kind, id: unit.id, name: unit.name, turnOn: turnOn};
-  const sent = telegramSend_(chatId, (turnOn ? '🟢 Включить' : '🔴 Выключить') + ' <b>' +
-    escapeHtml_(unit.name) + '</b>?', manageConfirmKeyboard_());
-  state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
-  manageSaveNav_(chatId, state);
-}
+/* ===================== Confirm & apply ===================== */
 
 function manageConfirmKeyboard_() {
   return {inline_keyboard: [[
@@ -351,62 +319,37 @@ function manageConfirmKeyboard_() {
   ]]};
 }
 
-/** Returns true when a typed budget value was consumed. */
-function manageHandlePendingInput_(chatId, text) {
-  const state = manageLoadNav_(chatId);
-  if (!state || !state.pending || state.pending.type !== 'budget') return false;
-  const value = Number(String(text).replace(/[^0-9.]/g, ''));
-  if (!Number.isFinite(value) || value <= 0) {
-    telegramSend_(chatId, '⚠️ Введите бюджет числом, например 25.');
-    return true;
-  }
-  telegramDelete_(chatId, state.promptMessageId);
-  state.promptMessageId = null;
-  state.pending.value = value;
-  const sent = telegramSend_(chatId, 'Сменить дневной бюджет <b>' + escapeHtml_(state.pending.name) +
-    '</b>: ' + num_(state.pending.current).toFixed(0) + '$ → <b>' + value.toFixed(0) + '$</b>?',
-    manageConfirmKeyboard_());
-  state.promptMessageId = sent && sent.result ? sent.result.message_id : null;
-  manageSaveNav_(chatId, state);
-  return true;
-}
-
 function manageCancel_(chatId, state) {
-  telegramDelete_(chatId, state.promptMessageId);
-  state.promptMessageId = null;
-  state.pending = null;
+  telegramDelete_(chatId, state.promptMessageId); state.promptMessageId = null; state.pending = null;
   manageSaveNav_(chatId, state);
   telegramSend_(chatId, '❌ Отменено.');
 }
 
 function manageConfirm_(chatId, state) {
-  const pending = state.pending;
-  telegramDelete_(chatId, state.promptMessageId);
-  state.promptMessageId = null;
-  if (!pending) { manageSaveNav_(chatId, state); return; }
+  const p = state.pending;
+  telegramDelete_(chatId, state.promptMessageId); state.promptMessageId = null;
+  if (!p || p.action !== 'apply') { state.pending = null; manageSaveNav_(chatId, state); return; }
 
   const status = telegramSend_(chatId, '⏳ Отправляю запрос в Meta…');
   const statusId = status && status.result ? status.result.message_id : null;
   let result;
-  try {
-    result = manageApplyChange_(pending);
-  } catch (error) {
-    result = {ok: false, message: String(error && error.message || error)};
-  }
-  const text = result.ok
-    ? '✅ ' + escapeHtml_(result.message || 'Готово.')
+  try { result = manageApplyChange_(p); }
+  catch (error) { result = {ok: false, message: String(error && error.message || error)}; }
+  const text = result.ok ? '✅ ' + escapeHtml_(result.message || 'Готово.')
     : '⚠️ Не удалось: ' + escapeHtml_(result.message || 'ошибка') +
       (result.retryable ? '\nПопробуй ещё раз позже.' : '');
   if (statusId) { try { telegramEditInline_(chatId, statusId, text, null); } catch (_) { telegramSend_(chatId, text); } }
   else telegramSend_(chatId, text);
 
   state.pending = null;
+  // Refresh the list so the change (once writes are live) shows immediately.
+  manageRerender_(chatId, state);
   manageSaveNav_(chatId, state);
 }
 
 /**
  * Applies a confirmed change. Phase 2 will call the Dolphin write API here;
- * until it is confirmed, nothing is sent to Meta and the user is told so.
+ * until it is confirmed nothing is sent to Meta and the user is told so.
  */
 function manageApplyChange_(pending) {
   if (!getCrmEnv_().devEndpoint) throw new Error('Управление доступно только в песочнице');
