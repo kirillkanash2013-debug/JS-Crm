@@ -6,7 +6,7 @@ export function inspectAdsSession() {
     (u.hostname!=="adsmanager.facebook.com" && !/^\/adsmanager(?:\/|$)/.test(u.pathname))) throw new Error("Откройте Ads Manager.");
   let userId="",displayName="";
   const candidates=[],seen=new Set();
-  const diagnostics={userModuleAvailable:false,adsModuleAvailable:false,scriptCount:0,inlineBytesScanned:0,candidateCount:0};
+  const diagnostics={adapterVersion:3,userModuleAvailable:false,adsModuleAvailable:false,configModuleAvailable:false,moduleChecks:[],scriptCount:0,inlineBytesScanned:0,candidateCount:0};
   const add=(v,source)=>{
     if(typeof v!=="string" || !/^EA[A-Za-z0-9_-]{18,4094}$/.test(v) || seen.has(v) || candidates.length>=2)return;
     seen.add(v);candidates.push({token:v,source});
@@ -20,13 +20,22 @@ export function inspectAdsSession() {
       }
     }
   }catch{}
-  try {
-    if(typeof globalThis.require==="function"){
-      const ads=globalThis.require("AdsPEGlobal");
-      diagnostics.adsModuleAvailable=!!ads;
-      add(ads?.accessToken,"AdsPEGlobal.accessToken");add(ads?.access_token,"AdsPEGlobal.access_token");
-    }
-  }catch{}
+  // Different Ads Manager builds expose the configuration separately from
+  // AdsPEGlobal. Check only named advertising configs, never enumerate globals.
+  for(const name of ["AdsAPIConfig","AdsPEGlobal"]){
+    let available=false;
+    try {
+      if(typeof globalThis.require==="function"){
+        const config=globalThis.require(name);
+        available=!!config;
+        if(name==="AdsPEGlobal")diagnostics.adsModuleAvailable=available;
+        if(name==="AdsAPIConfig")diagnostics.configModuleAvailable=available;
+        add(config?.accessToken,name+".accessToken");
+        add(config?.access_token,name+".access_token");
+      }
+    }catch{}
+    diagnostics.moduleChecks.push({name,available});
+  }
   for(const script of document.querySelectorAll("script:not([src])")){
     const source=script.textContent || "";
     diagnostics.scriptCount++;
@@ -38,7 +47,11 @@ export function inspectAdsSession() {
       const user=source.match(/"USER_ID"\s*:\s*"(\d{3,30})"/);
       if(user)userId=user[1];
     }
-    for(const m of source.matchAll(/"(?:accessToken|access_token)"\s*:\s*"(EA[A-Za-z0-9_-]{18,4094})"/g))add(m[1],"loaded-script-field");
+    // Boot payloads can wrap config JSON in a JSON string. Unwrap quotes
+    // locally; only exact named credential fields are accepted.
+    for(const payload of [source,source.replace(/\\"/g,'"')]){
+      for(const m of payload.matchAll(/["'](?:accessToken|access_token)["']\s*:\s*["'](EA[A-Za-z0-9_-]{18,4094})["']/g))add(m[1],"loaded-script-field");
+    }
   }
   diagnostics.candidateCount=candidates.length;
   return {userId,displayName,candidates,diagnostics};
