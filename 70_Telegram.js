@@ -480,7 +480,7 @@ function telegramToday_() {
     'Rev: <b>$' + base.rev.toFixed(2) + '</b>' + (dolet.rev ? ' ($' + revAll.toFixed(2) + ')' : ''),
     'ROI: <b>' + Math.round(roiBase) + '%</b>' + (dolet.rev ? ' (' + Math.round(roiAll) + '%)' : '')];
 
-  const geoBlock = telegramNowGeoBlock_(campaigns.geosWithSpend);
+  const geoBlock = telegramNowGeoBlock_(campaigns.spendIds, campaigns.geoById);
   if (geoBlock.length) out.push('', geoBlock.join('\n'));
 
   const campBlock = telegramNowCampaignsBlock_(campaigns.list, keitaro.byId);
@@ -492,7 +492,7 @@ function telegramToday_() {
 /** Per-campaign spend, status and budget from today's FB DB. */
 function readTodayCampaignState_() {
   const sheet = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
-  const result = {list: [], spendIds: {}, geosWithSpend: {}, time: ''};
+  const result = {list: [], spendIds: {}, geoById: {}, time: ''};
   if (sheet.getLastRow() < 2) return result;
   const width = Math.max(sheet.getLastColumn(), 12);
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
@@ -508,8 +508,10 @@ function readTodayCampaignState_() {
     if (updated > result.time) result.time = updated;
     if (spend > 0) {
       result.list.push(item);
-      if (id) result.spendIds[id] = true;
-      if (item.geo) result.geosWithSpend[item.geo] = true;
+      if (id) {
+        result.spendIds[id] = true;
+        if (item.geo) result.geoById[id] = item.geo;
+      }
     } else if (status === 'ACTIVE') {
       // Freshly launched, still waiting for spend.
       result.list.push(item);
@@ -540,40 +542,63 @@ function readTodayKeitaroByCampaign_() {
   return result;
 }
 
-function telegramNowGeoBlock_(geosWithSpend) {
-  const geos = Object.keys(geosWithSpend).sort();
-  if (!geos.length) return [];
-  const sheet = getOrCreateSheet_(SHEETS.OFFERS_TODAY);
-  const offers = sheet.getLastRow() >= 2
-    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues() : [];
-  const out = [];
-  geos.forEach(function (geo) {
-    out.push('🌍 <b>' + escapeHtml_(geo) + '</b>');
-    const geoOffers = offers.filter(function (o) {
-      return String(o[0]).toUpperCase() === geo.toUpperCase();
+/**
+ * Offers per GEO, built only from Keitaro traffic on campaigns that spent
+ * today, so an offer that only received долёт traffic never appears here.
+ * GEO comes from the FB campaign (its spend), not from the Keitaro row.
+ */
+function telegramNowGeoBlock_(spendIds, geoById) {
+  const geos = {};
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  if (sheet.getLastRow() >= 2) {
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+    rows.forEach(function (row) {
+      const id = String(row[4] || '');
+      if (!spendIds[id]) return;
+      const geo = geoById[id];
+      if (!geo) return;
+      const offer = String(row[12] || '').trim();
+      if (!offer) return;
+      const key = String(row[11] || offer);
+      const bucket = geos[geo] || (geos[geo] = {});
+      const o = bucket[key] || (bucket[key] = {offer: offer, inst: 0, reg: 0, dep: 0, rev: 0});
+      o.inst += num_(row[6]); o.reg += num_(row[7]); o.dep += num_(row[8]); o.rev += num_(row[9]);
     });
-    if (!geoOffers.length) out.push('  — офферов со спендом пока нет');
-    geoOffers.forEach(function (o) {
-      out.push('  • ' + escapeHtml_(String(o[2] || o[1] || '')) +
-        ' — I ' + Math.round(num_(o[3])) + ' · R ' + Math.round(num_(o[4])) +
-        ' · D ' + Math.round(num_(o[5])) + ' · uEPC $' + num_(o[7]).toFixed(2));
+  }
+  const out = [];
+  Object.keys(geos).sort().forEach(function (geo) {
+    const offers = Object.keys(geos[geo]).map(function (k) { return geos[geo][k]; })
+      .filter(function (o) { return o.inst > 0; })
+      .sort(function (a, b) { return b.inst - a.inst; });
+    if (!offers.length) return;
+    out.push('🌍 <b>' + escapeHtml_(geo) + '</b>');
+    offers.forEach(function (o) {
+      out.push('  • ' + escapeHtml_(telegramTrim_(o.offer)) +
+        ' — I ' + Math.round(o.inst) + ' · R ' + Math.round(o.reg) +
+        ' · D ' + Math.round(o.dep) + ' · uEPC $' + safeDiv_(o.rev, o.inst).toFixed(2));
     });
   });
   return out;
+}
+
+/** One systematic place to shorten long offer / campaign names for chat. */
+function telegramTrim_(text, max) {
+  const value = String(text || '').trim();
+  const limit = max || 32;
+  return value.length > limit ? value.slice(0, limit - 1).trim() + '…' : value;
 }
 
 function telegramNowCampaignsBlock_(campaignList, keitaroById) {
   const lines = [];
   campaignList.forEach(function (c) {
     const on = c.status === 'ACTIVE';
-    // Two states matter: launched and waiting (on, no spend), or spent then
-    // killed (had spend, now off). A campaign both on and spending is normal.
-    const waiting = on && c.spend <= 0;
-    const killed = !on && c.spend > 0;
-    if (!waiting && !killed) return;
+    // Show what we run and watch: anything active (working or waiting for
+    // spend) is green; a campaign that spent but is now off (killed) is red.
+    // Off campaigns with no spend are old junk and skipped.
+    if (!on && c.spend <= 0) return;
     const m = keitaroById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
     const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
-    lines.push((killed ? '🔴' : '🟢') + ' ' + escapeHtml_(c.name || c.id) +
+    lines.push((on ? '🟢' : '🔴') + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
       ' — бюджет $' + num_(c.budget).toFixed(0) +
       ' · спенд $' + c.spend.toFixed(2) +
       ' · I ' + Math.round(m.inst) + ' · R ' + Math.round(m.reg) + ' · D ' + Math.round(m.dep) +
