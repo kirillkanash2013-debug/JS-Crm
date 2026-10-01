@@ -169,7 +169,7 @@ export async function httpsGet(host, pathAndQuery, {connect, proxy, headers, sig
     return await readResponse(tls);
   } catch (e) {
     if (signal?.aborted) throw new ProxyError('Истекло время ожидания прокси');
-    throw e instanceof ProxyError || e.code ? e : new ProxyError('Не удалось подключиться через прокси');
+    throw e instanceof ProxyError || e.code ? e : new ProxyError('Не удалось подключиться через прокси: ' + (e && e.message ? e.message : e));
   } finally {
     signal?.removeEventListener('abort', abort);
     abort();
