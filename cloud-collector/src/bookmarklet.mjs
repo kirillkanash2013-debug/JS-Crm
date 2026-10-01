@@ -2,8 +2,10 @@
 // in Ads Manager it reads the session (user id, access token, User-Agent) from
 // the page and opens the JS Control connect page, passing data in the URL
 // fragment (never sent to any server log). Nothing valuable runs on the client.
+import {VERSION} from './version.mjs';
+
 // The function must stay self-contained: it is serialized into the bookmark.
-export function captureSession(origin) {
+export function captureSession(origin, ver) {
   var u = location.hostname;
   if (!/(^|\.)facebook\.com$/.test(u) || !/adsmanager|business/.test(location.href)) { alert('Откройте Ads Manager нужного соца и нажмите закладку ещё раз.'); return; }
   var userId = '', name = '', tokens = [];
@@ -20,7 +22,7 @@ export function captureSession(origin) {
     while ((x = re.exec(s)) && tokens.length < 3) add(x[1]);
   }
   if (!/^\d{3,30}$/.test(userId) || !tokens.length) { alert('Не удалось найти доступ. Дождитесь полной загрузки Ads Manager (список кампаний) и нажмите закладку ещё раз.'); return; }
-  var data = JSON.stringify({v: 1, userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent});
+  var data = JSON.stringify({v: 1, build: ver || '', userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent});
   var b64 = btoa(unescape(encodeURIComponent(data))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   var url = origin + '/connect#s=' + b64;
   // Popups are often blocked for a bookmarklet; fall back to the current tab.
@@ -34,7 +36,7 @@ export function captureSession(origin) {
 // Reaching localhost from an https page may be blocked (mixed content / Private
 // Network Access); on failure the proxy is just left for manual entry. Must stay
 // self-contained: serialized into the bookmark.
-export function captureAdsPower(origin) {
+export function captureAdsPower(origin, ver) {
   var u = location.hostname;
   if (!/(^|\.)facebook\.com$/.test(u) || !/adsmanager|business/.test(location.href)) { alert('Откройте Ads Manager нужного профиля AdsPower и нажмите закладку ещё раз.'); return; }
   var userId = '', name = '', tokens = [];
@@ -52,7 +54,7 @@ export function captureAdsPower(origin) {
   }
   if (!/^\d{3,30}$/.test(userId) || !tokens.length) { alert('Не удалось найти доступ. Дождитесь полной загрузки Ads Manager и нажмите закладку ещё раз.'); return; }
   var open = function (proxy) {
-    var data = JSON.stringify({v: 1, userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent, proxy: proxy || null, source: 'adspower'});
+    var data = JSON.stringify({v: 1, build: ver || '', userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent, proxy: proxy || null, source: 'adspower'});
     var b64 = btoa(unescape(encodeURIComponent(data))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     var url = origin + '/connect#s=' + b64;
     // Popups are often blocked for a bookmarklet; fall back to the current tab.
@@ -81,9 +83,9 @@ export function captureAdsPower(origin) {
 }
 
 export function bookmarkletHref(origin) {
-  return 'javascript:' + encodeURIComponent('(' + captureSession.toString() + ')(' + JSON.stringify(origin) + ');void 0');
+  return 'javascript:' + encodeURIComponent('(' + captureSession.toString() + ')(' + JSON.stringify(origin) + ',' + JSON.stringify(VERSION) + ');void 0');
 }
 
 export function adsPowerBookmarkletHref(origin) {
-  return 'javascript:' + encodeURIComponent('(' + captureAdsPower.toString() + ')(' + JSON.stringify(origin) + ');void 0');
+  return 'javascript:' + encodeURIComponent('(' + captureAdsPower.toString() + ')(' + JSON.stringify(origin) + ',' + JSON.stringify(VERSION) + ');void 0');
 }

@@ -6,6 +6,7 @@ import {Control,initialState,reply} from './control.mjs';
 import {collectViaApi} from './api-collector.mjs';
 import {graphFetcher} from './proxy-fetch.mjs';
 import {resolveCaller} from './tenants.mjs';
+import {VERSION} from './version.mjs';
 import {SqlArchive} from './archive.mjs';
 import {cleanConnection} from './connection.mjs';
 import {PAGE_HEADERS,bookmarkletPage,connectPage,connectScript,importPage,importScript,statusPage,statusScript} from './pages.mjs';
@@ -92,7 +93,7 @@ export default {
   // Simple check page (no bot): paste the key, see collection status and spend.
   if(request.method==='GET'&&url.pathname==='/status')return new Response(statusPage(),{headers:PAGE_HEADERS});
   if(request.method==='GET'&&url.pathname==='/status.js')return new Response(statusScript(),{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store'}});
-  if(request.method==='GET'&&url.pathname==='/health')return reply(200,{ok:true,service:'js-control-collector',platform:'cloudflare-containers',mode:'live',ownerConfigured:/^js_srv_[A-Za-z0-9_-]{43}$/.test(env.JS_CONTROL_OWNER_KEY||'')});
+  if(request.method==='GET'&&url.pathname==='/health')return reply(200,{ok:true,service:'js-control-collector',version:VERSION,platform:'cloudflare-containers',mode:'live',ownerConfigured:/^js_srv_[A-Za-z0-9_-]{43}$/.test(env.JS_CONTROL_OWNER_KEY||'')});
   if(request.method==='POST'&&url.pathname==='/internal/smoke'){if(!env.DEPLOY_SMOKE_KEY||!env.INTERNAL_KEY||!env.VAULT_KEY||!await equal(request.headers.get('authorization'),'Bearer '+env.DEPLOY_SMOKE_KEY))return reply(401,{error:'unauthorized'});try{return await env.CONTROL.getByName('owner').fetch(new Request('http://internal/internal/smoke',{method:'POST',headers:{'x-control-internal':env.INTERNAL_KEY}}));}catch{return reply(503,{error:'browser_unavailable'});}}
   if(!paths.get(url.pathname)?.split(',').includes(request.method))return reply(404,{error:'not_found'});
   if(!env.VAULT_KEY||!env.INTERNAL_KEY)return reply(503,{error:'setup_required'});

@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {bookmarkletHref} from '../src/bookmarklet.mjs';
 import {cleanConnection} from '../src/connection.mjs';
 import {bookmarkletPage, connectPage, connectScript, parseProxyInput} from '../src/pages.mjs';
+import {VERSION} from '../src/version.mjs';
 
 function runBookmark(page) {
   const opened = [], alerts = [];
@@ -23,7 +24,7 @@ test('bookmark reads user, name and tokens in Ads Manager and opens the connect 
     require: m => m === 'CurrentUserInitialData' ? {USER_ID: '61550001', NAME: 'Иван'} : null,
     scripts: ['var x="EAAG' + 'w'.repeat(30) + '"']});
   assert.equal(opened.length, 1); assert(opened[0].startsWith('https://c.example/connect#s='));
-  assert.deepEqual(decode(opened[0]), {v: 1, userId: '61550001', name: 'Иван', tokens: [token, 'EAAG' + 'w'.repeat(30)], ua: 'Mozilla/5.0 Test'});
+  assert.deepEqual(decode(opened[0]), {v: 1, build: VERSION, userId: '61550001', name: 'Иван', tokens: [token, 'EAAG' + 'w'.repeat(30)], ua: 'Mozilla/5.0 Test'});
 });
 
 test('bookmark refuses other sites and pages without access', () => {

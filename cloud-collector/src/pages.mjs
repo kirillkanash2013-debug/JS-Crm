@@ -1,6 +1,7 @@
 // Public pages of the collector: bookmark install and social connect.
 // Same origin as the API, so the page calls /v1/* without CORS.
 import {adsPowerBookmarkletHref, bookmarkletHref} from './bookmarklet.mjs';
+import {VERSION} from './version.mjs';
 
 // Accepts "http://user:pass@host:port", "socks5://host:port" or Dolphin-style
 // "host:port:login:password" (type chosen in the form). Kept self-contained:
@@ -25,11 +26,12 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}input,se
 textarea{min-height:80px;font:12px monospace}.row{display:flex;gap:8px}.row select{width:120px}.check{display:flex;gap:8px;align-items:flex-start;color:var(--text)}.check input{width:auto;margin-top:4px}
 button{border:0;border-radius:8px;padding:12px 16px;background:var(--accent);color:#0c111b;font:600 15px system-ui;cursor:pointer;width:100%;margin-top:14px}button:disabled{opacity:.5}button.secondary{background:transparent;color:var(--muted);border:1px solid var(--line)}
 .tableScroll{overflow:auto;margin-top:10px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600}
+.ver{color:var(--muted);font-size:11px;text-align:center;margin-top:18px;opacity:.7}
 .bm{display:inline-block;padding:12px 18px;border-radius:10px;background:var(--accent);color:#0c111b;font-weight:700;text-decoration:none;cursor:grab}
 .status{margin-top:12px;font-size:14px}.status.err{color:var(--err)}.status.ok{color:var(--accent)}ol{padding-left:20px;color:var(--muted)}code{word-break:break-all}`;
 
 const page = (title, body, script = '') => `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${title}</title><style>${css}</style></head><body><main>${body}</main>${script}</body></html>`;
+<meta name="robots" content="noindex"><title>${title}</title><style>${css}</style></head><body><main>${body}<p class="ver">JS Control v${VERSION}</p></main>${script}</body></html>`;
 
 export const PAGE_HEADERS = {'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY',
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"};
@@ -177,6 +179,8 @@ history.replaceState(null,'',location.pathname);
 if(!session||!session.userId||!session.tokens||!session.tokens.length){$('noSession').hidden=false;return;}
 var who=(session.name||'Facebook')+' · '+session.userId;
 $('step1').hidden=false;$('who').textContent=who;$('who2').textContent=who;
+// Warn when the bookmark was created from an older version than the server.
+if(session.build&&session.build!=='${VERSION}'){var w=document.createElement('p');w.className='status err';w.textContent='Закладка версии '+session.build+', на сервере v${VERSION}. Пересоздайте закладку на странице /bookmarklet.';$('step1').insertBefore(w,$('step1').firstChild);}
 try{$('key').value=localStorage.getItem('jsc_key')||'';}catch(e){}
 // Proxy auto-detected by the AdsPower bookmark: prefill the field and mark it.
 if(session.proxy&&session.proxy.server){try{
