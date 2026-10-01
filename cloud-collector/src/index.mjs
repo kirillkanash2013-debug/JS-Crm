@@ -9,7 +9,8 @@ import {resolveCaller} from './tenants.mjs';
 import {VERSION} from './version.mjs';
 import {SqlArchive} from './archive.mjs';
 import {cleanConnection} from './connection.mjs';
-import {PAGE_HEADERS,bookmarkletPage,connectPage,connectScript,importPage,importScript,statusPage,statusScript} from './pages.mjs';
+import {PAGE_HEADERS,bookmarkletPage,connectPage,connectScript,importPage,importScript,statusPage,statusScript,extensionPage} from './pages.mjs';
+import {EXTENSION_ZIP_BASE64} from './extension-asset.mjs';
 import {antidetectClient,matchProfile} from './antidetect/index.mjs';
 import {importProfiles} from './importer.mjs';
 import {tokenFromSession} from './session-token.mjs';
@@ -93,6 +94,9 @@ export default {
   // Fully server-side quick connect: paste one antidetect API token, import all profiles.
   if(request.method==='GET'&&url.pathname==='/import')return new Response(importPage(),{headers:PAGE_HEADERS});
   if(request.method==='GET'&&url.pathname==='/import.js')return new Response(importScript(),{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store'}});
+  // Download and install the connector extension into the antidetect browser.
+  if(request.method==='GET'&&url.pathname==='/extension')return new Response(extensionPage(),{headers:PAGE_HEADERS});
+  if(request.method==='GET'&&url.pathname==='/extension.zip')return new Response(Uint8Array.from(atob(EXTENSION_ZIP_BASE64),c=>c.charCodeAt(0)),{headers:{'content-type':'application/zip','content-disposition':'attachment; filename="js-control-extension.zip"','cache-control':'no-store'}});
   // Simple check page (no bot): paste the key, see collection status and spend.
   if(request.method==='GET'&&url.pathname==='/status')return new Response(statusPage(),{headers:PAGE_HEADERS});
   if(request.method==='GET'&&url.pathname==='/status.js')return new Response(statusScript(),{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store'}});

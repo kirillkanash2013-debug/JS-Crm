@@ -77,7 +77,7 @@ test('client journey: token → Keitaro → timezone → plugin and dashboard', 
 
   await h.tap('tz:Europe/Minsk');
   const done = h.last();
-  assert.match(done, /Настройки сохранены/); assert.match(done, /p\.test\/plugin/); assert.match(done, /закладку/);
+  assert.match(done, /Настройки сохранены/); assert.match(done, /p\.test\/plugin/); assert.match(done, /расширение/i);
   const link = done.match(/https:\/\/p\.test\/d\/(jsd_[A-Za-z0-9_-]+)/);
   assert(link, 'dashboard link sent');
 

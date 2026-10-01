@@ -38,6 +38,30 @@ const page = (title, body, script = '') => `<!doctype html><html lang="ru"><head
 export const PAGE_HEADERS = {'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY',
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"};
 
+// Install the connector extension INTO the antidetect browser (AdsPower,
+// Dolphin, …) — these are Chromium, so the same MV3 extension loads there.
+// The client downloads the zip here, loads it once, then pastes the jsi_ key.
+export function extensionPage() {
+  return page('JS Control — расширение для антидетекта', `<h1>Расширение JS Control</h1>
+<p>Устанавливается <b>в ваш антидетект-браузер</b> (AdsPower, Dolphin Anty и другие на Chromium). Один раз загрузили — дальше подключаете любой профиль одной кнопкой.</p>
+<section>
+<a href="/extension.zip" download="js-control-extension.zip"><button type="button">⬇️ Скачать расширение (.zip)</button></a>
+<p class="hint">Версия ${esc(VERSION)}. Распакуйте архив в отдельную папку — её и указываете при установке.</p>
+</section>
+<section>
+<h2 style="font-size:16px;margin:0 0 8px">AdsPower</h2>
+<p class="hint">Расширения (слева) → «Загрузить расширение» / «Local» → укажите распакованную папку → включите его для нужных профилей.</p>
+<h2 style="font-size:16px;margin:14px 0 8px">Dolphin Anty</h2>
+<p class="hint">Расширения → «Добавить» → загрузите папку расширения → отметьте профили, где оно должно работать.</p>
+<h2 style="font-size:16px;margin:14px 0 8px">Обычный Chrome (для теста)</h2>
+<p class="hint">chrome://extensions → включите «Режим разработчика» → «Загрузить распакованное» → выберите папку.</p>
+</section>
+<section>
+<h2 style="font-size:16px;margin:0 0 8px">Как подключить соц</h2>
+<p class="hint">Откройте профиль, зайдите в Ads Manager нужного соца, нажмите на иконку расширения, вставьте ваш ключ <code>jsi_…</code> из бота и нажмите «Подключить этот профиль». Расширение само возьмёт токен, cookies и прокси профиля и запустит сбор на сервере — дальше браузер можно закрыть.</p>
+</section>`);
+}
+
 // Fastest, fully server-side connection: the client pastes the integration
 // token and the antidetect API token; the server reads every profile, proxy
 // and cookie and connects all Facebook socials. Nothing runs on the client.

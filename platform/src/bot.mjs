@@ -120,9 +120,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
 
   function pluginText() {
-    return 'Самый быстрый способ — подключить антидетект-браузер, и все профили подтянутся сами:\n' + env.IMPORT_URL +
-      '\nВставьте токен интеграции и API-токен антидетекта (Dolphin Anty). JS Control сам возьмёт профили, их прокси и cookies.\n\n' +
-      'Либо по одному соцу через закладку: ' + env.PLUGIN_URL + ' — откройте Ads Manager нужного соца и нажмите закладку.';
+    return '1) Установите расширение JS Control в ваш антидетект-браузер (AdsPower, Dolphin и др.):\n' + env.PLUGIN_URL +
+      '\nСкачайте, загрузите в браузер, откройте профиль и Ads Manager нужного соца, вставьте в расширении ваш токен интеграции и нажмите «Подключить этот профиль».\n\n' +
+      '2) Либо полностью автоматически — вставьте API-токен антидетекта (Dolphin Anty), и все профили подтянутся сами:\n' + env.IMPORT_URL;
   }
 
   async function subscription(chatId, tenant) {
@@ -189,14 +189,17 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!origin) return send(chatId, 'Не похоже на адрес. Пример: <code>https://tracker.example.com</code>');
       await store.saveSettings(tenant.id, {keitaroUrl: origin});
       await store.setChat(chatId, tenant.id, 'keitaro_key');
-      return send(chatId, '🔑 <b>Шаг 2 из 3 — API-ключ Keitaro</b>\n\nKeitaro → Профиль → API-ключи → создайте ключ и отправьте его сюда. Сообщение с ключом будет сразу удалено из чата.');
+      return send(chatId, '🔑 <b>Шаг 2 из 3 — API-ключ Keitaro</b>\n\nKeitaro → Профиль → API-ключи → создайте ключ и отправьте его сюда. Сообщение с ключом будет сразу удалено из чата.',
+        {inline_keyboard: [[{text: 'Пропустить Keitaro', callback_data: 'skip:keitaro'}]]});
     }
     if (chat.state === 'keitaro_key') {
       await forget(chatId, message.message_id);
       const s = await store.settings(tenant.id);
       const result = await keitaro(s.keitaroUrl, text);
-      if (result === 'bad_key') return send(chatId, '❌ Keitaro не принял ключ. Проверьте ключ и отправьте ещё раз.');
-      if (result === 'unreachable') return send(chatId, '❌ Не удалось связаться с ' + esc(s.keitaroUrl) + '. Проверьте адрес (/settings) или доступность трекера.');
+      const skipBtn = {inline_keyboard: [[{text: 'Пропустить Keitaro', callback_data: 'skip:keitaro'}]]};
+      if (result === 'bad_key') return send(chatId, '❌ Keitaro не принял ключ. Проверьте ключ и отправьте ещё раз — или пропустите, его можно подключить позже.', skipBtn);
+      if (result === 'forbidden') return send(chatId, '❌ Keitaro закрыл доступ к API (код 403) — ключ тут ни при чём. Обычно это ограничение API по IP в Keitaro (Настройки → доступ к API / «Разрешённые IP») или фаервол/WAF. Снимите ограничение или добавьте наш сервер в список, затем пришлите ключ снова — либо пропустите и подключите позже.', skipBtn);
+      if (result === 'unreachable') return send(chatId, '❌ Не удалось связаться с ' + esc(s.keitaroUrl) + '. Проверьте адрес (/settings) или доступность трекера — или пропустите.', skipBtn);
       await store.saveSettings(tenant.id, {keitaroKeyEnc: await sealSecret(env.MASTER_KEY, tenant.id, text)});
       await send(chatId, '✅ Keitaro подключён.');
       return askTimezone(chatId, tenant.id);
