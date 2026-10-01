@@ -110,3 +110,20 @@ $("traceExport").onclick=()=>{
 };
 
 $("structure").onclick=()=>void task(()=>ask("SYNC_STRUCTURE"));
+
+async function cloud(type,extra={}){
+ let origin;try{origin=new URL($("serverOrigin").value).origin;if(!origin.startsWith("https://"))throw new Error();}catch{message("Введите корректный HTTPS-адрес сервера.",true);return;}
+ const granted=await chrome.permissions.request({permissions:type==="SERVER_CONNECT"?["cookies"]:[],origins:[origin+"/*",...(type==="SERVER_CONNECT"?["https://*.facebook.com/*"]:[])]});
+ if(!granted){message("Разрешение не предоставлено.",true);return;}
+ void task(async()=>{
+  const result=await ask(type,{origin:$("serverOrigin").value,key:$("serverKey").value,userId:state.social?.user.id,since:$("since").value,until:$("until").value,consent:$("serverConsent").checked,proxy:$("proxyServer").value?{server:$("proxyServer").value,username:$("proxyUser").value,password:$("proxyPassword").value}:undefined,...extra});
+  $("proxyPassword").value="";
+  $("serverResult").textContent=JSON.stringify(type==="SERVER_STATUS"?{mode:result.mode,connections:result.connections,jobs:result.jobs,results:Object.fromEntries(Object.entries(result.results||{}).map(([id,r])=>[id,{source:r.source,complete:r.complete,observedAt:r.observedAt,accounts:r.social?.accounts.length,campaigns:Object.values(r.structures||{}).reduce((n,s)=>n+s.campaigns.length,0),adsets:Object.values(r.structures||{}).reduce((n,s)=>n+s.adsets.length,0),ads:Object.values(r.structures||{}).reduce((n,s)=>n+s.ads.length,0)}]))}:result,null,2);
+ });
+}
+$("serverConnect").onclick=()=>void cloud("SERVER_CONNECT");
+$("serverJob").onclick=()=>void cloud("SERVER_JOB");
+$("serverStatus").onclick=()=>void cloud("SERVER_STATUS");
+$("serverSchedule").onclick=()=>void cloud("SERVER_SCHEDULE",{minutes:15});
+$("serverStopSchedule").onclick=()=>void cloud("SERVER_SCHEDULE",{minutes:0});
+$("serverRemove").onclick=()=>void cloud("SERVER_REMOVE");
