@@ -24,6 +24,7 @@ h1{font-size:22px;margin:0 0 6px}p,.hint{color:var(--muted)}.hint{font-size:13px
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
 textarea{min-height:80px;font:12px monospace}.row{display:flex;gap:8px}.row select{width:120px}.check{display:flex;gap:8px;align-items:flex-start;color:var(--text)}.check input{width:auto;margin-top:4px}
 button{border:0;border-radius:8px;padding:12px 16px;background:var(--accent);color:#0c111b;font:600 15px system-ui;cursor:pointer;width:100%;margin-top:14px}button:disabled{opacity:.5}button.secondary{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.tableScroll{overflow:auto;margin-top:10px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600}
 .bm{display:inline-block;padding:12px 18px;border-radius:10px;background:var(--accent);color:#0c111b;font-weight:700;text-decoration:none;cursor:grab}
 .status{margin-top:12px;font-size:14px}.status.err{color:var(--err)}.status.ok{color:var(--accent)}ol{padding-left:20px;color:var(--muted)}code{word-break:break-all}`;
 
@@ -82,6 +83,54 @@ function report(s,imp){
   var parts=[];for(var k in by)parts.push((REASONS[k]||k)+': '+by[k]);
   $('result').innerHTML='<p class="hint">Пропущены профили — '+parts.join(', ')+'.</p>';
 }
+})();`;
+}
+
+// Simple check page: paste the key, see connected socials and today's spend.
+// No bot needed — proves collection ran even with the browser closed.
+export function statusPage() {
+  return page('JS Control — проверка сбора', `<h1>Проверка сбора</h1>
+<section>
+<label for="key">Токен JS Control (jsi_… или js_srv_…)</label><input id="key" type="password" autocomplete="off" placeholder="js_srv_… или jsi_…">
+<button id="go" disabled>Показать</button>
+<button id="collect" class="secondary" hidden>Запустить сбор сейчас</button>
+<div id="status" class="status" role="status"></div>
+<div id="out"></div></section>
+<p class="hint">Данные берутся с сервера. Если spend за сегодня появился после того, как вы закрыли браузер — сбор идёт автономно.</p>`, '<script src="/status.js"></script>');
+}
+
+export function statusScript() {
+  return `(function(){'use strict';
+var $=function(id){return document.getElementById(id);};
+var key='';try{$('key').value=localStorage.getItem('jsc_key')||'';}catch(e){}
+var show=function(t,cls){var s=$('status');s.textContent=t;s.className='status '+(cls||'');};
+var ERR={401:'Токен не подошёл.',402:'Подписка закончилась.',404:'Сбор ещё не настроен для этого токена.'};
+function api(path,method,body){return fetch(path,{method:method||'GET',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(ERR[r.status]||j.error||('Ошибка '+r.status));return j;});});}
+$('key').oninput=function(){$('go').disabled=!/^(jsi|js_srv)_[A-Za-z0-9_-]{43}$/.test($('key').value.trim());};$('key').oninput();
+var today=function(){var d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);};
+function render(){
+  show('Загружаю…');
+  Promise.all([api('/v1/status'),api('/v1/report?since='+today()+'&until='+today()).catch(function(){return {rows:[],totals:{}};})]).then(function(res){
+    var st=res[0],rep=res[1],conns=st.connections||[];
+    $('collect').hidden=!conns.length;
+    var rows=conns.map(function(c){
+      var last=c.schedule?'каждые '+c.schedule.minutes+' мин':'разово';
+      return '<tr><td>'+(c.label||c.userId)+'</td><td>'+(c.collectMode||'api')+'</td><td>'+last+'</td></tr>';
+    }).join('');
+    var totals=Object.keys(rep.totals||{}).map(function(k){return rep.totals[k]+' '+k;}).join(' · ')||'нет данных';
+    $('out').innerHTML='<p class="hint">Соцов: '+conns.length+'. Spend за сегодня: <b>'+totals+'</b> ('+(rep.rows||[]).length+' строк).</p>'+
+      (rows?'<div class="tableScroll"><table><thead><tr><th>Соц</th><th>Режим</th><th>Обновление</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'');
+    show('Обновлено '+new Date().toLocaleTimeString(),'ok');
+  }).catch(function(e){show(e.message,'err');});
+}
+$('go').onclick=function(){key=$('key').value.trim();try{localStorage.setItem('jsc_key',key);}catch(e){}render();};
+$('collect').onclick=function(){
+  show('Запускаю сбор…');
+  api('/v1/status').then(function(st){
+    var ids=(st.connections||[]).map(function(c){return c.userId;});
+    return Promise.all(ids.map(function(u){return api('/v1/jobs','POST',{userId:u,since:today(),until:today()});}));
+  }).then(function(){show('Сбор запущен. Обновите через минуту.','ok');}).catch(function(e){show(e.message,'err');});
+};
 })();`;
 }
 

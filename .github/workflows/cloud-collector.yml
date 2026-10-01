@@ -1,8 +1,8 @@
 name: Deploy JS Control Cloudflare collector
 on:
   push:
-    branches: [claude-code]
-    paths: ['cloud-collector/**', 'server/**', 'extension/**', '.github/workflows/cloud-collector.yml']
+    branches: [claude-code, claude/saas-access]
+    paths: ['cloud-collector/**', 'server/**', 'extension/**', 'platform/**', '.github/workflows/cloud-collector.yml']
   workflow_dispatch:
 permissions:
   contents: read
