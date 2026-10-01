@@ -1,4 +1,5 @@
-import {serverCommand} from "./server-link.mjs";
+import {serverCommand,serverOrigin,savedServer} from "./server-link.mjs";
+import {DEFAULT_SERVER,SCHEDULE_MINUTES,isServerKey,summarizeServer} from "./client.mjs";
 import {syncStructure} from "./structure.mjs";
 import {installRecorder} from "./recorder.mjs";
 import {pageFetcher} from "./page-transport.mjs";
@@ -169,6 +170,82 @@ async function processWhole(){
   }
 }
 
+
+async function disconnectLocal(){
+  await recorder.clear();
+  clearMetaTransport();
+  await captureQueue;await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
+  await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics","trace","structures"]);
+  await chrome.storage.session.remove(["metaToken","socialTabId"]);await chrome.storage.local.set({auto:false});
+}
+function localToday(){const d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);}
+// One key for the client: a personal server key (background collection) or the demo key (local only).
+async function activate(m){
+  const key=String(m.key||"").trim();
+  if(!isServerKey(key)){await chrome.storage.local.set({license:license(key)});await status("Ключ принят. Откройте Ads Manager и подключите соц.");return {mode:"demo"};}
+  const origin=serverOrigin(m.origin || DEFAULT_SERVER);
+  const health=await serverCommand({type:"SERVER_STATUS",origin,key});
+  if(health.mode!=="live")throw new Error("Сервер работает в тестовом режиме и не принимает реальные соцы.");
+  await chrome.storage.local.set({server:{origin,key},license:{mode:"server",plan:"JS Control",socialLimit:1,accountLimit:null,expiresAt:null}});
+  await status("Ключ принят. Откройте Ads Manager и подключите соц.");
+  return {mode:"server"};
+}
+async function waitForTab(tabId,ms){
+  const end=Date.now()+ms;
+  while(Date.now()<end){const t=await chrome.tabs.get(tabId);if(t.status==="complete")return;await new Promise(r=>setTimeout(r,500));}
+}
+async function waitForCapture(ms){
+  const end=Date.now()+ms;
+  while(Date.now()<end){await captureQueue;const {networkCapture}=await chrome.storage.session.get("networkCapture");if(networkCapture?.candidates?.length)return true;await new Promise(r=>setTimeout(r,500));}
+  return false;
+}
+// Whole client flow behind one button: local check, automatic Ads Manager reload
+// when the access is not visible yet, transfer to the server, first collection and schedule.
+async function clientConnect(m){
+  if(busy)throw new Error("Подождите окончания сбора.");
+  const server=await savedServer();
+  if(server && m.consent!==true)throw new Error("Подтвердите передачу сессии серверу JS Control.");
+  const range={since:localToday(),until:localToday()};
+  let social=await connectSocial(m.tabId,range);
+  if(social?.pending){
+    await status("Обновляю вкладку Ads Manager, чтобы получить доступ…");
+    await chrome.tabs.reload(m.tabId);
+    await new Promise(r=>setTimeout(r,1000));
+    await waitForTab(m.tabId,45000);
+    await status("Жду загрузки данных Ads Manager…");
+    await waitForCapture(20000);
+    social=await connectSocial(m.tabId,range);
+    if(social?.pending)throw new Error("Не удалось получить доступ из Ads Manager. Дождитесь полной загрузки страницы со списком кампаний и нажмите «Подключить» ещё раз.");
+  }
+  if(!server){await startWholeSync();return {mode:"local"};}
+  await status("Передаю подключение на сервер…");
+  await serverCommand({type:"SERVER_CONNECT",consent:true,proxy:m.proxy});
+  await status("Запускаю первый сбор на сервере…");
+  await serverCommand({type:"SERVER_JOB",userId:social.user.id,since:range.since,until:range.until});
+  await serverCommand({type:"SERVER_SCHEDULE",userId:social.user.id,minutes:SCHEDULE_MINUTES});
+  await status("Готово! Сбор запущен. Данные будут обновляться каждые "+SCHEDULE_MINUTES+" мин, браузер можно закрыть.");
+  return {mode:"server"};
+}
+async function clientRefresh(){
+  const s=await licensed();if(!s.social)throw new Error("Сначала подключите соц.");
+  if(!await savedServer()){await chrome.storage.local.set({range:{since:localToday(),until:localToday()}});return startWholeSync();}
+  const job=await serverCommand({type:"SERVER_JOB",userId:s.social.user.id,since:localToday(),until:localToday()});
+  await status("Сбор на сервере запущен.");return job;
+}
+async function clientStatus(){
+  const s=await read();if(!s.social || !await savedServer())return null;
+  return summarizeServer(await serverCommand({type:"SERVER_STATUS"}),s.social.user.id);
+}
+async function clientDisconnect(){
+  const s=await read();
+  // Keep the local social on failure so the client can retry the server removal.
+  if(s.social && await savedServer()){
+    try{await serverCommand({type:"SERVER_REMOVE",userId:s.social.user.id});}
+    catch(e){throw new Error("Не удалось удалить соц с сервера: "+e.message);}
+  }
+  await disconnectLocal();
+  await status("Соц отключён, данные удалены.");return true;
+}
 async function command(m){
   switch(m.type){
     case "SERVER_ACTION":case "SERVER_CONNECT":case "SERVER_STATUS":case "SERVER_JOB":case "SERVER_SCHEDULE":case "SERVER_REMOVE":return serverCommand(m);
@@ -180,8 +257,8 @@ async function command(m){
     case "SYNC_SOCIAL":return startWholeSync();
     case "SYNC_STRUCTURE":return startWholeSync("structure");
     case "CANCEL_SOCIAL":{const s=await read();if(s.job)await chrome.storage.local.set({job:{...s.job,state:"cancelled"}});await chrome.alarms.clear("whole");await status("Сбор остановлен.");return true;}
-    case "STATE":{const s=await read();const {metaToken,socialTabId}=await chrome.storage.session.get(["metaToken","socialTabId"]);return {...s,hasMetaToken:!!metaToken,busy};}
-    case "ACTIVATE":{await chrome.storage.local.set({license:license(m.key)});await status("Демо активировано. Откройте Ads Manager.");return true;}
+    case "STATE":{const s=await read();const {metaToken,socialTabId}=await chrome.storage.session.get(["metaToken","socialTabId"]);const server=await savedServer();return {...s,hasMetaToken:!!metaToken,busy,server:server ? {origin:server.origin} : null};}
+    case "ACTIVATE":return activate(m);
     case "CONNECT":{
       await licensed();
       const tab=await chrome.tabs.get(m.tabId);
@@ -208,14 +285,12 @@ async function command(m){
       if(m.enabled) await chrome.alarms.create("sync",{periodInMinutes:60});else await chrome.alarms.clear("sync");
       await chrome.storage.local.set({auto:!!m.enabled});return true;
     }
-    case "DISCONNECT":{
-      await recorder.clear();
-      clearMetaTransport();
-      await captureQueue;await chrome.storage.session.remove("networkCapture");await chrome.alarms.clear("capture-expiry");
-      await chrome.alarms.clear("sync");await chrome.alarms.clear("whole");await chrome.storage.local.remove(["binding","snapshot","range","social","reports","job","sessionDiagnostics","trace","structures"]);
-      await chrome.storage.session.remove(["metaToken","socialTabId"]);await chrome.storage.local.set({auto:false});
-      await status("Кабинет отключён; локальные данные удалены.");return true;
-    }
+    case "DISCONNECT":{await disconnectLocal();await status("Кабинет отключён; локальные данные удалены.");return true;}
+    case "CLIENT_CONNECT":return clientConnect(m);
+    case "CLIENT_REFRESH":return clientRefresh();
+    case "CLIENT_STATUS":return clientStatus();
+    case "CLIENT_DISCONNECT":return clientDisconnect();
+    case "SIGN_OUT":{await clientDisconnect();await chrome.storage.local.remove(["license","server"]);await status("Ключ удалён из расширения.");return true;}
     default:throw new Error("Неизвестная команда.");
   }
 }

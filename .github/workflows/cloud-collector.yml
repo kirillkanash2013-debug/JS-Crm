@@ -1,8 +1,8 @@
 name: Deploy JS Control Cloudflare collector
 on:
   push:
-    branches: [claude-code]
-    paths: ['cloud-collector/**', 'server/**', 'extension/**', '.github/workflows/cloud-collector.yml']
+    branches: [claude-code, claude/saas-access]
+    paths: ['cloud-collector/**', 'server/**', 'extension/**', 'platform/**', '.github/workflows/cloud-collector.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -31,6 +31,8 @@ jobs:
         run: node --test cloud-collector/tests/*.test.mjs server/tests/*.test.mjs extension/tests/*.test.mjs
         env:
           REQUIRE_BROWSER: '1'
+      - name: Test platform
+        run: node --test platform/tests/*.mjs
       - name: Deploy isolated collector and browser container
         working-directory: cloud-collector
         run: npx wrangler deploy
@@ -39,3 +41,10 @@ jobs:
       - name: Check public gateway
         run: |
           curl --fail --retry 5 --retry-delay 5 https://js-control-collector-claude.kirill-kanash2013.workers.dev/health
+
+      - name: Deploy platform with private Keitaro container binding
+        working-directory: platform
+        run: npx --yes wrangler deploy
+      - name: Check platform uses container transport
+        run: |
+          curl --fail --retry 5 --retry-delay 5 https://js-control-platform.kirill-kanash2013.workers.dev/health | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("keitaroTransport")=="container"'

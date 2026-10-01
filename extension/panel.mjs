@@ -1,4 +1,5 @@
-import {DEMO_KEY} from "./core.mjs";
+import {DEMO_KEY,adsUrl} from "./core.mjs";
+import {ADS_MANAGER_URL,ADS_TAB_PATTERNS,META_ORIGINS,isServerKey,jobText,pickAdsTab,serverHeadline} from "./client.mjs";
 const $=id=>document.getElementById(id);
 let state={},pending=false;
 function message(t,error=false){$("status").textContent=t;document.querySelector("footer").classList.toggle("error",error);}
@@ -51,6 +52,7 @@ function render(s){
   for(const row of (trace?.rows || []).slice(-20)){const tr=document.createElement("tr");cell(tr,new Date(row.at).toLocaleTimeString());cell(tr,row.method+" "+(row.operation || row.path));cell(tr,row.failed ? "Ошибка сети" : row.status ?? "…");$("traceRows").append(tr);}
   $("traceStart").disabled=pending||!!(trace?.active && trace.expiresAt>Date.now());
   $("traceStop").disabled=pending||!trace?.active;$("traceExport").disabled=pending||!trace?.rows.length;
+  renderClient(s);
   if(s.status)message(s.status.text,s.status.error);
 }
 async function refresh(){render(await ask("STATE"));}
@@ -59,8 +61,17 @@ async function task(fn){
   try{await fn();await refresh();}catch(e){await refresh().catch(()=>{});message(e.message,true);}
   finally{pending=false;render({...state,status:{text:$("status").textContent,error:document.querySelector("footer").classList.contains("error")}});}
 }
-$("demo").onclick=()=>{$("key").value=DEMO_KEY;};
-$("activateForm").onsubmit=e=>{e.preventDefault();void task(async()=>{await ask("ACTIVATE",{key:$("key").value});$("key").value="";});};
+$("demo").onclick=()=>void task(()=>ask("ACTIVATE",{key:DEMO_KEY}));
+$("activateForm").onsubmit=async e=>{
+  e.preventDefault();
+  const key=$("key").value.trim();let origin;
+  if(isServerKey(key)){
+    try{origin=new URL($("serverOrigin").value).origin;}catch{message("Некорректный адрес сервера в разделе администратора.",true);return;}
+    // Must run inside the click: Chrome asks for access to the JS Control server once.
+    if(!await chrome.permissions.request({origins:[origin+"/*"]})){message("Без доступа к серверу JS Control ключ проверить нельзя.",true);return;}
+  }
+  void task(async()=>{await ask("ACTIVATE",{key,origin});$("key").value="";});
+};
 $("connect").onclick=async()=>{
   const granted=await chrome.permissions.request({origins:["https://graph.facebook.com/*","https://adsmanager.facebook.com/*","https://business.facebook.com/*","https://www.facebook.com/*"]});
   if(!granted){message("Без разрешения на Meta API список кабинетов получить нельзя.",true);return;}
@@ -154,3 +165,91 @@ $("serverCopyKey").onclick=async()=>{
 };
 
 $("serverActivateTest").onclick=()=>void cloud("SERVER_ACTION");
+
+/* ===== 0.7.0: client screen ===== */
+let summary=null,adsTab=null,pollTimer=null;
+const time=v=>v ? new Date(v).toLocaleString("ru-RU",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
+function renderClient(s){
+  const server=!!s.server,connected=!!s.social;
+  $("onboarding").hidden=connected;$("dashboard").hidden=!connected;
+  $("modeText").textContent=server ? "Данные будут собираться на сервере, даже при закрытом браузере." : "Демо-режим: данные собираются только пока открыт браузер.";
+  $("serverOptions").hidden=!server;
+  $("stepAds").classList.toggle("done",!!adsTab);
+  $("adsText").textContent=adsTab ? "Найдена вкладка Ads Manager. Убедитесь, что в ней открыт нужный соц." : "Откройте Ads Manager в профиле нужного соца и дождитесь загрузки кампаний.";
+  $("openAds").textContent=adsTab ? "Перейти во вкладку" : "Открыть Ads Manager";
+  $("clientConnect").disabled=pending || (server && !$("clientConsent").checked);
+  if(!connected){summary=null;return;}
+  $("dSocial").textContent=(s.social.user.name || "Facebook")+" · "+s.social.user.id;
+  $("dAccounts").textContent=String(s.social.accounts.length);
+  if(server){
+    const h=summary ? serverHeadline(summary) : {tone:"busy",text:"Проверяю сервер…"};
+    $("dot").className="dot "+h.tone;$("headline").textContent=h.text;
+    const r=summary?.result;
+    $("dLast").textContent=summary?.last ? time(summary.last.finishedAt || summary.last.observedAt)+" · "+jobText(summary.last.state) : (r ? time(r.observedAt) : "—");
+    $("dObjects").textContent=r ? r.campaigns+" / "+r.adsets+" / "+r.ads : "—";
+    $("dSpend").textContent=r?.spend || "—";
+    $("dNext").textContent=summary?.active ? jobText(summary.active.state) : summary?.scheduleMinutes ? time(summary.nextAt) : "Выключено";
+    const lost=!!(summary?.needsAuth || (summary && !summary.connected));
+    $("clientReconnect").hidden=!lost;$("clientRefresh").hidden=lost;
+  }else{
+    const j=s.job,reports=Object.values(s.reports || {});
+    const running=j?.state==="running";
+    $("dot").className="dot "+(running ? "busy" : j?.errors?.length ? "error" : reports.length ? "ok" : "warn");
+    $("headline").textContent=running ? "Идёт сбор: "+j.index+" из "+j.ids.length+" кабинетов" : !s.hasMetaToken ? "Браузер перезапускался — переподключите соц" : reports.length ? "Демо-режим: данные собраны" : "Нажмите «Обновить сейчас»";
+    $("dLast").textContent=reports.length ? time(Math.max(...reports.map(r=>Date.parse(r.observedAt)))) : "—";
+    $("dObjects").textContent=reports.reduce((n,r)=>n+r.campaigns.length,0)+" кампаний";
+    const sums={};for(const r of reports)sums[r.account.currency]=(sums[r.account.currency]||0)+r.metrics.reduce((n,m)=>n+m.spend,0);
+    $("dSpend").textContent=Object.entries(sums).map(([c,v])=>v.toFixed(2)+" "+c).join(" · ") || "—";
+    $("dNext").textContent="Только вручную";
+    $("clientReconnect").hidden=s.hasMetaToken;$("clientRefresh").hidden=!s.hasMetaToken;
+    $("clientRefresh").disabled=pending || running || !s.hasMetaToken;
+  }
+}
+async function findAdsTab(){
+  const [active]=await chrome.tabs.query({active:true,currentWindow:true});
+  let tabs=active ? [active] : [];
+  try{tabs=tabs.concat(await chrome.tabs.query({url:ADS_TAB_PATTERNS}));}catch{}
+  return pickAdsTab(tabs,adsUrl);
+}
+async function loadSummary(){
+  if(!state.server || !state.social)return;
+  try{summary=await ask("CLIENT_STATUS");}catch(e){summary=null;message(e.message,true);}
+  renderClient(state);
+  clearTimeout(pollTimer);
+  pollTimer=setTimeout(()=>void loadSummary(),summary?.active ? 10000 : 60000);
+}
+async function connectFlow(){
+  const server=!!state.server;
+  const origins=[...META_ORIGINS,...(server ? ["https://*.facebook.com/*",state.server.origin+"/*"] : [])];
+  if(!await chrome.permissions.request({origins,permissions:server ? ["cookies"] : []})){message("Без разрешения на доступ к Facebook подключить соц нельзя.",true);return;}
+  void task(async()=>{
+    adsTab=await findAdsTab();
+    if(!adsTab)throw new Error("Не нашёл вкладку Ads Manager. Нажмите «Открыть Ads Manager», дождитесь загрузки и повторите.");
+    const proxy=$("clientProxy").value.trim() ? {server:$("clientProxy").value.trim(),username:$("clientProxyUser").value,password:$("clientProxyPassword").value} : undefined;
+    try{await ask("CLIENT_CONNECT",{tabId:adsTab.id,consent:$("clientConsent").checked,proxy});}
+    finally{$("clientProxyPassword").value="";}
+    summary=null;setTimeout(()=>void loadSummary(),3000);
+  });
+}
+$("clientConsent").onchange=()=>renderClient(state);
+$("clientConnect").onclick=()=>void connectFlow();
+$("clientReconnect").onclick=()=>{$("onboarding").hidden=false;$("dashboard").hidden=true;};
+$("openAds").onclick=async()=>{
+  const tab=adsTab || await findAdsTab();
+  if(tab){await chrome.tabs.update(tab.id,{active:true});if(tab.windowId)await chrome.windows.update(tab.windowId,{focused:true});}
+  else await chrome.tabs.create({url:ADS_MANAGER_URL});
+};
+$("clientRefresh").onclick=()=>void task(async()=>{await ask("CLIENT_REFRESH");setTimeout(()=>void loadSummary(),2000);});
+$("clientDisconnect").onclick=()=>{
+  if(!confirm("Отключить соц? Сбор данных остановится, сессия будет удалена с сервера."))return;
+  void task(()=>ask("CLIENT_DISCONNECT"));
+};
+$("signOut").onclick=()=>{
+  if(!confirm("Удалить ключ доступа из расширения?"))return;
+  void task(()=>ask("SIGN_OUT"));
+};
+void (async()=>{
+  adsTab=await findAdsTab().catch(()=>null);
+  await refresh().catch(()=>{});
+  await loadSummary();
+})();
