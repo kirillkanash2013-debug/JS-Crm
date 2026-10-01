@@ -5,7 +5,7 @@ export class Control {
  constructor(state,save,schedule,runner){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;}
  async persist(){await this.save(this.state);await this.plan();}
  async plan(){let next=Infinity;for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(c.schedule)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
- status(){return {mode:'live',connections:Object.values(this.state.connections).map(c=>({userId:c.userId,connectedAt:c.connectedAt,schedule:c.schedule||null})),jobs:this.state.jobs,results:this.state.results};}
+ status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).map(c=>({userId:c.userId,connectedAt:c.connectedAt,schedule:c.schedule||null})),jobs:this.state.jobs,results:this.state.results};}
  enqueue(b){const userId=String(b.userId||'');if(!this.state.connections[userId])throw new Error('Connect first');const range=period(b.since,b.until);const existing=this.state.jobs.find(j=>j.userId===userId&&['queued','running'].includes(j.state));if(existing)return existing;
  const j={id:crypto.randomUUID(),userId,range,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)).slice(-99));this.state.jobs.push(j);return j;}
  async request(path,method,b){
