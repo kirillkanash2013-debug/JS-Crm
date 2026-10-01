@@ -1,0 +1,42 @@
+{
+  "name": "js-control-collector-claude",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "containers": [
+    {
+      "class_name": "BrowserContainer",
+      "image": "../server/Dockerfile.cloudflare",
+      "max_instances": 1,
+      "instance_type": "standard-1",
+      "image_build_context": ".."
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CONTROL",
+        "class_name": "CollectorControl"
+      },
+      {
+        "name": "BROWSER",
+        "class_name": "BrowserContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "CollectorControl",
+        "BrowserContainer"
+      ]
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}

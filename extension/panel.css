@@ -4,3 +4,7 @@
 .tableScroll{overflow:auto}table{min-width:690px}
 #diagnostics{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}
 #job{font-size:12px;margin-bottom:0}
+
+#serverResult{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:220px;overflow:auto}
+#serverOrigin,#serverKey,#proxyServer{display:block;width:100%;margin-top:5px}
+#serverConsent{accent-color:#8fff8a}

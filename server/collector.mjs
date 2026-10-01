@@ -1,10 +1,10 @@
 import {discoverSocial,syncMeta} from '../extension/meta.mjs';
 import {syncStructure} from '../extension/structure.mjs';
 import {pageGraphRead} from '../extension/page-transport.mjs';
-export async function collect(connection,range,{chromium}={}){
+export async function collect(connection,range,{chromium,timeoutMs=15*60*1000}={}){
  if(!chromium)({chromium}=await import('playwright'));
  const browser=await chromium.launch({headless:true,proxy:connection.proxy||undefined});
- const deadline=setTimeout(()=>void browser.close().catch(()=>{}),15*60*1000);
+ const deadline=setTimeout(()=>void browser.close().catch(()=>{}),timeoutMs);
  try{
   const context=await browser.newContext({userAgent:connection.userAgent,storageState:connection.storageState||{cookies:connection.cookies,origins:[]}});
   const page=await context.newPage();

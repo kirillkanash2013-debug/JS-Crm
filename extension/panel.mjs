@@ -127,3 +127,9 @@ $("serverStatus").onclick=()=>void cloud("SERVER_STATUS");
 $("serverSchedule").onclick=()=>void cloud("SERVER_SCHEDULE",{minutes:15});
 $("serverStopSchedule").onclick=()=>void cloud("SERVER_SCHEDULE",{minutes:0});
 $("serverRemove").onclick=()=>void cloud("SERVER_REMOVE");
+
+$("serverGenerateKey").onclick=()=>{
+ const bytes=crypto.getRandomValues(new Uint8Array(32));
+ $("serverKey").value="js_srv_"+btoa(String.fromCharCode(...bytes)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+ $("serverResult").textContent="Ключ создан локально. Сохраните его у себя и добавьте в Cloudflare → js-control-collector-claude → Settings → Variables and Secrets как Secret с именем JS_CONTROL_OWNER_KEY. Сам ключ не отправляется в чат и не сохраняется в экспорт.";
+};

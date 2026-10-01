@@ -1,0 +1,41 @@
+name: Deploy JS Control Cloudflare collector
+on:
+  push:
+    branches: [claude-code]
+    paths: ['cloud-collector/**', 'server/**', 'extension/**', '.github/workflows/cloud-collector.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: js-control-cloud-collector
+  cancel-in-progress: false
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix server
+      - run: npm ci --prefix cloud-collector
+      - run: cd server && npx playwright install --with-deps chromium --only-shell
+      - name: Test extension, server and durable storage
+        run: node --test cloud-collector/tests/*.test.mjs server/tests/*.test.mjs extension/tests/*.test.mjs
+        env:
+          REQUIRE_BROWSER: '1'
+      - name: Deploy isolated collector and browser container
+        working-directory: cloud-collector
+        run: npx wrangler deploy
+      - name: Initialize encryption secrets without rotating existing keys
+        run: node cloud-collector/bootstrap-secrets.mjs
+      - name: Check public gateway
+        run: |
+          curl --fail --retry 5 --retry-delay 5 https://js-control-collector-claude.kirill-kanash2013.workers.dev/health
