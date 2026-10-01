@@ -40,6 +40,12 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Check required secrets are set
+        run: |
+          test -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" || { echo "::error::Missing secret CLOUDFLARE_API_TOKEN"; exit 1; }
+          test -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" || { echo "::error::Missing secret CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+          test -n "${{ secrets.TELEGRAM_BOT_TOKEN }}" || { echo "::error::Add the TELEGRAM_BOT_TOKEN repository secret first (Settings → Secrets and variables → Actions)."; exit 1; }
+
       - name: Check the D1 id is wired in
         working-directory: platform
         run: |
