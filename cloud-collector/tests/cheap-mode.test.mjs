@@ -8,7 +8,7 @@ import {resolveCaller} from '../src/tenants.mjs';
 import {applyPayment} from '../../platform/src/accounts.mjs';
 import {D1Store} from '../../platform/src/store.mjs';
 
-const conn = id => ({userId: id, token: 'EA' + 'x'.repeat(30), cookies: [], userAgent: 'UA'});
+const conn = (id, cookies = [{name: 'c_user', value: id, domain: '.facebook.com'}]) => ({userId: id, token: 'EA' + 'x'.repeat(30), cookies, userAgent: 'UA'});
 const snapshot = (id, extra = {}) => ({snapshot: {complete: true, source: 'facebook-server', observedAt: new Date().toISOString(), social: {user: {id}}, structures: {}, reports: {}}, ...extra});
 const fail = code => Object.assign(new Error('x'), {code});
 const range = id => ({userId: id, since: '2026-10-01', until: '2026-10-01'});
@@ -112,4 +112,23 @@ test('collector access: owner key, client token with its plan limit, expired, un
   assert.equal((await resolveCaller('Bearer ' + integrationToken, {JS_CONTROL_OWNER_KEY: owner}, equal)).status, 503);
   await store.extendTenant(tenant.id, '2020-01-01');
   assert.equal((await resolveCaller('Bearer ' + integrationToken, env, equal)).status, 402);
+});
+
+test('bookmarklet connection (no cookies): dead token asks the client to reconnect, no browser run', async () => {
+  let browser = 0;
+  const c = new Control(initialState(), async () => {}, async () => {}, {validate: async x => x, collectApi: async () => { throw fail(190); }, collect: async x => { browser++; return snapshot(x.userId); }});
+  await c.request('/v1/connections', 'POST', conn('104', []), 10);
+  await c.request('/v1/schedule', 'POST', {userId: '104', minutes: 15}, 10);
+  await c.request('/v1/jobs', 'POST', range('104'), 10);
+  const w = await c.prepare(); const {result, error} = await c.execute(w); await c.finish(w, result, error);
+  assert.equal(browser, 0); assert.equal(c.state.jobs[0].state, 'needs_auth');
+  // Reconnect through the bookmark keeps the client's schedule settings untouched until set again.
+  await c.request('/v1/connections', 'POST', {...conn('104', []), token: 'EA' + 'y'.repeat(30)}, 10);
+  assert.equal(c.state.connections['104'].token, 'EA' + 'y'.repeat(30));
+});
+
+test('connect errors are reported as readable codes', async () => {
+  const c = new Control(initialState(), async () => {}, async () => {}, {validateApi: async () => { throw fail('proxy'); }});
+  const r = await c.request('/v1/connections', 'POST', conn('105'), 10);
+  assert.equal(r.status, 422); assert.deepEqual(await r.json(), {error: 'proxy_failed'});
 });

@@ -3,6 +3,7 @@ const NEEDS_AUTH=['needs_auth','identity',190,102];
 const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
 const BROWSER_FALLBACK=[1,190,102];
+const CONNECT_ERRORS={proxy:'proxy_failed',190:'token_invalid',102:'token_invalid',identity:'wrong_user',cookies_owner:'cookies_owner',cookies:'validation_failed',invalid:'validation_failed'};
 const validateAction=a=>{if(a?.campaignId!=='120250610273720552'||a?.status!=='ACTIVE')throw new Error('Unsupported action');return {campaignId:a.campaignId,status:a.status};};
 import {period} from '../../extension/core.mjs';
 export const reply=(status,body)=>Response.json(body,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
@@ -23,7 +24,12 @@ export class Control {
   if(method==='POST'&&path==='/v1/connections'){
    if(Object.keys(this.state.connections).length>=limit&&!this.state.connections[b?.userId])return reply(409,{error:'social_limit',limit});
    // Validation and public proxy DNS pinning are performed inside the Node container.
-   const c=await this.runner.validate(b);this.state.connections[c.userId]={...c,mode:'api',apiFailures:0,revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};await this.persist();return reply(201,{userId:c.userId,state:'unverified'});
+   // Cheap check through the social's proxy when available; the browser container only as before.
+   let c;
+   try{c=this.runner.validateApi?await this.runner.validateApi(b):await this.runner.validate(b);}
+   catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed'});}
+   const old=this.state.connections[c.userId];
+   this.state.connections[c.userId]={...c,mode:'api',apiFailures:0,schedule:old?.schedule||null,revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};await this.persist();return reply(201,{userId:c.userId,state:this.runner.validateApi?'verified':'unverified'});
   }
   if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');if(this.state.jobs.some(j=>['queued','running'].includes(j.state)))return reply(409,{error:'busy'});const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
@@ -64,7 +70,8 @@ export class Control {
   let apiError=null;
   if(connection.mode!=='browser'&&this.runner.collectApi){
    try{return {result:await this.runner.collectApi(connection,job.range,previous)};}
-   catch(e){apiError=e;if(!BROWSER_FALLBACK.includes(e.code)||!this.runner.collect)return {error:{code:e.code}};}
+   catch(e){apiError=e;if(!BROWSER_FALLBACK.includes(e.code)||!this.runner.collect||!connection.cookies?.length)return {error:{code:e.code}};}
+   // Without cookies (bookmarklet connection) there is no browser fallback: the client clicks the bookmark again.
   }
   try{const result=await this.runner.collect(connection,job.range);return {result:{...result,viaBrowser:true,apiError:apiError?.code??null}};}
   catch(e){return {error:{code:e.code}};}

@@ -6,7 +6,7 @@ import {checkKeitaro, keitaroOrigin} from './keitaro.mjs';
 import {sealSecret} from './secrets.mjs';
 import {findToken} from './tokens.mjs';
 
-const MENU = {keyboard: [[{text: '📊 Дашборд'}, {text: '🧩 Плагин'}], [{text: '⚙️ Настройки'}, {text: '💳 Подписка'}]], resize_keyboard: true};
+const MENU = {keyboard: [[{text: '📊 Дашборд'}, {text: '🧩 Подключить соц'}], [{text: '⚙️ Настройки'}, {text: '💳 Подписка'}]], resize_keyboard: true};
 const INVITE_ERRORS = {
   invalid: '❌ Код не найден. Проверьте, что скопировали его полностью.',
   used: '❌ Этот код уже использован. Каждый код работает только один раз.',
@@ -87,8 +87,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
 
   function pluginText() {
-    return '1. Установите плагин JS Control: ' + env.PLUGIN_URL +
-      '\n2. Откройте плагин и войдите <b>тем же токеном интеграции</b>.\n3. Откройте Ads Manager нужного соца и нажмите «Подключить соц».';
+    return '1. Добавьте закладку JS Control: ' + env.PLUGIN_URL +
+      '\n2. Откройте Ads Manager нужного соца и нажмите закладку.\n3. На открывшейся странице вставьте <b>токен интеграции</b>, укажите прокси соца и подтвердите. Для каждого соца — то же самое в его профиле.';
   }
 
   async function subscription(chatId, tenant) {
@@ -173,7 +173,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     }
 
     if (text === '📊 Дашборд' || text === '/dashboard') return send(chatId, '📊 Ссылка на дашборд:\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
-    if (text === '🧩 Плагин' || text === '/plugin') return send(chatId, '🧩 <b>Плагин</b>\n' + pluginText(), MENU);
+    if (text === '🧩 Подключить соц' || text === '/plugin') return send(chatId, '🧩 <b>Подключение соца</b>\n' + pluginText(), MENU);
     if (text === '⚙️ Настройки' || text === '/settings') return askKeitaroUrl(chatId);
     if (text === '💳 Подписка' || text === '/subscription') return subscription(chatId, tenant);
     if (text === '/token') {
