@@ -105,7 +105,7 @@ $("traceStop").onclick=()=>void task(()=>ask("TRACE_STOP"));
 $("traceClear").onclick=()=>void task(()=>ask("TRACE_CLEAR"));
 $("traceExport").onclick=()=>{
  if(!state.trace)return;const {tabId,...trace}=state.trace;
- const blob=new Blob([JSON.stringify({schemaVersion:2,extensionVersion:"0.5.0",trace},null,2)],{type:"application/json"});
+ const blob=new Blob([JSON.stringify({schemaVersion:2,extensionVersion:"0.5.1",trace},null,2)],{type:"application/json"});
  const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="js-control-requests-"+today()+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 
