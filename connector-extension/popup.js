@@ -52,6 +52,15 @@ async function adsPowerProxy(userId) {
   return null;
 }
 
+// Human text for whatever interval the SERVER returned — nothing about the
+// schedule is decided or stored here; the plugin only reflects the server.
+function intervalText(s) {
+  var m = s && s.minutes;
+  if (!m) return " автоматически";
+  if (m % 60 === 0) { var h = m / 60; return h === 1 ? " раз в час" : " раз в " + h + " ч"; }
+  return " каждые " + m + " мин";
+}
+
 async function cookies() {
   try {
     const all = await chrome.cookies.getAll({ domain: "facebook.com" });
@@ -91,12 +100,11 @@ $("go").onclick = async () => {
     const ck = await cookies();
     const proxy = $("noproxy").checked ? null : await adsPowerProxy(session.userId);
     proxyInfo = $("noproxy").checked ? "\nБез прокси (тест): Facebook видит IP сервера." : proxy ? "\nПрокси: " + proxy.server + " (логин: " + (proxy.username ? "есть" : "нет") + ")" : "\nПрокси профиля не найден (AdsPower запущен?).";
-    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     show("Подключаю соц на сервере…" + proxyInfo);
-    await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
-    await api("/v1/jobs", key, { userId: session.userId, since: today, until: today });
-    await api("/v1/schedule", key, { userId: session.userId, minutes: 60 });
-    show("✓ Готово! Соц «" + (session.name || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nДанные обновляются раз в час (можно обновить вручную на странице статуса). Браузер можно закрыть.", "ok");
+    // Only credentials go up. The server sets the schedule and starts the
+    // first collection itself; all settings live on the server, not here.
+    const res = await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
+    show("✓ Готово! Соц «" + (session.name || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nСервер запустил сбор и обновляет данные" + intervalText(res && res.schedule) + ". Браузер можно закрыть.", "ok");
   } catch (e) {
     show((e.message || String(e)) + proxyInfo, "err");
   } finally {

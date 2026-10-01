@@ -1,5 +1,9 @@
 import {REIMPORT_MS} from './importer.mjs';
 const API_PARALLEL=4;
+// Single server-side default for the collection interval. All settings live
+// here, never in the client plugin: change this (and redeploy) to retune every
+// client at once, with no need to redistribute the extension.
+const DEFAULT_SCHEDULE_MINUTES=60;
 const IMPORT_USER='__import__';
 const NEEDS_AUTH=['needs_auth','identity',190,102];
 const RATE_LIMIT=[4,17,32,613,80004];
@@ -49,7 +53,12 @@ export class Control {
    try{c=this.runner.validateApi?await this.runner.validateApi(b):await this.runner.validate(b);}
    catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed',detail:(e&&e.message)?String(e.message).slice(0,200):null});}
    const old=this.state.connections[c.userId];
-   this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||null,revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};await this.persist();return reply(201,{userId:c.userId,state:this.runner.validateApi?'verified':'unverified'});
+   // The server owns the settings: a social gets the default schedule from the
+   // server (not the client) and an immediate first collection. The plugin only
+   // forwards credentials — it never sends a schedule or a collection job.
+   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()+DEFAULT_SCHEDULE_MINUTES*60000},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
+   const date=new Date().toISOString().slice(0,10);this.enqueue({userId:c.userId,since:date,until:date});
+   await this.persist();return reply(201,{userId:c.userId,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
   if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');if(this.state.jobs.some(j=>['queued','running'].includes(j.state)))return reply(409,{error:'busy'});const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
@@ -112,7 +121,7 @@ export class Control {
   catch(e){return {error:{code:e.code}};}
  }
  // Adds or refreshes socials found in the antidetect account. Existing socials
- // keep their schedule; new ones start collecting right away (15 min).
+ // keep their schedule; new ones start on the server's default schedule.
  applyImport(j,result,error){
   const a=this.state.antidetect;
   if(error||!result){j.state='failed';j.error={code:error?.code||'import_failed'};if(a)a.lastImport={at:new Date().toISOString(),error:j.error.code};return;}
@@ -121,7 +130,7 @@ export class Control {
    const old=this.state.connections[item.userId];
    if(!old&&Object.keys(this.state.connections).length>=limit){skipped.push({name:item.label,reason:'limit'});continue;}
    this.state.connections[item.userId]={...old,...item,token:item.token||old?.token||null,mode:'api',apiFailures:0,
-    schedule:old?.schedule||{minutes:60,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
+    schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
    old?updated++:added++;
   }
   j.state='done';
