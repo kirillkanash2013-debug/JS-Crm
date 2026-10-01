@@ -16,6 +16,13 @@ export function dashboardSummary(tenant, settings, collector) {
   };
 }
 
+function dataBlock(c) {
+  if (!c) return '<p>Данные появятся после подключения соца в плагине и первого сбора.</p>';
+  const spend = Object.entries(c.totals || {}).map(([cur, v]) => esc(v + ' ' + cur)).join(' · ') || '—';
+  const socials = (c.connections || []).map(s => '<li class="done">' + esc(s.label) + ' — ' + esc(s.mode) + '</li>').join('');
+  return '<p>Соцев: ' + esc(c.socials) + ' · расход за сегодня: ' + spend + (c.observedAt ? ' · последний сбор: ' + esc(c.observedAt) : '') + '</p>' + (socials ? '<ol>' + socials + '</ol>' : '');
+}
+
 export function dashboardPage(summary) {
   const steps = summary.steps.map(s => '<li class="' + (s.done ? 'done' : s.optional ? 'skip' : '') + '">' + esc(s.title) + (s.optional ? ' — пропущено' : '') + '</li>').join('');
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
@@ -27,6 +34,6 @@ h1{margin:0 0 4px;font-size:24px}p{color:var(--muted);margin:0 0 20px}section{ba
 ol{margin:0;padding-left:22px}li{margin:6px 0;color:var(--muted)}li.done{color:var(--text)}li.done::marker{color:var(--accent)}li.skip{text-decoration:line-through}
 </style></head><body><main><h1>${esc(summary.client)}</h1><p>Тариф ${esc(summary.plan)} · оплачено до ${esc(summary.paidUntil)}${summary.timezone ? ' · ' + esc(summary.timezone) : ''}</p>
 <section><h2>Подключение</h2><ol>${steps}</ol></section>
-<section><h2>Данные</h2><p>${summary.collector ? 'Последний сбор: ' + esc(summary.collector.observedAt) : 'Данные появятся после подключения соца в плагине и первого сбора.'}</p></section>
+<section><h2>Данные</h2>${dataBlock(summary.collector)}</section>
 </main></body></html>`;
 }

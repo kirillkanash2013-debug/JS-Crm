@@ -58,7 +58,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     // Test helpers (owner only): simulate a purchase and drive the collector.
     if (cmd === '/testtoken') {
       const plan = PLANS[(args[0] || '').toLowerCase()] ? args[0].toLowerCase() : 'team';
-      const r = await applyPayment(store, {paymentId: 'test:' + crypto.randomUUID(), provider: 'test', plan, name: 'ТЕСТ ' + new Date().toISOString().slice(0, 10)});
+      const r = await applyPayment(store, {paymentId: 'test:' + crypto.randomUUID(), provider: 'test', plan, name: 'ТЕСТ ' + new Date().toISOString().slice(0, 10), masterKey: env.MASTER_KEY});
       return send(chatId, '🧪 Оплата сымитирована. Тариф ' + planName(plan) + ' до ' + r.tenant.paidUntil +
         '.\n\nТокен для подключения (вставьте на странице подключения соца):\n<code>' + r.integrationToken + '</code>\n\n' +
         'Подключить соц: ' + env.IMPORT_URL.replace('/import', '/bookmarklet') + '\nПроверить сбор: <code>/teststatus ' + r.integrationToken + '</code>');
@@ -144,7 +144,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const plan = String(pay.invoice_payload || '').replace(/^plan:/, '');
     const chat = await store.chat(chatId);
     const result = await applyPayment(store, {paymentId: 'tg:' + pay.telegram_payment_charge_id, provider: 'telegram-stars', plan,
-      name: message.from?.username || message.from?.first_name, tenantId: chat?.tenantId || undefined, amount: pay.total_amount, currency: pay.currency});
+      name: message.from?.username || message.from?.first_name, tenantId: chat?.tenantId || undefined, amount: pay.total_amount, currency: pay.currency, masterKey: env.MASTER_KEY});
     if (result.duplicate) return;
     if (result.integrationToken) {
       await send(chatId, '🎉 Оплата получена!\n\nВаш токен интеграции (нужен для входа в плагин, сохраните его):\n<code>' + result.integrationToken + '</code>');
@@ -164,7 +164,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (code) {
       await forget(chatId, message.message_id);
       if (chat?.tenantId && await store.tenant(chat.tenantId)) return send(chatId, 'У этого Telegram-аккаунта уже есть доступ к JS Control. Код не использован — его можно передать другому человеку.', MENU);
-      const result = await redeemInvite(store, code, {chatId, name: message.from?.username || message.from?.first_name});
+      const result = await redeemInvite(store, code, {chatId, name: message.from?.username || message.from?.first_name, masterKey: env.MASTER_KEY});
       if (result.error) return send(chatId, INVITE_ERRORS[result.error]);
       await send(chatId, '🎁 Код активирован! Доступ: <b>' + esc(planName(result.tenant.plan)) + '</b> до ' + result.tenant.paidUntil +
         '.\n\nВаш токен интеграции (нужен для входа в плагин, сохраните его):\n<code>' + result.integrationToken + '</code>');
@@ -176,6 +176,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       await forget(chatId, message.message_id); // the token must not stay in the chat history
       const {tenant, error} = await authenticate(store, token, 'integration');
       if (error === 'invalid') return send(chatId, '❌ Токен не найден. Проверьте, что скопировали его полностью.');
+      // The user handed us the plaintext token — seal it so the dashboard can
+      // read this tenant's data from the collector (covers tokens issued earlier).
+      if (env.MASTER_KEY) await store.setIntegrationTokenEnc(tenant.id, await sealSecret(env.MASTER_KEY, tenant.id, token));
       if (error === 'expired') { await store.setChat(chatId, tenant.id, 'ready'); return subscription(chatId, tenant); }
       return bind(chatId, tenant);
     }
@@ -214,7 +217,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (text === '⚙️ Настройки' || text === '/settings') return askKeitaroUrl(chatId);
     if (text === '💳 Подписка' || text === '/subscription') return subscription(chatId, tenant);
     if (text === '/token') {
-      const fresh = await rotateIntegrationToken(store, tenant.id);
+      const fresh = await rotateIntegrationToken(store, tenant.id, env.MASTER_KEY);
       return send(chatId, '🔁 Новый токен интеграции:\n<code>' + fresh + '</code>\n\nСтарый больше не действует — войдите в плагин заново.', MENU);
     }
     return send(chatId, 'Выберите действие в меню.', MENU);

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyPayment, authenticate} from '../src/accounts.mjs';
-import {route} from '../src/index.mjs';
+import {collectorStatus, route} from '../src/index.mjs';
+import {dashboardPage, dashboardSummary} from '../src/dashboard.mjs';
 import {MemoryStore} from '../src/store.mjs';
 import {openSecret} from '../src/secrets.mjs';
 import {hashToken} from '../src/tokens.mjs';
@@ -128,4 +129,35 @@ test('Telegram Stars: invoice, pre-checkout, payment creates tenant and starts o
   const count = h.sent.length;
   await h.update({message: paid});
   assert.equal(h.sent.length, count, 'repeated payment update is ignored');
+});
+
+test('collectorStatus decrypts the sealed token and summarizes the collector', async () => {
+  const store = new MemoryStore();
+  const {tenant} = await applyPayment(store, {paymentId: 'pc', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  assert(await store.tenant(tenant.id).then(t => t.integrationTokenEnc), 'integration token is sealed on issue');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    assert.match(opts.headers.Authorization, /^Bearer jsi_/);
+    assert(url.startsWith('https://c.test/v1/'));
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}], results: {'100': {observedAt: '2026-10-01T10:00:00Z'}}});
+    return Response.json({totals: {USD: 82.29}, rows: [1, 2, 3]});
+  };
+  try {
+    const c = await collectorStatus(env, store, tenant.id);
+    assert.equal(c.socials, 1);
+    assert.equal(c.totals.USD, 82.29);
+    assert.equal(c.observedAt, '2026-10-01T10:00:00Z');
+    assert.equal(c.connections[0].label, 'Алина');
+  } finally { globalThis.fetch = realFetch; }
+  // No sealed token → no call, no data.
+  assert.equal(await collectorStatus(env, new MemoryStore(), 'missing'), null);
+});
+
+test('dashboard renders collector spend and marks the social step done', () => {
+  const summary = dashboardSummary({name: 'A', plan: 'team', paidUntil: '2026-10-31'}, {onboardedAt: 'x', timezone: 'UTC'},
+    {socials: 1, observedAt: '2026-10-01T10:00:00Z', connections: [{label: 'Алина', mode: 'api'}], totals: {USD: 82.29}, rows: 3});
+  assert.equal(summary.steps.find(s => s.title.startsWith('Соц')).done, true);
+  const html = dashboardPage(summary);
+  assert.match(html, /82\.29 USD/);
+  assert.match(html, /Алина/);
 });

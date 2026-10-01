@@ -10,9 +10,10 @@ export class D1Store {
   }
   async tenant(id) {
     const r = await this.db.prepare('SELECT * FROM tenants WHERE id=?').bind(id).first();
-    return r && {id: r.id, name: r.name, plan: r.plan, socialLimit: r.social_limit, status: r.status, paidUntil: r.paid_until};
+    return r && {id: r.id, name: r.name, plan: r.plan, socialLimit: r.social_limit, status: r.status, paidUntil: r.paid_until, integrationTokenEnc: r.integration_token_enc ?? null};
   }
   async extendTenant(id, paidUntil) { await this.db.prepare('UPDATE tenants SET paid_until=?, status=? WHERE id=?').bind(paidUntil, 'active', id).run(); }
+  async setIntegrationTokenEnc(id, enc) { await this.db.prepare('UPDATE tenants SET integration_token_enc=? WHERE id=?').bind(enc, id).run(); }
   async putToken(hash, tenantId, kind) {
     await this.db.prepare('INSERT INTO access_tokens (hash,tenant_id,kind,created_at) VALUES (?,?,?,?)').bind(hash, tenantId, kind, now()).run();
   }
@@ -77,8 +78,9 @@ const inviteRow = r => ({id: r.id, plan: r.plan, days: r.days, note: r.note, cre
 export class MemoryStore {
   constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); }
   async createTenant(t) { this.tenants.set(t.id, {id: t.id, name: t.name, plan: t.plan, socialLimit: t.socialLimit, status: 'active', paidUntil: t.paidUntil}); return this.tenant(t.id); }
-  async tenant(id) { const t = this.tenants.get(id); return t ? {...t} : null; }
+  async tenant(id) { const t = this.tenants.get(id); return t ? {integrationTokenEnc: null, ...t} : null; }
   async extendTenant(id, paidUntil) { Object.assign(this.tenants.get(id), {paidUntil, status: 'active'}); }
+  async setIntegrationTokenEnc(id, enc) { const t = this.tenants.get(id); if (t) t.integrationTokenEnc = enc; }
   async putToken(hash, tenantId, kind) { this.tokens.set(hash, {tenantId, kind, revoked: false}); }
   async tokenTenant(hash, kind) { const t = this.tokens.get(hash); return t && t.kind === kind && !t.revoked ? t.tenantId : null; }
   async revokeTokens(tenantId, kind) { for (const t of this.tokens.values()) if (t.tenantId === tenantId && t.kind === kind) t.revoked = true; }

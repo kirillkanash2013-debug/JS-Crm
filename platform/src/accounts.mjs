@@ -1,4 +1,5 @@
 import {newInviteCode} from './invites.mjs';
+import {sealSecret} from './secrets.mjs';
 import {hashToken, newToken, tokenKind} from './tokens.mjs';
 
 export const PLANS = {
@@ -18,19 +19,22 @@ export function isActive(tenant, date = today()) {
   return !!tenant && tenant.status === 'active' && tenant.paidUntil >= date;
 }
 
-async function issueToken(store, tenantId, kind) {
+async function issueToken(store, tenantId, kind, masterKey) {
   const token = newToken(kind);
   await store.revokeTokens(tenantId, kind);
   await store.putToken(await hashToken(token), tenantId, kind);
+  // Keep a sealed copy of the integration token so the platform can read the
+  // tenant's data from the collector for the dashboard. Auth still uses the hash.
+  if (kind === 'integration' && masterKey) await store.setIntegrationTokenEnc(tenantId, await sealSecret(masterKey, tenantId, token));
   return token;
 }
-export const rotateIntegrationToken = (store, tenantId) => issueToken(store, tenantId, 'integration');
+export const rotateIntegrationToken = (store, tenantId, masterKey) => issueToken(store, tenantId, 'integration', masterKey);
 export const rotateDashboardToken = (store, tenantId) => issueToken(store, tenantId, 'dashboard');
 
 // Called after a confirmed payment. Idempotent per payment id: a retried
 // webhook never creates a second client or a second token.
 // With tenantId it is a renewal: the paid period is extended, tokens stay.
-export async function applyPayment(store, {paymentId, provider, plan, name, tenantId, amount, currency}) {
+export async function applyPayment(store, {paymentId, provider, plan, name, tenantId, amount, currency, masterKey}) {
   const p = PLANS[plan];
   if (!p) throw new Error('Unknown plan');
   if (!paymentId) throw new Error('paymentId required');
@@ -48,7 +52,7 @@ export async function applyPayment(store, {paymentId, provider, plan, name, tena
 
   const tenant = await store.createTenant({id: crypto.randomUUID(), name: String(name || 'Клиент').slice(0, 80), plan, socialLimit: p.socialLimit, paidUntil: addDays(today(), p.days)});
   await store.recordPayment({id: paymentId, tenantId: tenant.id, provider, amount, currency});
-  return {tenant, integrationToken: await rotateIntegrationToken(store, tenant.id), duplicate: false};
+  return {tenant, integrationToken: await rotateIntegrationToken(store, tenant.id, masterKey), duplicate: false};
 }
 
 // Resolves a token to its tenant. Returns {tenant, error} so callers can
@@ -73,7 +77,7 @@ export async function createInvite(store, {plan = 'team', days = 30, note = '', 
   return {id, code, plan, days};
 }
 
-export async function redeemInvite(store, code, {chatId, name}) {
+export async function redeemInvite(store, code, {chatId, name, masterKey}) {
   const hash = await hashToken(code);
   const invite = await store.invite(hash);
   if (!invite) return {error: 'invalid'};
@@ -85,5 +89,5 @@ export async function redeemInvite(store, code, {chatId, name}) {
   if (!await store.claimInvite(hash, tenantId, chatId)) return {error: 'used'};
   const tenant = await store.createTenant({id: tenantId, name: String(name || invite.note || 'Клиент').slice(0, 80), plan: invite.plan, socialLimit: PLANS[invite.plan].socialLimit, paidUntil: addDays(today(), invite.days)});
   await store.recordPayment({id: 'invite:' + invite.id, tenantId, provider: 'invite', amount: '0', currency: null});
-  return {tenant, integrationToken: await rotateIntegrationToken(store, tenantId)};
+  return {tenant, integrationToken: await rotateIntegrationToken(store, tenantId, masterKey)};
 }

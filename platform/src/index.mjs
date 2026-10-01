@@ -3,6 +3,7 @@
 import {PLANS, applyPayment, authenticate} from './accounts.mjs';
 import {createBot} from './bot.mjs';
 import {dashboardPage, dashboardSummary} from './dashboard.mjs';
+import {openSecret} from './secrets.mjs';
 import {D1Store} from './store.mjs';
 
 const json = (status, body) => Response.json(body, {status, headers: {'cache-control': 'no-store'}});
@@ -49,7 +50,7 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
     if (!env.BILLING_WEBHOOK_SECRET || raw.length > 16000 || !await sameSecret(request.headers.get('x-signature'), await hmacHex(env.BILLING_WEBHOOK_SECRET, raw))) return json(401, {error: 'unauthorized'});
     const b = JSON.parse(raw);
     if (!PLANS[b.plan]) return json(400, {error: 'unknown_plan'});
-    const result = await applyPayment(store, {paymentId: 'web:' + b.paymentId, provider: String(b.provider || 'web'), plan: b.plan, name: b.name, tenantId: b.tenantId, amount: b.amount, currency: b.currency});
+    const result = await applyPayment(store, {paymentId: 'web:' + b.paymentId, provider: String(b.provider || 'web'), plan: b.plan, name: b.name, tenantId: b.tenantId, amount: b.amount, currency: b.currency, masterKey: env.MASTER_KEY});
     return json(200, {tenantId: result.tenant.id, paidUntil: result.tenant.paidUntil, integrationToken: result.integrationToken, duplicate: result.duplicate,
       botLink: env.BOT_USERNAME && result.integrationToken ? 'https://t.me/' + env.BOT_USERNAME + '?start=' + result.integrationToken : null});
   }
@@ -78,8 +79,37 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
   return json(404, {error: 'not_found'});
 }
 
+// Reads a tenant's live data from the collector for the dashboard. The tenant's
+// integration token is stored sealed (per-tenant AES-GCM), so the platform can
+// call the collector as that tenant without any shared cross-worker secret.
+export async function collectorStatus(env, store, tenantId) {
+  if (!env.COLLECTOR_URL || !env.MASTER_KEY) return null;
+  const tenant = await store.tenant(tenantId);
+  if (!tenant?.integrationTokenEnc) return null;
+  let token;
+  try { token = await openSecret(env.MASTER_KEY, tenantId, tenant.integrationTokenEnc); } catch { return null; }
+  const get = async path => {
+    try { const r = await fetch(env.COLLECTOR_URL + path, {headers: {Authorization: 'Bearer ' + token}}); return r.ok ? await r.json() : null; }
+    catch { return null; }
+  };
+  const status = await get('/v1/status');
+  const connections = status && Array.isArray(status.connections) ? status.connections : [];
+  if (!connections.length) return null;
+  const observedAt = Object.values(status.results || {}).map(r => r && r.observedAt).filter(Boolean).sort().at(-1) || null;
+  const today = new Date().toISOString().slice(0, 10);
+  const report = await get('/v1/report?since=' + today + '&until=' + today);
+  return {
+    socials: connections.length,
+    observedAt,
+    connections: connections.map(c => ({label: c.label || c.userId, mode: c.collectMode || 'api'})),
+    totals: (report && report.totals) || {},
+    rows: report && Array.isArray(report.rows) ? report.rows.length : 0
+  };
+}
+
 export default {
   fetch(request, env) {
-    return route(request, env, {store: new D1Store(env.DB), tg: telegram(env)}).catch(() => json(500, {error: 'internal'}));
+    const store = new D1Store(env.DB);
+    return route(request, env, {store, tg: telegram(env), collectorStatus: id => collectorStatus(env, store, id)}).catch(() => json(500, {error: 'internal'}));
   }
 };
