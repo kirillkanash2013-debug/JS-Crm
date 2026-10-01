@@ -89,7 +89,6 @@ $("go").onclick = async () => {
     show("Беру cookies и прокси профиля…");
     const ck = await cookies();
     const proxy = await adsPowerProxy(session.userId);
-    const name = (proxy ? "" : "") + (session.name || "");
     const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     show("Подключаю соц на сервере…");
     await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
