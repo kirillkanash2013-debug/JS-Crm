@@ -145,3 +145,29 @@ test('import page is server-rendered, strict CSP, valid script', () => {
   assert(PAGE_HEADERS['content-security-policy'].includes("script-src 'self'"));
   new vm.Script(importScript());
 });
+
+test('AdsPower proxy parsing and profile match', async () => {
+  const {parseAdsPowerProxy, adsPowerProfileProxy} = await import('../src/antidetect/adspower.mjs');
+  assert.deepEqual(parseAdsPowerProxy({proxy_type: 'http', proxy_soft: 'other', proxy_host: '1.2.3.4', proxy_port: '8080', proxy_user: 'u', proxy_password: 'p'}),
+    {server: 'http://1.2.3.4:8080', username: 'u', password: 'p'});
+  assert.deepEqual(parseAdsPowerProxy({proxy_type: 'socks5', proxy_soft: 'other', proxy_host: '5.6.7.8', proxy_port: '1080'}), {server: 'socks5://5.6.7.8:1080'});
+  assert.equal(parseAdsPowerProxy({proxy_type: 'noproxy'}), null);
+  assert.equal(parseAdsPowerProxy({proxy_soft: 'no_proxy', proxy_host: 'x', proxy_port: '1'}), null);
+  assert.equal(parseAdsPowerProxy({proxy_type: 'http', proxy_soft: 'other', proxy_host: 'x'}), null);
+  // Match the profile whose saved data mentions the Facebook user id; single profile is unambiguous.
+  const list = {list: [
+    {username: 'acc 100200', user_proxy_config: {proxy_type: 'http', proxy_soft: 'other', proxy_host: '1.1.1.1', proxy_port: '80'}},
+    {remark: 'other', user_proxy_config: {proxy_type: 'http', proxy_soft: 'other', proxy_host: '2.2.2.2', proxy_port: '80'}}]};
+  assert.deepEqual(adsPowerProfileProxy(list, '100200'), {server: 'http://1.1.1.1:80'});
+  assert.equal(adsPowerProfileProxy(list, '999'), null);
+  assert.deepEqual(adsPowerProfileProxy({list: [{user_proxy_config: {proxy_type: 'http', proxy_soft: 'o', proxy_host: '3.3.3.3', proxy_port: '80'}}]}, '999'), {server: 'http://3.3.3.3:80'});
+});
+
+test('AdsPower bookmark carries detected proxy; connect page prefills it', async () => {
+  const {adsPowerBookmarkletHref} = await import('../src/bookmarklet.mjs');
+  const href = adsPowerBookmarkletHref('https://c.example');
+  assert(href.startsWith('javascript:'));
+  const code = decodeURIComponent(href.slice('javascript:'.length));
+  assert(code.includes('local.adspower.net:50325') && code.includes('127.0.0.1:50325'), 'tries both local API hosts');
+  assert(code.includes("source: 'adspower'"));
+});

@@ -1,6 +1,6 @@
 // Public pages of the collector: bookmark install and social connect.
 // Same origin as the API, so the page calls /v1/* without CORS.
-import {bookmarkletHref} from './bookmarklet.mjs';
+import {adsPowerBookmarkletHref, bookmarkletHref} from './bookmarklet.mjs';
 
 // Accepts "http://user:pass@host:port", "socks5://host:port" or Dolphin-style
 // "host:port:login:password" (type chosen in the form). Kept self-contained:
@@ -89,8 +89,11 @@ export function bookmarkletPage(origin) {
   return page('JS Control — закладка', `<h1>Закладка JS Control</h1><p>Вместо расширения — одна кнопка на панели закладок. Работает в Chrome и антидетект-браузерах (Dolphin Anty, AdsPower, Octo и др.).</p>
 <section><ol><li>Включите панель закладок: <b>Ctrl+Shift+B</b> (Mac: <b>⌘+Shift+B</b>).</li><li>Перетащите эту кнопку на панель закладок:</li></ol>
 <p style="text-align:center"><a class="bm" href="${bookmarkletHref(origin).replace(/"/g, '&quot;')}">JS Control</a></p>
-<ol start="3"><li>Откройте Ads Manager нужного соца, дождитесь загрузки кампаний и нажмите закладку.</li><li>Откроется страница подключения: укажите прокси соца и подтвердите.</li></ol>
-<p class="hint">Закладка только читает ID соца и токен доступа на открытой странице и передаёт их на страницу подключения. Пароли и cookies она не читает.</p></section>`);
+<ol start="3"><li>Откройте Ads Manager нужного соца, дождитесь загрузки кампаний и нажмите закладку.</li><li>Откроется страница подключения: вставьте токен из бота, укажите прокси соца и подтвердите.</li></ol>
+<p class="hint">Закладка только читает ID соца и токен доступа на открытой странице и передаёт их на страницу подключения. Пароли и cookies она не читает.</p></section>
+<section><h2>AdsPower</h2><p>Для профилей AdsPower используйте эту кнопку — она дополнительно попробует взять прокси профиля из локального API AdsPower, чтобы не вводить его вручную.</p>
+<p style="text-align:center"><a class="bm" href="${adsPowerBookmarkletHref(origin).replace(/"/g, '&quot;')}">JS Control · AdsPower</a></p>
+<p class="hint">AdsPower должен быть запущен. Новые версии Chrome спрашивают разрешение на доступ к локальной сети (Local Network Access) — разрешите его, иначе прокси впишите вручную на странице подключения.</p></section>`);
 }
 
 export function connectPage() {
@@ -99,9 +102,10 @@ export function connectPage() {
 <section id="form" hidden>
 <p>Соц: <b id="who"></b></p>
 <label for="key">Токен из бота JS Control</label><input id="key" type="password" autocomplete="off" placeholder="jsi_…">
+<p class="hint">Токен привязывает этот соц к вашему оплаченному аккаунту. Возьмите его в боте: 📊 Подключить соц.</p>
 <label for="proxy">Прокси соца (тот же, что в профиле браузера)</label>
 <div class="row"><select id="ptype"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select><input id="proxy" autocomplete="off" placeholder="host:port:логин:пароль"></div>
-<p class="hint">Через этот прокси сервер будет обновлять данные каждые 15 минут — Facebook видит привычный IP.</p>
+<p class="hint" id="proxyNote">Через этот прокси сервер будет обновлять данные каждые 15 минут — Facebook видит привычный IP.</p>
 <details><summary class="hint">Cookies из антидетекта (необязательно)</summary><p class="hint">Экспорт cookies профиля в формате JSON. С ними сервер сам восстановит доступ, если токен истечёт; без них — просто нажмите закладку ещё раз.</p><textarea id="cookies" placeholder='[{"name":"c_user",...}]'></textarea></details>
 <label class="check"><input id="consent" type="checkbox"> Разрешаю передать токен${'' /* cookies optional */}, User-Agent, прокси и (если указаны) cookies серверу JS Control для сбора статистики.</label>
 <button id="go" disabled>Подключить и запустить сбор</button><div id="status" class="status" role="status"></div></section>`, '<script src="/connect.js"></script>');
@@ -117,6 +121,12 @@ history.replaceState(null,'',location.pathname);
 if(!session||!session.userId||!session.tokens||!session.tokens.length){$('noSession').hidden=false;return;}
 $('form').hidden=false;$('who').textContent=(session.name||'Facebook')+' · '+session.userId;
 try{$('key').value=localStorage.getItem('jsc_key')||'';}catch(e){}
+// Proxy auto-detected by the AdsPower bookmark: prefill the field and mark it.
+if(session.proxy&&session.proxy.server){try{
+  var pu=new URL(session.proxy.server);$('ptype').value=pu.protocol==='socks5:'?'socks5':'http';
+  $('proxy').value=pu.hostname+':'+pu.port+(session.proxy.username?':'+session.proxy.username+(session.proxy.password?':'+session.proxy.password:''):'');
+  $('proxyNote').textContent='Прокси получен из профиля '+(session.source==='adspower'?'AdsPower':'антидетекта')+' автоматически. Проверьте и при необходимости поправьте.';
+}catch(e){}}
 var sync=function(){$('go').disabled=!$('consent').checked;};$('consent').onchange=sync;
 var show=function(t,cls){var s=$('status');s.textContent=t;s.className='status '+(cls||'');};
 var ERR={401:'Токен не подошёл. Возьмите токен в боте JS Control.',402:'Подписка закончилась. Продлите её в боте.',409:'Достигнут лимит соцов по тарифу.',
