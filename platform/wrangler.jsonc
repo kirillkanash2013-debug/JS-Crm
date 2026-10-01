@@ -4,7 +4,7 @@
   "main": "src/index.mjs",
   "compatibility_date": "2026-09-01",
   "d1_databases": [
-    {"binding": "DB", "database_name": "js-control-platform", "database_id": "REPLACE_AFTER_wrangler_d1_create", "migrations_dir": "migrations"}
+    {"binding": "DB", "database_name": "js-control-platform", "database_id": "2ea0f7c2-48b6-4f7e-892f-89eb637abf90", "migrations_dir": "migrations"}
   ],
   "vars": {
     "PUBLIC_URL": "https://js-control-platform.kirill-kanash2013.workers.dev",

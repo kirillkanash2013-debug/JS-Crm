@@ -6,12 +6,12 @@
     "nodejs_compat"
   ],
   "workers_dev": true,
-  // Platform database with client tokens (same D1 as platform/). Add when the
-  // platform is deployed; without it only the owner key works:
+  // Platform database with client tokens (same D1 as platform/). Lets the
+  // collector resolve client jsi_ tokens; without it only the owner key works.
+  "d1_databases": [{"binding": "DB", "database_name": "js-control-platform", "database_id": "2ea0f7c2-48b6-4f7e-892f-89eb637abf90"}],
   // Raw snapshot archive (gzip, one per social per hour). Create the bucket first:
   // npx wrangler r2 bucket create js-control-archive
   // "r2_buckets": [{"binding": "ARCHIVE", "bucket_name": "js-control-archive"}],
-  // "d1_databases": [{"binding": "DB", "database_name": "js-control-platform", "database_id": "<id>"}],
   "containers": [
     {
       "class_name": "BrowserContainer",
