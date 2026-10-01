@@ -112,3 +112,10 @@ export function bookmarkletHref(origin) {
 export function adsPowerBookmarkletHref(origin) {
   return buildBookmarklet(captureAdsPower, origin);
 }
+
+// Same extraction, to paste into the DevTools console when the bookmark does
+// nothing. Running it prints any error (so we can see what blocks it) and, on
+// success, shows the on-page button — our own extraction, no FBAcc needed.
+export function consoleSnippet(origin) {
+  return '(function(){var fn=' + captureSession.toString() + ';var jsControlOpen=' + jsControlOpen.toString() + ';try{fn(' + JSON.stringify(origin) + ',' + JSON.stringify(VERSION) + ');}catch(e){alert("JS Control error: "+(e&&e.message||e));throw e;}})();';
+}

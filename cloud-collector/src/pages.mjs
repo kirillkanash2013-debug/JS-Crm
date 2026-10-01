@@ -1,7 +1,9 @@
 // Public pages of the collector: bookmark install and social connect.
 // Same origin as the API, so the page calls /v1/* without CORS.
-import {adsPowerBookmarkletHref, bookmarkletHref} from './bookmarklet.mjs';
+import {adsPowerBookmarkletHref, bookmarkletHref, consoleSnippet} from './bookmarklet.mjs';
 import {VERSION} from './version.mjs';
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Accepts "http://user:pass@host:port", "socks5://host:port" or Dolphin-style
 // "host:port:login:password" (type chosen in the form). Kept self-contained:
@@ -144,27 +146,33 @@ export function bookmarkletPage(origin) {
 <p class="hint">Закладка только читает ID соца и токен доступа на открытой странице и передаёт их на страницу подключения. Пароли и cookies она не читает.</p></section>
 <section><h2>AdsPower</h2><p>Для профилей AdsPower используйте эту кнопку — она дополнительно попробует взять прокси профиля из локального API AdsPower, чтобы не вводить его вручную.</p>
 <p style="text-align:center"><a class="bm" href="${adsPowerBookmarkletHref(origin).replace(/"/g, '&quot;')}">JS Control · AdsPower</a></p>
-<p class="hint">AdsPower должен быть запущен. Новые версии Chrome спрашивают разрешение на доступ к локальной сети (Local Network Access) — разрешите его, иначе прокси впишите вручную на странице подключения.</p></section>`);
+<p class="hint">AdsPower должен быть запущен. Новые версии Chrome спрашивают разрешение на доступ к локальной сети (Local Network Access) — разрешите его, иначе прокси впишите вручную на странице подключения.</p></section>
+<section><h2>Если закладка не срабатывает — через консоль</h2>
+<p>В профиле на вкладке Ads Manager нажмите <b>F12</b> → вкладка <b>Console</b>. Если браузер просит — напечатайте вручную <code>allow pasting</code> и Enter. Затем вставьте этот код и нажмите Enter:</p>
+<textarea id="snippet" readonly style="min-height:120px;font:11px monospace">${esc(consoleSnippet(origin))}</textarea>
+<p class="hint">Это наш собственный код: он читает токен на открытой странице и показывает зелёную кнопку «Открыть подключение». Если что-то не так — консоль покажет ошибку (пришлите её скрин).</p></section>`);
 }
 
 export function connectPage() {
   return page('JS Control — подключение соца', `<h1>Подключение соца</h1>
-<section id="noSession" hidden><p>Откройте Ads Manager нужного соца и нажмите закладку <b>JS Control</b>. <a href="/bookmarklet">Как установить закладку</a></p></section>
-<section id="step1" hidden>
-<p>Соц: <b id="who"></b></p>
-<label for="key">Шаг 1. Токен из бота JS Control</label><input id="key" type="password" autocomplete="off" placeholder="jsi_…">
-<p class="hint">Токен привязывает этот соц к вашему оплаченному аккаунту. Возьмите его в боте: 📊 Подключить соц.</p>
+<section id="step1">
+<label for="key">Шаг 1. Токен из бота JS Control</label><input id="key" type="password" autocomplete="off" placeholder="jsi_… или js_srv_…">
+<p class="hint">Токен привязывает этот соц к вашему оплаченному аккаунту.</p>
 <button id="verify">Проверить токен</button><div id="status1" class="status" role="status"></div></section>
 <section id="step2" hidden>
-<p>Аккаунт: <b id="account"></b> · соц: <b id="who2"></b></p>
+<p>Аккаунт: <b id="account"></b><span id="who2"></span></p>
 <label for="label">Название профиля (как в антидетекте)</label><input id="label" autocomplete="off" placeholder="например, Farm-12">
-<label for="proxy">Шаг 2. Прокси соца (тот же, что в профиле браузера)</label>
+<label for="token">Шаг 2. Токен доступа Facebook (EAA…)</label><input id="token" type="password" autocomplete="off" placeholder="EAAB…">
+<p class="hint">Если подключаете закладкой — поле уже заполнено. Иначе вставьте токен, полученный нашим способом (см. инструкцию).</p>
+<label for="uid">ID соца (если не вставляете cookies)</label><input id="uid" autocomplete="off" inputmode="numeric" placeholder="например, 100200300…">
+<p class="hint">Числовой ID берётся из cookies автоматически. Если cookies не вставляете — впишите ID вручную (его тоже показывает наш способ).</p>
+<label for="proxy">Прокси соца (тот же, что в профиле браузера)</label>
 <div class="row"><select id="ptype"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select><input id="proxy" autocomplete="off" placeholder="host:port:логин:пароль"></div>
 <p class="hint" id="proxyNote">Через этот прокси сервер будет обновлять данные каждые 15 минут — Facebook видит привычный IP.</p>
 <label for="cookies">Cookies профиля (JSON)</label>
-<p class="hint">Экспортируйте cookies профиля в антидетекте (AdsPower: профиль → экспорт cookies) и вставьте сюда. С ними сервер сам обновляет доступ при закрытом браузере. Без них сбор идёт, пока жив токен.</p>
-<textarea id="cookies" placeholder='[{"name":"c_user",...}]'></textarea>
-<label class="check"><input id="consent" type="checkbox"> Разрешаю передать токен, User-Agent, прокси и (если указаны) cookies серверу JS Control для сбора статистики.</label>
+<p class="hint">Экспортируйте cookies профиля в AdsPower (профиль → экспорт cookies) и вставьте сюда. Из них берётся ID соца; с ними сервер сам обновляет доступ при закрытом браузере.</p>
+<textarea id="cookies" placeholder='[{"name":"c_user","value":"100...","domain":".facebook.com"}, ...]'></textarea>
+<label class="check"><input id="consent" type="checkbox"> Разрешаю передать токен, User-Agent, прокси и cookies серверу JS Control для сбора статистики.</label>
 <button id="go" disabled>Подключить и запустить сбор</button>
 <button id="back" class="secondary">Назад</button><div id="status" class="status" role="status"></div></section>`, '<script src="/connect.js"></script>');
 }
@@ -176,20 +184,19 @@ var $=function(id){return document.getElementById(id);};
 var session=null,key='';
 try{var m=location.hash.match(/s=([A-Za-z0-9_-]+)/);if(m){var b=m[1].replace(/-/g,'+').replace(/_/g,'/');session=JSON.parse(decodeURIComponent(escape(atob(b+'==='.slice((b.length+3)%4)))));}}catch(e){session=null;}
 history.replaceState(null,'',location.pathname);
-if(!session||!session.userId||!session.tokens||!session.tokens.length){$('noSession').hidden=false;return;}
-var who=(session.name||'Facebook')+' · '+session.userId;
-$('step1').hidden=false;$('who').textContent=who;$('who2').textContent=who;
-// Warn when the bookmark was created from an older version than the server.
-if(session.build&&session.build!=='${VERSION}'){var w=document.createElement('p');w.className='status err';w.textContent='Закладка версии '+session.build+', на сервере v${VERSION}. Пересоздайте закладку на странице /bookmarklet.';$('step1').insertBefore(w,$('step1').firstChild);}
 try{$('key').value=localStorage.getItem('jsc_key')||'';}catch(e){}
-// Proxy auto-detected by the AdsPower bookmark: prefill the field and mark it.
-if(session.proxy&&session.proxy.server){try{
+// From the bookmark: prefill token, name and (AdsPower) proxy. Without it, all
+// fields are filled by hand (token from FBAcc, cookies from AdsPower export).
+if(session&&session.tokens&&session.tokens.length)$('token').value=session.tokens[0];
+if(session&&session.name)$('label').value=session.name;
+if(session&&session.proxy&&session.proxy.server){try{
   var pu=new URL(session.proxy.server);$('ptype').value=pu.protocol==='socks5:'?'socks5':'http';
   $('proxy').value=pu.hostname+':'+pu.port+(session.proxy.username?':'+session.proxy.username+(session.proxy.password?':'+session.proxy.password:''):'');
   $('proxyNote').textContent='Прокси получен из профиля '+(session.source==='adspower'?'AdsPower':'антидетекта')+' автоматически. Проверьте и при необходимости поправьте.';
 }catch(e){}}
-if(session.name)$('label').value=session.name;
 var show=function(id,t,cls){var s=$(id);s.textContent=t;s.className='status '+(cls||'');};
+// c_user in the cookies export identifies the social; no bookmark needed.
+var userIdFromCookies=function(list){try{for(var i=0;i<list.length;i++){if(list[i].name==='c_user'&&/facebook\\.com$/.test(String(list[i].domain||''))&&/^\\d{3,30}$/.test(String(list[i].value||'')))return String(list[i].value);}}catch(e){}return '';};
 var ERR={401:'Токен не подошёл. Возьмите токен в боте JS Control.',402:'Подписка закончилась. Продлите её в боте.',409:'Достигнут лимит соцов по тарифу.',
   proxy_failed:'Не удалось подключиться через прокси. Проверьте адрес, порт, логин и пароль.',token_invalid:'Facebook не принял доступ. Обновите Ads Manager и нажмите закладку ещё раз.',
   wrong_user:'Доступ относится к другому соцу. Нажмите закладку в Ads Manager нужного соца.',cookies_owner:'Cookies относятся к другому соцу.',validation_failed:'Не удалось проверить соц. Повторите позже.'};
@@ -202,6 +209,7 @@ $('verify').onclick=function(){
   api('/v1/me',null,'GET').then(function(j){
     try{localStorage.setItem('jsc_key',key);}catch(e){}
     $('account').textContent=(j.account&&j.account.name||'аккаунт')+(j.account&&j.account.plan?' · '+j.account.plan:'');
+    $('who2').textContent=session&&session.userId?' · соц '+session.userId:'';
     $('step1').hidden=true;$('step2').hidden=false;
   }).catch(function(e){show('status1',e.message,'err');$('verify').disabled=false;});
 };
@@ -209,16 +217,22 @@ $('back').onclick=function(){$('step2').hidden=true;$('step1').hidden=false;$('v
 var sync=function(){$('go').disabled=!$('consent').checked;};$('consent').onchange=sync;
 // Step 2: send proxy + cookies, connect and schedule.
 $('go').onclick=function(){
-  var proxy,cookies;
+  var token=$('token').value.trim(),proxy,cookies;
+  if(!/^EA[A-Za-z0-9_-]{18,4094}$/.test(token)){show('status','Вставьте токен доступа Facebook (начинается с EAA). Его показывает FBAcc.','err');return;}
   try{proxy=parseProxyInput($('proxy').value,$('ptype').value);}catch(e){show('status',e.message,'err');return;}
   if(!proxy&&!confirm('Без прокси Facebook увидит IP сервера. Подключить всё равно?'))return;
-  try{cookies=$('cookies').value.trim()?JSON.parse($('cookies').value):undefined;}catch(e){show('status','Cookies должны быть в формате JSON.','err');return;}
+  try{cookies=$('cookies').value.trim()?JSON.parse($('cookies').value):undefined;}catch(e){show('status','Cookies должны быть в формате JSON (экспорт из AdsPower).','err');return;}
+  // userId: from the bookmark, else the cookies c_user, else the typed field.
+  var userId=session&&session.userId?session.userId:(cookies?userIdFromCookies(cookies):'');
+  if(!userId)userId=$('uid').value.trim();
+  if(!/^\\d{3,30}$/.test(userId)){show('status','Не удалось определить ID соца. Впишите «ID соца» или вставьте cookies профиля (в них есть c_user).','err');return;}
+  var ua=session&&session.ua?session.ua:navigator.userAgent;
   var d=new Date(),today=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
   $('go').disabled=true;show('status','Проверяю соц через прокси…');
-  api('/v1/connections',{userId:session.userId,token:session.tokens[0],tokenCandidates:session.tokens,userAgent:session.ua,label:$('label').value.trim()||undefined,proxy:proxy||undefined,cookies:cookies})
-   .then(function(){show('status','Запускаю первый сбор…');return api('/v1/jobs',{userId:session.userId,since:today,until:today});})
-   .then(function(){return api('/v1/schedule',{userId:session.userId,minutes:15});})
-   .then(function(){$('proxy').value='';$('cookies').value='';show('status','Готово! Соц подключён, данные обновляются каждые 15 минут. Страницу можно закрыть.','ok');})
+  api('/v1/connections',{userId:userId,token:token,tokenCandidates:(session&&session.tokens||[token]),userAgent:ua,label:$('label').value.trim()||undefined,proxy:proxy||undefined,cookies:cookies})
+   .then(function(){show('status','Запускаю первый сбор…');return api('/v1/jobs',{userId:userId,since:today,until:today});})
+   .then(function(){return api('/v1/schedule',{userId:userId,minutes:15});})
+   .then(function(){$('token').value='';$('proxy').value='';$('cookies').value='';show('status','Готово! Соц подключён, данные обновляются каждые 15 минут. Страницу можно закрыть.','ok');})
    .catch(function(e){show('status',e.message,'err');$('go').disabled=false;});
 };
 })();`;
