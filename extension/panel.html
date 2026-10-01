@@ -1,6 +1,6 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JS Control</title><link rel="stylesheet" href="panel.css"></head><body>
 <header><div class="brand">JS<span>CONTROL</span></div><span class="badge" id="version">0.7.0</span></header><main>
-<section id="activation"><h1>Вход в JS Control</h1><p>Введите ключ доступа, который вы получили от JS Control.</p><form id="activateForm"><label for="key">Ключ доступа</label><div class="line"><input id="key" type="password" autocomplete="off" required placeholder="js_srv_…"><button>Войти</button></div></form><button id="demo" class="subtle">Нет ключа? Попробовать демо-режим</button></section>
+<section id="activation"><h1>Вход в JS Control</h1><p>Введите токен из бота JS Control (начинается с <code>jsi_</code>).</p><form id="activateForm"><label for="key">Ключ доступа</label><div class="line"><input id="key" type="password" autocomplete="off" required placeholder="jsi_…"><button>Войти</button></div></form><button id="demo" class="subtle">Нет ключа? Попробовать демо-режим</button></section>
 <div id="workspace" hidden>
 <section id="onboarding" hidden>
 <ol class="steps">
@@ -8,7 +8,7 @@
 <li id="stepAds"><b>Откройте Ads Manager</b><span id="adsText">Откройте Ads Manager в профиле нужного соца и дождитесь загрузки кампаний.</span><button id="openAds" class="secondary">Открыть Ads Manager</button></li>
 <li id="stepConnect"><b>Подключите соц</b><span>Все кабинеты соца подключатся автоматически.</span>
 <div id="serverOptions"><label class="check"><input id="clientConsent" type="checkbox">Разрешаю передать сессию Facebook (cookies, токен, User-Agent) серверу JS Control, чтобы данные собирались при закрытом браузере.</label>
-<details id="proxyBox"><summary>Профиль работает через прокси?</summary><p class="hint">Укажите тот же прокси, что и в профиле браузера, иначе Facebook может запросить проверку.</p><input id="clientProxy" placeholder="http://host:port или socks5://host:port"><div class="line"><input id="clientProxyUser" autocomplete="off" placeholder="Логин"><input id="clientProxyPassword" type="password" autocomplete="off" placeholder="Пароль"></div></details></div>
+<details id="proxyBox"><summary>Прокси профиля (рекомендуется)</summary><p class="hint">Укажите тот же прокси, что и в профиле браузера. Через него сервер будет обновлять данные — так Facebook видит привычный IP.</p><input id="clientProxy" placeholder="http://host:port или socks5://host:port"><div class="line"><input id="clientProxyUser" autocomplete="off" placeholder="Логин"><input id="clientProxyPassword" type="password" autocomplete="off" placeholder="Пароль"></div></details></div>
 <button id="clientConnect" class="wide">Подключить соц</button></li>
 </ol></section>
 <section id="dashboard" hidden>

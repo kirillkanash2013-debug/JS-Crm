@@ -6,11 +6,14 @@
     "nodejs_compat"
   ],
   "workers_dev": true,
+  // Platform database with client tokens (same D1 as platform/). Add when the
+  // platform is deployed; without it only the owner key works:
+  // "d1_databases": [{"binding": "DB", "database_name": "js-control-platform", "database_id": "<id>"}],
   "containers": [
     {
       "class_name": "BrowserContainer",
       "image": "../server/Dockerfile.cloudflare",
-      "max_instances": 1,
+      "max_instances": 3,
       "instance_type": "standard-1",
       "image_build_context": ".."
     }

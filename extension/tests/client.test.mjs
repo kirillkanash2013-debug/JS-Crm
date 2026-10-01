@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {adsUrl} from "../core.mjs";
 import {isServerKey,pickAdsTab,serverErrorText,serverHeadline,spendByCurrency,summarizeServer} from "../client.mjs";
 test("server key format and human error texts",()=>{
-  assert(isServerKey("js_srv_"+"a".repeat(43)));assert(!isServerKey("js_demo_K7mQ2vN8xR4pT9cW6aY3"));
+  assert(isServerKey("js_srv_"+"a".repeat(43)));assert(isServerKey("jsi_"+"a".repeat(43)));assert(!isServerKey("jsd_"+"a".repeat(43)));assert.match(serverErrorText(402),/Подписка/);assert(!isServerKey("js_demo_K7mQ2vN8xR4pT9cW6aY3"));
   assert.match(serverErrorText(401),/Ключ доступа не подходит/);assert.match(serverErrorText(502),/временно недоступен/);
   assert(!/HTTP/.test(serverErrorText(503)));
 });

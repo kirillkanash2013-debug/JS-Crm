@@ -4,7 +4,7 @@ export function serverOrigin(value){const u=new URL(value);if(u.protocol!=='http
 export async function savedServer(){const {server}=await chrome.storage.local.get('server');return server||null;}
 export async function serverCommand(m){
  const saved=await savedServer();
- const origin=serverOrigin(m.origin||saved?.origin||DEFAULT_SERVER),key=String(m.key||(saved?.origin===origin?saved.key:'')||'').trim();if(!isServerKey(key))throw new Error('Нужен персональный ключ сервера, демо-ключ здесь не подходит.');
+ const origin=serverOrigin(m.origin||saved?.origin||DEFAULT_SERVER),key=String(m.key||(saved?.origin===origin?saved.key:'')||'').trim();if(!isServerKey(key))throw new Error('Нужен токен из бота JS Control (jsi_…), демо-ключ здесь не подходит.');
  if(!await chrome.permissions.contains({origins:[origin+'/*']}))throw new Error('Нет разрешения на доступ к серверу JS Control.');
  const request=async(path,method='GET',body)=>{
   let r;

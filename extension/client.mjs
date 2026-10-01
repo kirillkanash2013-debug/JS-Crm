@@ -5,12 +5,14 @@ export const SCHEDULE_MINUTES=15;
 export const ADS_MANAGER_URL="https://adsmanager.facebook.com/adsmanager/manage/campaigns";
 export const META_ORIGINS=["https://graph.facebook.com/*","https://adsmanager.facebook.com/*","https://business.facebook.com/*","https://www.facebook.com/*"];
 export const ADS_TAB_PATTERNS=["https://adsmanager.facebook.com/*","https://business.facebook.com/adsmanager*","https://www.facebook.com/adsmanager*"];
-export const isServerKey=key=>/^js_srv_[A-Za-z0-9_-]{43}$/.test(String(key||"").trim());
+// Owner key (js_srv_) or a client integration token (jsi_) from the bot.
+export const isServerKey=key=>/^(js_srv|jsi)_[A-Za-z0-9_-]{43}$/.test(String(key||"").trim());
 
 const HTTP_TEXT={
   401:"Ключ доступа не подходит. Проверьте ключ или запросите новый.",
   403:"Ключ доступа не подходит. Проверьте ключ или запросите новый.",
-  409:"На сервере уже подключён другой соц. Сначала отключите его.",
+  402:"Подписка закончилась. Продлите её в боте JS Control.",
+  409:"Достигнут лимит соцов по тарифу. Отключите ненужный соц или смените тариф.",
   413:"Слишком много данных для передачи. Обратитесь в поддержку.",
   429:"Слишком много запросов. Подождите минуту и повторите.",
   503:"Сервер ещё не готов к работе. Обратитесь в поддержку."
@@ -28,7 +30,7 @@ export function pickAdsTab(tabs,isAds){
   return ads.find(t=>t.active) || ads.sort((a,b)=>(b.lastAccessed||0)-(a.lastAccessed||0))[0] || null;
 }
 
-const JOB_TEXT={queued:"в очереди",running:"идёт сбор",done:"успешно",failed:"ошибка",needs_auth:"нужно переподключить соц",cancelled:"отменён",unverified:"не подтверждён"};
+const JOB_TEXT={queued:"в очереди",running:"идёт сбор",done:"успешно",failed:"ошибка",needs_auth:"нужно переподключить соц",cancelled:"отменён",unverified:"не подтверждён",rate_limited:"Facebook попросил паузу, повтор через час"};
 export const jobText=state=>JOB_TEXT[state] || state || "—";
 
 export function spendByCurrency(reports){
