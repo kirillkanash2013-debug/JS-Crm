@@ -171,7 +171,7 @@ async function processWhole(){
 
 async function command(m){
   switch(m.type){
-    case "SERVER_CONNECT":case "SERVER_STATUS":case "SERVER_JOB":case "SERVER_SCHEDULE":case "SERVER_REMOVE":return serverCommand(m);
+    case "SERVER_ACTION":case "SERVER_CONNECT":case "SERVER_STATUS":case "SERVER_JOB":case "SERVER_SCHEDULE":case "SERVER_REMOVE":return serverCommand(m);
     case "TRACE_START":{await licensed();const tab=await chrome.tabs.get(m.tabId);if(!adsUrl(tab.url))throw new Error("Откройте вкладку Ads Manager.");await recorder.start(tab.id);await status("Запись включена на 15 минут. Работайте в этой вкладке Ads Manager.");return true;}
     case "TRACE_STOP":{await recorder.stop();await status("Запись остановлена. Экспортируйте запись запросов.");return true;}
     case "TRACE_CLEAR":{await recorder.clear();return true;}

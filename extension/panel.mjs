@@ -152,3 +152,5 @@ $("serverCopyKey").onclick=async()=>{
   $("serverResult").textContent="Ключ показан и выделен. Нажмите ⌘C на Mac или Ctrl+C на Windows, затем вставьте в Cloudflare.";
  }
 };
+
+$("serverActivateTest").onclick=()=>void cloud("SERVER_ACTION");

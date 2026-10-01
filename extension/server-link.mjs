@@ -7,6 +7,7 @@ export async function serverCommand(m){
   if(!r.ok)throw new Error('Сервер отклонил запрос: HTTP '+r.status);return r.json();
  };
  if(m.type==='SERVER_STATUS')return request('/v1/status');
+ if(m.type==='SERVER_ACTION')return request('/v1/actions','POST',{userId:m.userId,campaignId:'120250610273720552',status:'ACTIVE'});
  if(m.type==='SERVER_JOB')return request('/v1/jobs','POST',{userId:m.userId,since:m.since,until:m.until});
  if(m.type==='SERVER_SCHEDULE')return request('/v1/schedule','POST',{userId:m.userId,minutes:m.minutes});
  if(m.type==='SERVER_REMOVE')return request('/v1/connections','DELETE',{userId:m.userId});

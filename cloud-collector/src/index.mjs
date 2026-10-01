@@ -2,7 +2,7 @@ import {DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
 import {EncryptedStore} from './crypto-store.mjs';
 import {Control,initialState,reply} from './control.mjs';
-const paths=new Map([['/v1/status','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST']]);
+const paths=new Map([['/v1/status','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
 export class BrowserContainer extends Container {
@@ -23,7 +23,7 @@ export class CollectorControl extends DurableObject {
     const c=getContainer(env.BROWSER,'primary');const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));const value=await r.json();
     if(!r.ok)throw Object.assign(new Error('Collector failed'),{code:value.code});return value;
    };
-   this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),collect:(c,range)=>call('/collect',{connection:c,range}),smoke:()=>call('/smoke',{})});
+   this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{})});
   });
  }
  async fetch(request){
@@ -35,7 +35,7 @@ export class CollectorControl extends DurableObject {
   });}catch{return reply(400,{error:'invalid_request'});}
  }
  async alarm(){let work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare());if(!work)return;let result,error;
-  try{result=await this.control.runner.collect(work.connection,work.job.range);}catch(e){error={code:e.code};}
+  try{result=await work.job.action?await this.control.runner.action(work.connection,work.job.action):await this.control.runner.collect(work.connection,work.job.range);}catch(e){error={code:e.code};}
   await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));
  }
 }
