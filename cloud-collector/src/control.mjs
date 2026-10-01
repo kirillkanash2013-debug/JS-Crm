@@ -8,7 +8,9 @@ import {period} from '../../extension/core.mjs';
 export const reply=(status,body)=>Response.json(body,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
 export function initialState(){return {connections:{},jobs:[],results:{}};}
 export class Control {
- constructor(state,save,schedule,runner){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;}
+ // archive: per-client SQLite history (src/archive.mjs). Without it the latest
+ // full snapshot is kept in state, as in the prototype.
+ constructor(state,save,schedule,runner,archive=null){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;this.archive=archive;}
  async persist(){await this.save(this.state);await this.plan();}
  async plan(){let next=Infinity;for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(c.schedule)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
  status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).map(c=>({userId:c.userId,connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api'})),jobs:this.state.jobs,results:this.state.results};}
@@ -16,6 +18,8 @@ export class Control {
  const j={id:crypto.randomUUID(),userId,range,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)).slice(-99));this.state.jobs.push(j);return j;}
  async request(path,method,b,limit=1){
   if(method==='GET'&&path==='/v1/status')return reply(200,this.status());
+  if(method==='GET'&&path==='/v1/report'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,this.archive.report({since:b?.since,until:b?.until,userId:b?.userId||null}));}
+  if(method==='GET'&&path==='/v1/changes'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{changes:this.archive.changes({since:b?.since||'1970-01-01',objectId:b?.objectId||null})});}
   if(method==='POST'&&path==='/v1/connections'){
    if(Object.keys(this.state.connections).length>=limit&&!this.state.connections[b?.userId])return reply(409,{error:'social_limit',limit});
    // Validation and public proxy DNS pinning are performed inside the Node container.
@@ -28,7 +32,7 @@ export class Control {
    c.schedule=b.minutes?{minutes:b.minutes,nextAt:Date.now()+b.minutes*60000}:null;await this.persist();return reply(200,{ok:true});
   }
   if(method==='DELETE'&&path==='/v1/connections'){
-   delete this.state.connections[b.userId];delete this.state.results[b.userId];for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
+   delete this.state.connections[b.userId];delete this.state.results[b.userId];this.archive?.forget(b.userId);for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
   }
   return reply(404,{error:'not_found'});
  }
@@ -50,7 +54,7 @@ export class Control {
   const heavy=j&&(j.action||c.mode==='browser');
   if(!j||exclusive||running.length>=API_PARALLEL||(heavy&&running.length)){await this.persist();return null;}
   j.state='running';j.startedAt=new Date().toISOString();j.leaseUntil=now+(heavy?15:5)*60000;j.attempt=crypto.randomUUID();await this.persist();
-  return {job:structuredClone(j),connection:structuredClone(c),previous:this.state.results[j.userId]?structuredClone(this.state.results[j.userId]):null};
+  return {job:structuredClone(j),connection:structuredClone(c),previous:this.archive?this.archive.previous(j.userId):this.state.results[j.userId]?structuredClone(this.state.results[j.userId]):null};
  }
  // Runs one prepared job: API first, one browser attempt when the API path is
  // rejected or the token died (the browser run also fetches a fresh token).
@@ -77,7 +81,8 @@ export class Control {
   else if(j.action){const a=result?.actionResult;if(!a||a.campaignId!==j.action.campaignId){j.state='failed';j.error={code:'invalid_action_result'};}else{j.state=a.state;j.actionResult=a;j.observedAt=a.observedAt;if(result.storageState)c.storageState=result.storageState;}}
   else if(!result?.snapshot?.complete||result.snapshot.source!=='facebook-server'||result.snapshot.social?.user.id!==j.userId){j.state='failed';j.error={code:'invalid_snapshot'};}
   else{
-   this.state.results[j.userId]=result.snapshot;j.state='done';j.observedAt=result.snapshot.observedAt;j.mode=result.viaBrowser?'browser':'api';
+   // History goes to the client's database; state keeps only a compact summary.
+   this.state.results[j.userId]=this.archive?await this.archive.record(j.userId,result.snapshot,result.viaBrowser?'browser':'api'):result.snapshot;j.state='done';j.observedAt=result.snapshot.observedAt;j.mode=result.viaBrowser?'browser':'api';
    if(result.storageState)c.storageState=result.storageState;
    if(typeof result.token==='string'&&/^EA[A-Za-z0-9_-]{18,4094}$/.test(result.token))c.token=result.token;
    if(!result.viaBrowser)c.apiFailures=0;

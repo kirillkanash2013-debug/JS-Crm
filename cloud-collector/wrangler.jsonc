@@ -8,6 +8,9 @@
   "workers_dev": true,
   // Platform database with client tokens (same D1 as platform/). Add when the
   // platform is deployed; without it only the owner key works:
+  // Raw snapshot archive (gzip, one per social per hour). Create the bucket first:
+  // npx wrangler r2 bucket create js-control-archive
+  // "r2_buckets": [{"binding": "ARCHIVE", "bucket_name": "js-control-archive"}],
   // "d1_databases": [{"binding": "DB", "database_name": "js-control-platform", "database_id": "<id>"}],
   "containers": [
     {

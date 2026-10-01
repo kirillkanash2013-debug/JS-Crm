@@ -51,14 +51,17 @@ export function summarizeServer(status,userId){
   const last=[...jobs].reverse().find(j=>!["queued","running"].includes(j.state)) || null;
   const result=status?.results?.[id] || null;
   const verified=!!(result && result.complete && result.source==="facebook-server");
-  const count=key=>Object.values(result?.structures||{}).reduce((n,s)=>n+(s?.[key]?.length||0),0);
+  // The collector returns a compact summary (counts, spendByCurrency); older
+  // versions returned the full snapshot.
+  const count=key=>Number.isInteger(result?.[key]) ? result[key] : Object.values(result?.structures||{}).reduce((n,s)=>n+(s?.[key]?.length||0),0);
+  const spend=result?.spendByCurrency ? Object.entries(result.spendByCurrency).map(([cur,sum])=>Number(sum).toFixed(2)+" "+cur).join(" · ") : spendByCurrency(result?.reports);
   return {
     connected:!!connection,
     scheduleMinutes:connection?.schedule?.minutes || 0,
     nextAt:connection?.schedule?.nextAt || null,
     active,last,
     needsAuth:last?.state==="needs_auth" && !active,
-    result:verified ? {observedAt:result.observedAt,accounts:result.social?.accounts?.length||0,campaigns:count("campaigns"),adsets:count("adsets"),ads:count("ads"),spend:spendByCurrency(result.reports)} : null
+    result:verified ? {observedAt:result.observedAt,accounts:Number.isInteger(result.accounts) ? result.accounts : result.social?.accounts?.length||0,campaigns:count("campaigns"),adsets:count("adsets"),ads:count("ads"),spend} : null
   };
 }
 

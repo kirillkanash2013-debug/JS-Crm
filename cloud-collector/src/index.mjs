@@ -6,7 +6,8 @@ import {Control,initialState,reply} from './control.mjs';
 import {collectViaApi} from './api-collector.mjs';
 import {graphFetcher} from './proxy-fetch.mjs';
 import {resolveCaller} from './tenants.mjs';
-const paths=new Map([['/v1/status','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST']]);
+import {SqlArchive} from './archive.mjs';
+const paths=new Map([['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
 export class BrowserContainer extends Container {
@@ -29,7 +30,9 @@ export class CollectorControl extends DurableObject {
    };
    this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
     // Cheap path: Graph API through the social's proxy, right here in the Durable Object.
-    collectApi:(c,range,previous)=>collectViaApi(c,range,{fetcher:graphFetcher({connect,connection:c}),previous})});
+    collectApi:(c,range,previous)=>collectViaApi(c,range,{fetcher:graphFetcher({connect,connection:c}),previous})},
+    // Client's own database (SQLite in this Durable Object) + raw archive in R2.
+    new SqlArchive(ctx.storage.sql,env.ARCHIVE||null));
   });
  }
  async fetch(request){
@@ -37,7 +40,7 @@ export class CollectorControl extends DurableObject {
   if(!await equal(request.headers.get('x-control-internal'),this.env.INTERNAL_KEY))return reply(401,{error:'unauthorized'});
   if(new URL(request.url).pathname==='/internal/smoke'){try{const result=await this.control.runner.smoke();await this.ctx.blockConcurrencyWhile(async()=>{this.control.state.platformCheck=result;await this.control.persist();});return reply(200,result);}catch{return reply(503,{error:'browser_unavailable'});}}
   try{return await this.ctx.blockConcurrencyWhile(async()=>{
-   const url=new URL(request.url),b=request.method==='GET'?undefined:await request.json();const limit=Number(request.headers.get('x-social-limit'))||1;return this.control.request(url.pathname,request.method,b,limit);
+   const url=new URL(request.url),b=request.method==='GET'?Object.fromEntries(url.searchParams):await request.json();const limit=Number(request.headers.get('x-social-limit'))||1;return this.control.request(url.pathname,request.method,b,limit);
   });}catch{return reply(400,{error:'invalid_request'});}
  }
  // Takes every job that may run now (several cheap API jobs in parallel), runs
