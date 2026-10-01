@@ -62,7 +62,7 @@ jobs:
         working-directory: platform
         run: npx --yes wrangler deploy
 
-      - name: Provision secrets and Telegram webhook (first run only)
+      - name: Provision app secrets (first run only)
         working-directory: platform
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -70,19 +70,29 @@ jobs:
           set -euo pipefail
           HAVE="$(npx --yes wrangler secret list 2>/dev/null || echo '[]')"
           if echo "$HAVE" | grep -q '"MASTER_KEY"'; then
-            echo "Secrets already provisioned — leaving MASTER_KEY untouched."; exit 0
+            echo "App secrets already provisioned — leaving MASTER_KEY untouched."; exit 0
           fi
           # Generated here, printed nowhere, stored only as Worker secrets.
           printf '%s' "$(openssl rand -base64 32)" | npx --yes wrangler secret put MASTER_KEY
+          printf '%s' "$(openssl rand -hex 24)"    | npx --yes wrangler secret put BILLING_WEBHOOK_SECRET
+          printf '%s' "$BOT_TOKEN"                 | npx --yes wrangler secret put TELEGRAM_BOT_TOKEN
+
+      - name: Set the Telegram webhook (every deploy)
+        working-directory: platform
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Fresh webhook secret each deploy: stored on the Worker and handed to
+          # Telegram together, so the two always match. Default allowed_updates
+          # already cover message / callback_query / pre_checkout_query.
           WH="$(openssl rand -hex 24)"; echo "::add-mask::$WH"
-          printf '%s' "$WH"  | npx --yes wrangler secret put TELEGRAM_WEBHOOK_SECRET
-          printf '%s' "$(openssl rand -hex 24)" | npx --yes wrangler secret put BILLING_WEBHOOK_SECRET
-          printf '%s' "$BOT_TOKEN" | npx --yes wrangler secret put TELEGRAM_BOT_TOKEN
-          curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+          printf '%s' "$WH" | npx --yes wrangler secret put TELEGRAM_WEBHOOK_SECRET
+          RESP="$(curl -sS "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
             --data-urlencode "url=https://js-control-platform.kirill-kanash2013.workers.dev/telegram" \
-            --data-urlencode "secret_token=${WH}" \
-            --data-urlencode 'allowed_updates=["message","callback_query","pre_checkout_query"]'
-          echo
+            --data-urlencode "secret_token=${WH}")"
+          echo "Telegram setWebhook response: $RESP"
+          echo "$RESP" | grep -q '"ok":true' || { echo "::error::setWebhook failed: $RESP"; exit 1; }
 
       - name: Check the platform is live
         run: curl --fail --retry 5 --retry-delay 5 https://js-control-platform.kirill-kanash2013.workers.dev/health
