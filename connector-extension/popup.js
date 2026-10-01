@@ -78,6 +78,7 @@ $("go").onclick = async () => {
   if (!/^(jsi|js_srv)_[A-Za-z0-9_-]{43}$/.test(key)) return show("Вставьте ключ доступа (jsi_… или js_srv_…).", "err");
   await chrome.storage.local.set({ key });
   $("go").disabled = true;
+  let proxyInfo = "";
   try {
     show("Проверяю ключ…");
     await api("/v1/me", key);
@@ -89,14 +90,15 @@ $("go").onclick = async () => {
     show("Беру cookies и прокси профиля…");
     const ck = await cookies();
     const proxy = await adsPowerProxy(session.userId);
+    proxyInfo = proxy ? "\nПрокси: " + proxy.server : "\nПрокси профиля не найден (AdsPower запущен?).";
     const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    show("Подключаю соц на сервере…" + (proxy ? "\nПрокси: " + proxy.server : "\nПрокси профиля не найден."));
+    show("Подключаю соц на сервере…" + proxyInfo);
     await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
     await api("/v1/jobs", key, { userId: session.userId, since: today, until: today });
     await api("/v1/schedule", key, { userId: session.userId, minutes: 15 });
     show("✓ Готово! Соц «" + (session.name || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nДанные обновляются каждые 15 минут. Браузер можно закрыть.", "ok");
   } catch (e) {
-    show(e.message || String(e), "err");
+    show((e.message || String(e)) + proxyInfo, "err");
   } finally {
     $("go").disabled = false;
   }
