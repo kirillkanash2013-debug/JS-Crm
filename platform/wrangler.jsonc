@@ -11,7 +11,7 @@
     "PLUGIN_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev/bookmarklet",
     "IMPORT_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev/import",
     "COLLECTOR_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev",
-    "BOT_USERNAME": "",
+    "BOT_USERNAME": "TestBossTrafBot",
     "ADMIN_CHAT_IDS": "",
     "STARS_PRICE_START": "0",
     "STARS_PRICE_TEAM": "0",
