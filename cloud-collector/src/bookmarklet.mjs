@@ -25,9 +25,27 @@ export function captureSession(origin, ver) {
   var data = JSON.stringify({v: 1, build: ver || '', userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent});
   var b64 = btoa(unescape(encodeURIComponent(data))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   var url = origin + '/connect#s=' + b64;
-  // Popups are often blocked for a bookmarklet; fall back to the current tab.
-  var w = window.open(url, '_blank');
-  if (!w) location.href = url;
+  jsControlOpen(url);
+}
+
+// Antidetect profiles often block both popups and navigation away from the
+// page, so (like FBacc) show an on-page button; a real click opens reliably.
+// Defined as its own export only so the bookmark builder can inline it into
+// each capture function's source (see buildBookmarklet below).
+export function jsControlOpen(url) {
+  try { var w = window.open(url, '_blank'); if (w) return; } catch (e) {}
+  try { var old = document.getElementById('jsctrl-ov'); if (old) old.remove(); } catch (e) {}
+  var d = document.createElement('div');
+  d.id = 'jsctrl-ov';
+  d.style.cssText = 'position:fixed;z-index:2147483647;top:14px;left:50%;transform:translateX(-50%);background:#0c111b;color:#edf2fa;border:1px solid #8fff8a;border-radius:12px;padding:12px 14px;font:14px system-ui;box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:92%';
+  var a = document.createElement('a');
+  a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Открыть подключение JS Control';
+  a.style.cssText = 'display:inline-block;background:#8fff8a;color:#0c111b;font-weight:700;text-decoration:none;padding:10px 14px;border-radius:8px';
+  a.onclick = function () { setTimeout(function () { try { d.remove(); } catch (e) {} }, 200); };
+  var x = document.createElement('span');
+  x.textContent = '✕'; x.style.cssText = 'cursor:pointer;margin-left:14px;color:#aab8cc';
+  x.onclick = function () { d.remove(); };
+  d.appendChild(a); d.appendChild(x); document.body.appendChild(d);
 }
 
 // AdsPower variant: besides the token, it tries the AdsPower local API
@@ -57,9 +75,7 @@ export function captureAdsPower(origin, ver) {
     var data = JSON.stringify({v: 1, build: ver || '', userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent, proxy: proxy || null, source: 'adspower'});
     var b64 = btoa(unescape(encodeURIComponent(data))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     var url = origin + '/connect#s=' + b64;
-    // Popups are often blocked for a bookmarklet; fall back to the current tab.
-    var w = window.open(url, '_blank');
-    if (!w) location.href = url;
+    jsControlOpen(url);
   };
   var tryApi = function (base, next) {
     try {
@@ -82,10 +98,15 @@ export function captureAdsPower(origin, ver) {
   tryApi('http://local.adspower.net:50325', function () { tryApi('http://127.0.0.1:50325', function () { open(null); }); });
 }
 
+// Inlines jsControlOpen so the serialized bookmark is self-contained.
+function buildBookmarklet(fn, origin) {
+  return 'javascript:' + encodeURIComponent('(function(){var fn=' + fn.toString() + ';var jsControlOpen=' + jsControlOpen.toString() + ';fn(' + JSON.stringify(origin) + ',' + JSON.stringify(VERSION) + ');})();void 0');
+}
+
 export function bookmarkletHref(origin) {
-  return 'javascript:' + encodeURIComponent('(' + captureSession.toString() + ')(' + JSON.stringify(origin) + ',' + JSON.stringify(VERSION) + ');void 0');
+  return buildBookmarklet(captureSession, origin);
 }
 
 export function adsPowerBookmarkletHref(origin) {
-  return 'javascript:' + encodeURIComponent('(' + captureAdsPower.toString() + ')(' + JSON.stringify(origin) + ',' + JSON.stringify(VERSION) + ');void 0');
+  return buildBookmarklet(captureAdsPower, origin);
 }
