@@ -23,7 +23,7 @@ const css = `:root{--bg:#0c111b;--card:#141d2c;--line:#29364b;--text:#edf2fa;--m
 h1{font-size:22px;margin:0 0 6px}p,.hint{color:var(--muted)}.hint{font-size:13px}section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin:16px 0}
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
 textarea{min-height:80px;font:12px monospace}.row{display:flex;gap:8px}.row select{width:120px}.check{display:flex;gap:8px;align-items:flex-start;color:var(--text)}.check input{width:auto;margin-top:4px}
-button{border:0;border-radius:8px;padding:12px 16px;background:var(--accent);color:#0c111b;font:600 15px system-ui;cursor:pointer;width:100%;margin-top:14px}button:disabled{opacity:.5}
+button{border:0;border-radius:8px;padding:12px 16px;background:var(--accent);color:#0c111b;font:600 15px system-ui;cursor:pointer;width:100%;margin-top:14px}button:disabled{opacity:.5}button.secondary{background:transparent;color:var(--muted);border:1px solid var(--line)}
 .bm{display:inline-block;padding:12px 18px;border-radius:10px;background:var(--accent);color:#0c111b;font-weight:700;text-decoration:none;cursor:grab}
 .status{margin-top:12px;font-size:14px}.status.err{color:var(--err)}.status.ok{color:var(--accent)}ol{padding-left:20px;color:var(--muted)}code{word-break:break-all}`;
 
@@ -99,27 +99,35 @@ export function bookmarkletPage(origin) {
 export function connectPage() {
   return page('JS Control — подключение соца', `<h1>Подключение соца</h1>
 <section id="noSession" hidden><p>Откройте Ads Manager нужного соца и нажмите закладку <b>JS Control</b>. <a href="/bookmarklet">Как установить закладку</a></p></section>
-<section id="form" hidden>
+<section id="step1" hidden>
 <p>Соц: <b id="who"></b></p>
-<label for="key">Токен из бота JS Control</label><input id="key" type="password" autocomplete="off" placeholder="jsi_…">
+<label for="key">Шаг 1. Токен из бота JS Control</label><input id="key" type="password" autocomplete="off" placeholder="jsi_…">
 <p class="hint">Токен привязывает этот соц к вашему оплаченному аккаунту. Возьмите его в боте: 📊 Подключить соц.</p>
-<label for="proxy">Прокси соца (тот же, что в профиле браузера)</label>
+<button id="verify">Проверить токен</button><div id="status1" class="status" role="status"></div></section>
+<section id="step2" hidden>
+<p>Аккаунт: <b id="account"></b> · соц: <b id="who2"></b></p>
+<label for="label">Название профиля (как в антидетекте)</label><input id="label" autocomplete="off" placeholder="например, Farm-12">
+<label for="proxy">Шаг 2. Прокси соца (тот же, что в профиле браузера)</label>
 <div class="row"><select id="ptype"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select><input id="proxy" autocomplete="off" placeholder="host:port:логин:пароль"></div>
 <p class="hint" id="proxyNote">Через этот прокси сервер будет обновлять данные каждые 15 минут — Facebook видит привычный IP.</p>
-<details><summary class="hint">Cookies из антидетекта (необязательно)</summary><p class="hint">Экспорт cookies профиля в формате JSON. С ними сервер сам восстановит доступ, если токен истечёт; без них — просто нажмите закладку ещё раз.</p><textarea id="cookies" placeholder='[{"name":"c_user",...}]'></textarea></details>
-<label class="check"><input id="consent" type="checkbox"> Разрешаю передать токен${'' /* cookies optional */}, User-Agent, прокси и (если указаны) cookies серверу JS Control для сбора статистики.</label>
-<button id="go" disabled>Подключить и запустить сбор</button><div id="status" class="status" role="status"></div></section>`, '<script src="/connect.js"></script>');
+<label for="cookies">Cookies профиля (JSON)</label>
+<p class="hint">Экспортируйте cookies профиля в антидетекте (AdsPower: профиль → экспорт cookies) и вставьте сюда. С ними сервер сам обновляет доступ при закрытом браузере. Без них сбор идёт, пока жив токен.</p>
+<textarea id="cookies" placeholder='[{"name":"c_user",...}]'></textarea>
+<label class="check"><input id="consent" type="checkbox"> Разрешаю передать токен, User-Agent, прокси и (если указаны) cookies серверу JS Control для сбора статистики.</label>
+<button id="go" disabled>Подключить и запустить сбор</button>
+<button id="back" class="secondary">Назад</button><div id="status" class="status" role="status"></div></section>`, '<script src="/connect.js"></script>');
 }
 
 export function connectScript() {
   return `(function(){'use strict';
 var parseProxyInput=${parseProxyInput.toString()};
 var $=function(id){return document.getElementById(id);};
-var session=null;
+var session=null,key='';
 try{var m=location.hash.match(/s=([A-Za-z0-9_-]+)/);if(m){var b=m[1].replace(/-/g,'+').replace(/_/g,'/');session=JSON.parse(decodeURIComponent(escape(atob(b+'==='.slice((b.length+3)%4)))));}}catch(e){session=null;}
 history.replaceState(null,'',location.pathname);
 if(!session||!session.userId||!session.tokens||!session.tokens.length){$('noSession').hidden=false;return;}
-$('form').hidden=false;$('who').textContent=(session.name||'Facebook')+' · '+session.userId;
+var who=(session.name||'Facebook')+' · '+session.userId;
+$('step1').hidden=false;$('who').textContent=who;$('who2').textContent=who;
 try{$('key').value=localStorage.getItem('jsc_key')||'';}catch(e){}
 // Proxy auto-detected by the AdsPower bookmark: prefill the field and mark it.
 if(session.proxy&&session.proxy.server){try{
@@ -127,26 +135,38 @@ if(session.proxy&&session.proxy.server){try{
   $('proxy').value=pu.hostname+':'+pu.port+(session.proxy.username?':'+session.proxy.username+(session.proxy.password?':'+session.proxy.password:''):'');
   $('proxyNote').textContent='Прокси получен из профиля '+(session.source==='adspower'?'AdsPower':'антидетекта')+' автоматически. Проверьте и при необходимости поправьте.';
 }catch(e){}}
-var sync=function(){$('go').disabled=!$('consent').checked;};$('consent').onchange=sync;
-var show=function(t,cls){var s=$('status');s.textContent=t;s.className='status '+(cls||'');};
+if(session.name)$('label').value=session.name;
+var show=function(id,t,cls){var s=$(id);s.textContent=t;s.className='status '+(cls||'');};
 var ERR={401:'Токен не подошёл. Возьмите токен в боте JS Control.',402:'Подписка закончилась. Продлите её в боте.',409:'Достигнут лимит соцов по тарифу.',
   proxy_failed:'Не удалось подключиться через прокси. Проверьте адрес, порт, логин и пароль.',token_invalid:'Facebook не принял доступ. Обновите Ads Manager и нажмите закладку ещё раз.',
   wrong_user:'Доступ относится к другому соцу. Нажмите закладку в Ads Manager нужного соца.',cookies_owner:'Cookies относятся к другому соцу.',validation_failed:'Не удалось проверить соц. Повторите позже.'};
-var api=function(path,body,key){return fetch(path,{method:'POST',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(ERR[j.error]||ERR[r.status]||('Ошибка '+r.status));return j;});});};
+var api=function(path,body,method){return fetch(path,{method:method||'POST',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(ERR[j.error]||ERR[r.status]||('Ошибка '+r.status));return j;});});};
+// Step 1: verify the token, show the account, go to step 2.
+$('verify').onclick=function(){
+  key=$('key').value.trim();
+  if(!/^(jsi|js_srv)_[A-Za-z0-9_-]{43}$/.test(key)){show('status1','Вставьте токен из бота (jsi_…).','err');return;}
+  $('verify').disabled=true;show('status1','Проверяю токен…');
+  api('/v1/me',null,'GET').then(function(j){
+    try{localStorage.setItem('jsc_key',key);}catch(e){}
+    $('account').textContent=(j.account&&j.account.name||'аккаунт')+(j.account&&j.account.plan?' · '+j.account.plan:'');
+    $('step1').hidden=true;$('step2').hidden=false;
+  }).catch(function(e){show('status1',e.message,'err');$('verify').disabled=false;});
+};
+$('back').onclick=function(){$('step2').hidden=true;$('step1').hidden=false;$('verify').disabled=false;};
+var sync=function(){$('go').disabled=!$('consent').checked;};$('consent').onchange=sync;
+// Step 2: send proxy + cookies, connect and schedule.
 $('go').onclick=function(){
-  var key=$('key').value.trim(),proxy,cookies;
-  if(!/^(jsi|js_srv)_[A-Za-z0-9_-]{43}$/.test(key)){show('Вставьте токен из бота (jsi_…).','err');return;}
-  try{proxy=parseProxyInput($('proxy').value,$('ptype').value);}catch(e){show(e.message,'err');return;}
+  var proxy,cookies;
+  try{proxy=parseProxyInput($('proxy').value,$('ptype').value);}catch(e){show('status',e.message,'err');return;}
   if(!proxy&&!confirm('Без прокси Facebook увидит IP сервера. Подключить всё равно?'))return;
-  try{cookies=$('cookies').value.trim()?JSON.parse($('cookies').value):undefined;}catch(e){show('Cookies должны быть в формате JSON.','err');return;}
-  try{localStorage.setItem('jsc_key',key);}catch(e){}
+  try{cookies=$('cookies').value.trim()?JSON.parse($('cookies').value):undefined;}catch(e){show('status','Cookies должны быть в формате JSON.','err');return;}
   var d=new Date(),today=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
-  $('go').disabled=true;show('Проверяю соц через прокси…');
-  api('/v1/connections',{userId:session.userId,token:session.tokens[0],tokenCandidates:session.tokens,userAgent:session.ua,proxy:proxy||undefined,cookies:cookies},key)
-   .then(function(){show('Запускаю первый сбор…');return api('/v1/jobs',{userId:session.userId,since:today,until:today},key);})
-   .then(function(){return api('/v1/schedule',{userId:session.userId,minutes:15},key);})
-   .then(function(){$('proxy').value='';$('cookies').value='';show('Готово! Соц подключён, данные обновляются каждые 15 минут. Страницу можно закрыть.','ok');})
-   .catch(function(e){show(e.message,'err');$('go').disabled=false;});
+  $('go').disabled=true;show('status','Проверяю соц через прокси…');
+  api('/v1/connections',{userId:session.userId,token:session.tokens[0],tokenCandidates:session.tokens,userAgent:session.ua,label:$('label').value.trim()||undefined,proxy:proxy||undefined,cookies:cookies})
+   .then(function(){show('status','Запускаю первый сбор…');return api('/v1/jobs',{userId:session.userId,since:today,until:today});})
+   .then(function(){return api('/v1/schedule',{userId:session.userId,minutes:15});})
+   .then(function(){$('proxy').value='';$('cookies').value='';show('status','Готово! Соц подключён, данные обновляются каждые 15 минут. Страницу можно закрыть.','ok');})
+   .catch(function(e){show('status',e.message,'err');$('go').disabled=false;});
 };
 })();`;
 }

@@ -55,6 +55,39 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (cmd === '/revoke') {
       return send(chatId, args[0] && await store.revokeInvite(args[0]) ? 'Код #' + esc(args[0]) + ' отозван.' : 'Не нашёл неиспользованный код с таким номером. Список: /invites');
     }
+    // Test helpers (owner only): simulate a purchase and drive the collector.
+    if (cmd === '/testtoken') {
+      const plan = PLANS[(args[0] || '').toLowerCase()] ? args[0].toLowerCase() : 'team';
+      const r = await applyPayment(store, {paymentId: 'test:' + crypto.randomUUID(), provider: 'test', plan, name: 'ТЕСТ ' + new Date().toISOString().slice(0, 10)});
+      return send(chatId, '🧪 Оплата сымитирована. Тариф ' + planName(plan) + ' до ' + r.tenant.paidUntil +
+        '.\n\nТокен для подключения (вставьте на странице подключения соца):\n<code>' + r.integrationToken + '</code>\n\n' +
+        'Подключить соц: ' + env.IMPORT_URL.replace('/import', '/bookmarklet') + '\nПроверить сбор: <code>/teststatus ' + r.integrationToken + '</code>');
+    }
+    if (cmd === '/teststatus' || cmd === '/testcollect' || cmd === '/testreport') {
+      const token = args[0];
+      if (!/^jsi_[A-Za-z0-9_-]{43}$/.test(token || '')) return send(chatId, 'Укажите токен: <code>' + cmd + ' jsi_…</code> (получить: /testtoken)');
+      const call = (path, opts) => fetch(env.COLLECTOR_URL + path, {headers: {Authorization: 'Bearer ' + token, ...(opts?.body ? {'Content-Type': 'application/json'} : {})}, ...opts})
+        .then(async r => ({ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))}));
+      if (cmd === '/teststatus') {
+        const r = await call('/v1/status');
+        if (!r.ok) return send(chatId, '❌ ' + (r.body.error || r.status));
+        const socials = (r.body.connections || []).map(c => '• ' + (c.label || c.userId) + ' — ' + (c.collectMode || 'api')).join('\n') || 'соцов нет';
+        return send(chatId, '🧪 <b>Статус сбора</b>\n' + socials + '\n\nЗапустить сбор сейчас: <code>/testcollect ' + token + '</code>\nОтчёт: <code>/testreport ' + token + '</code>');
+      }
+      if (cmd === '/testcollect') {
+        const st = await call('/v1/status');
+        const ids = (st.body?.connections || []).map(c => c.userId);
+        if (!ids.length) return send(chatId, 'Нет подключённых соцов. Сначала подключите соц на странице.');
+        const today = new Date().toISOString().slice(0, 10);
+        for (const userId of ids) await call('/v1/jobs', {method: 'POST', body: JSON.stringify({userId, since: today, until: today})});
+        return send(chatId, '🧪 Запустил сбор для ' + ids.length + ' соц(ов). Через минуту: <code>/testreport ' + token + '</code>');
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await call('/v1/report?since=' + today + '&until=' + today);
+      if (!r.ok) return send(chatId, '❌ ' + (r.body.error || r.status));
+      const totals = Object.entries(r.body.totals || {}).map(([c, v]) => v + ' ' + c).join(' · ') || 'нет данных';
+      return send(chatId, '🧪 <b>Отчёт за сегодня</b>\nСтрок: ' + (r.body.rows || []).length + '\nSpend: ' + totals);
+    }
   }
 
   async function welcome(chatId) {
@@ -125,7 +158,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (message.successful_payment) return onPaid(chatId, message);
     const chat = await store.chat(chatId);
 
-    if (isAdmin(chatId) && /^\/(invite|invites|revoke)\b/.test(text)) return adminCommand(chatId, text);
+    if (isAdmin(chatId) && /^\/(invite|invites|revoke|testtoken|teststatus|testcollect|testreport)\b/.test(text)) return adminCommand(chatId, text);
 
     const code = findInviteCode(text);
     if (code) {

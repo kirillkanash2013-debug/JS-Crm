@@ -106,8 +106,11 @@ test('collector access: owner key, client token with its plan limit, expired, un
   const {tenant, integrationToken} = await applyPayment(store, {paymentId: 'p', provider: 't', plan: 'start'});
   const owner = 'js_srv_' + 'o'.repeat(43), equal = async (a, b) => a === b;
   const env = {JS_CONTROL_OWNER_KEY: owner, DB: d1};
-  assert.deepEqual(await resolveCaller('Bearer ' + owner, env, equal), {space: 'owner', socialLimit: 100});
-  assert.deepEqual(await resolveCaller('Bearer ' + integrationToken, env, equal), {space: 'tenant:' + tenant.id, socialLimit: 3});
+  const asOwner = await resolveCaller('Bearer ' + owner, env, equal);
+  assert.equal(asOwner.space, 'owner'); assert.equal(asOwner.socialLimit, 100);
+  const asTenant = await resolveCaller('Bearer ' + integrationToken, env, equal);
+  assert.equal(asTenant.space, 'tenant:' + tenant.id); assert.equal(asTenant.socialLimit, 3);
+  assert.equal(asTenant.account.plan, 'start'); assert.equal(asTenant.account.socialLimit, 3);
   assert.equal((await resolveCaller('Bearer jsi_' + 'z'.repeat(43), env, equal)).status, 401);
   assert.equal((await resolveCaller('Bearer ' + integrationToken, {JS_CONTROL_OWNER_KEY: owner}, equal)).status, 503);
   await store.extendTenant(tenant.id, '2020-01-01');
