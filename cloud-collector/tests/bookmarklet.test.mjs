@@ -9,10 +9,13 @@ import {VERSION} from '../src/version.mjs';
 function runBookmark(page) {
   const opened = [], alerts = [];
   const scripts = page.scripts.map(textContent => ({textContent}));
-  const ctx = {location: {hostname: page.host, href: page.href}, document: {querySelectorAll: () => scripts},
+  // Minimal DOM: the bookmarklet injects an <a> with the connect URL; capture its href.
+  const node = () => ({style: {}, appendChild() {}, remove() {}, set onclick(v) {}, set textContent(v) {}, set href(v) { if (String(v).includes('/connect#s=')) opened.push(v); }});
+  const doc = {querySelectorAll: () => scripts, getElementById: () => null, createElement: () => node(), body: {appendChild() {}}, documentElement: {appendChild() {}}};
+  const ctx = {location: {hostname: page.host, href: page.href}, document: doc,
     navigator: {userAgent: 'Mozilla/5.0 Test'}, alert: m => alerts.push(m), btoa: s => Buffer.from(s, 'binary').toString('base64'),
-    unescape, encodeURIComponent, JSON, String, Number};
-  ctx.window = {require: page.require, __accessToken: page.token, open: url => opened.push(url)};
+    unescape, encodeURIComponent, JSON, String, Number, setTimeout: () => {}};
+  ctx.window = {require: page.require, __accessToken: page.token, open: () => null};
   vm.runInNewContext(decodeURIComponent(bookmarkletHref('https://c.example').slice('javascript:'.length)), ctx);
   return {opened, alerts};
 }

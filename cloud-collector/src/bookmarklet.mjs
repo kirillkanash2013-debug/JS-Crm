@@ -33,19 +33,21 @@ export function captureSession(origin, ver) {
 // Defined as its own export only so the bookmark builder can inline it into
 // each capture function's source (see buildBookmarklet below).
 export function jsControlOpen(url) {
-  try { var w = window.open(url, '_blank'); if (w) return; } catch (e) {}
+  // Always show an on-page button: in antidetect profiles popups/navigation are
+  // blocked, and a real click on this link is the only reliable way to open.
   try { var old = document.getElementById('jsctrl-ov'); if (old) old.remove(); } catch (e) {}
   var d = document.createElement('div');
   d.id = 'jsctrl-ov';
-  d.style.cssText = 'position:fixed;z-index:2147483647;top:14px;left:50%;transform:translateX(-50%);background:#0c111b;color:#edf2fa;border:1px solid #8fff8a;border-radius:12px;padding:12px 14px;font:14px system-ui;box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:92%';
+  d.style.cssText = 'position:fixed;z-index:2147483647;top:14px;left:50%;transform:translateX(-50%);background:#0c111b;color:#edf2fa;border:2px solid #8fff8a;border-radius:12px;padding:14px 16px;font:15px system-ui;box-shadow:0 8px 30px rgba(0,0,0,.5);max-width:92%;text-align:center';
   var a = document.createElement('a');
-  a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Открыть подключение JS Control';
-  a.style.cssText = 'display:inline-block;background:#8fff8a;color:#0c111b;font-weight:700;text-decoration:none;padding:10px 14px;border-radius:8px';
+  a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = '▶ Открыть подключение JS Control';
+  a.style.cssText = 'display:inline-block;background:#8fff8a;color:#0c111b;font-weight:700;text-decoration:none;padding:12px 18px;border-radius:8px';
   a.onclick = function () { setTimeout(function () { try { d.remove(); } catch (e) {} }, 200); };
   var x = document.createElement('span');
-  x.textContent = '✕'; x.style.cssText = 'cursor:pointer;margin-left:14px;color:#aab8cc';
+  x.textContent = '✕'; x.style.cssText = 'cursor:pointer;margin-left:16px;color:#aab8cc';
   x.onclick = function () { d.remove(); };
-  d.appendChild(a); d.appendChild(x); document.body.appendChild(d);
+  d.appendChild(a); d.appendChild(x);
+  (document.body || document.documentElement).appendChild(d);
 }
 
 // AdsPower variant: besides the token, it tries the AdsPower local API
