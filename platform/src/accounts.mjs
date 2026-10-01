@@ -1,3 +1,4 @@
+import {newInviteCode} from './invites.mjs';
 import {hashToken, newToken, tokenKind} from './tokens.mjs';
 
 export const PLANS = {
@@ -59,4 +60,30 @@ export async function authenticate(store, token, kind) {
   if (!tenant) return {tenant: null, error: 'invalid'};
   if (!isActive(tenant)) return {tenant, error: 'expired'};
   return {tenant, error: null};
+}
+
+// Free access by one-time invite codes. A code creates exactly one account
+// and is then dead; a chat that already has an account cannot spend a code.
+export async function createInvite(store, {plan = 'team', days = 30, note = '', validDays = 14} = {}) {
+  if (!PLANS[plan]) throw new Error('Unknown plan');
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw new Error('days must be 1..365');
+  const code = newInviteCode();
+  const id = crypto.randomUUID().slice(0, 6);
+  await store.createInvite({id, hash: await hashToken(code), plan, days, note: String(note).slice(0, 80), expiresAt: addDays(today(), validDays)});
+  return {id, code, plan, days};
+}
+
+export async function redeemInvite(store, code, {chatId, name}) {
+  const hash = await hashToken(code);
+  const invite = await store.invite(hash);
+  if (!invite) return {error: 'invalid'};
+  if (invite.revokedAt) return {error: 'revoked'};
+  if (invite.usedAt) return {error: 'used'};
+  if (invite.expiresAt < today()) return {error: 'expired'};
+  const tenantId = crypto.randomUUID();
+  // Claim first: two people sending the same code at once cannot both win.
+  if (!await store.claimInvite(hash, tenantId, chatId)) return {error: 'used'};
+  const tenant = await store.createTenant({id: tenantId, name: String(name || invite.note || 'Клиент').slice(0, 80), plan: invite.plan, socialLimit: PLANS[invite.plan].socialLimit, paidUntil: addDays(today(), invite.days)});
+  await store.recordPayment({id: 'invite:' + invite.id, tenantId, provider: 'invite', amount: '0', currency: null});
+  return {tenant, integrationToken: await rotateIntegrationToken(store, tenantId)};
 }

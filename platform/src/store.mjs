@@ -48,10 +48,34 @@ export class D1Store {
     await this.db.prepare('INSERT INTO payments (id,tenant_id,provider,amount,currency,created_at) VALUES (?,?,?,?,?,?)')
       .bind(p.id, p.tenantId, p.provider, String(p.amount ?? ''), p.currency ?? null, now()).run();
   }
+  async createInvite(i) {
+    await this.db.prepare('INSERT INTO invites (id,hash,plan,days,note,created_at,expires_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(i.id, i.hash, i.plan, i.days, i.note ?? null, now(), i.expiresAt).run();
+  }
+  async invite(hash) {
+    const r = await this.db.prepare('SELECT * FROM invites WHERE hash=?').bind(hash).first();
+    return r && inviteRow(r);
+  }
+  // Atomic: only one caller can mark an unused code as used.
+  async claimInvite(hash, tenantId, chatId) {
+    const r = await this.db.prepare('UPDATE invites SET used_at=?, tenant_id=?, used_by_chat=? WHERE hash=? AND used_at IS NULL AND revoked_at IS NULL')
+      .bind(now(), tenantId, String(chatId), hash).run();
+    return (r.meta?.changes ?? r.changes ?? 0) === 1;
+  }
+  async listInvites(limit) {
+    const r = await this.db.prepare('SELECT * FROM invites ORDER BY created_at DESC LIMIT ?').bind(limit).all();
+    return (r.results || []).map(inviteRow);
+  }
+  async revokeInvite(id) {
+    const r = await this.db.prepare('UPDATE invites SET revoked_at=? WHERE id=? AND used_at IS NULL AND revoked_at IS NULL').bind(now(), id).run();
+    return (r.meta?.changes ?? r.changes ?? 0) === 1;
+  }
 }
 
+const inviteRow = r => ({id: r.id, plan: r.plan, days: r.days, note: r.note, createdAt: r.created_at, expiresAt: r.expires_at, revokedAt: r.revoked_at, usedAt: r.used_at, tenantId: r.tenant_id, usedByChat: r.used_by_chat});
+
 export class MemoryStore {
-  constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); }
+  constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); }
   async createTenant(t) { this.tenants.set(t.id, {id: t.id, name: t.name, plan: t.plan, socialLimit: t.socialLimit, status: 'active', paidUntil: t.paidUntil}); return this.tenant(t.id); }
   async tenant(id) { const t = this.tenants.get(id); return t ? {...t} : null; }
   async extendTenant(id, paidUntil) { Object.assign(this.tenants.get(id), {paidUntil, status: 'active'}); }
@@ -64,4 +88,18 @@ export class MemoryStore {
   async saveSettings(tenantId, patch) { this.prefs.set(tenantId, {...(this.prefs.get(tenantId) || {}), ...patch}); }
   async payment(id) { return this.payments.get(id) || null; }
   async recordPayment(p) { this.payments.set(p.id, {tenantId: p.tenantId}); }
+  async createInvite(i) { this.invites.set(i.hash, {id: i.id, plan: i.plan, days: i.days, note: i.note ?? null, createdAt: now(), expiresAt: i.expiresAt, revokedAt: null, usedAt: null, tenantId: null, usedByChat: null}); }
+  async invite(hash) { const i = this.invites.get(hash); return i ? {...i} : null; }
+  async claimInvite(hash, tenantId, chatId) {
+    const i = this.invites.get(hash);
+    if (!i || i.usedAt || i.revokedAt) return false;
+    Object.assign(i, {usedAt: now(), tenantId, usedByChat: String(chatId)});
+    return true;
+  }
+  async listInvites(limit) { return [...this.invites.values()].reverse().slice(0, limit).map(i => ({...i})); }
+  async revokeInvite(id) {
+    const i = [...this.invites.values()].find(x => x.id === id);
+    if (!i || i.usedAt || i.revokedAt) return false;
+    i.revokedAt = now(); return true;
+  }
 }

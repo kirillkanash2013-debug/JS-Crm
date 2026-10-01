@@ -1,11 +1,18 @@
 // Telegram bot for clients: bind a chat with the integration token (or buy
 // with Telegram Stars), fill basic settings, get the plugin and the dashboard.
-import {PLANS, applyPayment, authenticate, isActive, rotateDashboardToken, rotateIntegrationToken} from './accounts.mjs';
+import {PLANS, applyPayment, authenticate, createInvite, isActive, redeemInvite, rotateDashboardToken, rotateIntegrationToken} from './accounts.mjs';
+import {findInviteCode} from './invites.mjs';
 import {checkKeitaro, keitaroOrigin} from './keitaro.mjs';
 import {sealSecret} from './secrets.mjs';
 import {findToken} from './tokens.mjs';
 
 const MENU = {keyboard: [[{text: '📊 Дашборд'}, {text: '🧩 Плагин'}], [{text: '⚙️ Настройки'}, {text: '💳 Подписка'}]], resize_keyboard: true};
+const INVITE_ERRORS = {
+  invalid: '❌ Код не найден. Проверьте, что скопировали его полностью.',
+  used: '❌ Этот код уже использован. Каждый код работает только один раз.',
+  revoked: '❌ Этот код отозван.',
+  expired: '❌ Срок действия кода истёк. Попросите новый.'
+};
 const TIMEZONES = ['Europe/Minsk', 'Europe/Moscow', 'Europe/Kyiv', 'Asia/Almaty', 'Asia/Tbilisi', 'UTC'];
 const planName = id => PLANS[id]?.name || id;
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -18,8 +25,40 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   const buyButtons = () => ({inline_keyboard: Object.entries(PLANS).filter(([id]) => Number(env['STARS_PRICE_' + id.toUpperCase()]) > 0)
     .map(([id, p]) => [{text: '💳 ' + p.name + ' — ' + env['STARS_PRICE_' + id.toUpperCase()] + ' ⭐ / 30 дней', callback_data: 'buy:' + id}])});
 
+
+  const isAdmin = chatId => String(env.ADMIN_CHAT_IDS || '').split(',').map(x => x.trim()).filter(Boolean).includes(String(chatId));
+
+  // Owner commands: /invite [дней] [тариф] [для кого], /invites, /revoke <id>.
+  async function adminCommand(chatId, text) {
+    const [cmd, ...args] = text.split(/\s+/);
+    if (cmd === '/invite') {
+      let days = 30, plan = 'team';
+      const note = [];
+      for (const a of args) {
+        if (/^\d+$/.test(a) && days === 30 && !note.length) days = Number(a);
+        else if (PLANS[a.toLowerCase()] && !note.length) plan = a.toLowerCase();
+        else note.push(a);
+      }
+      let invite;
+      try { invite = await createInvite(store, {plan, days, note: note.join(' ')}); }
+      catch { return send(chatId, 'Формат: <code>/invite 30 team Вася</code> — дней 1–365, тариф: ' + Object.keys(PLANS).join(', ')); }
+      const link = env.BOT_USERNAME ? '\nСсылка: https://t.me/' + env.BOT_USERNAME + '?start=' + invite.code : '';
+      return send(chatId, '🎁 Код #' + invite.id + (note.length ? ' для ' + esc(note.join(' ')) : '') + ': ' + planName(plan) + ', ' + days + ' дн.\n<code>' + invite.code + '</code>' + link +
+        '\n\nОдноразовый: создаёт один аккаунт. Активировать в течение 14 дней.');
+    }
+    if (cmd === '/invites') {
+      const list = await store.listInvites(30);
+      if (!list.length) return send(chatId, 'Кодов пока нет. Создать: <code>/invite 30 Вася</code>');
+      return send(chatId, '🎁 <b>Коды</b>\n' + list.map(i => '#' + i.id + ' · ' + esc(i.note || '—') + ' · ' + planName(i.plan) + ' ' + i.days + ' дн. · ' +
+        (i.usedAt ? '✅ активирован ' + i.usedAt.slice(0, 10) : i.revokedAt ? '⛔ отозван' : i.expiresAt < new Date().toISOString().slice(0, 10) ? '⌛ просрочен' : '🕓 ждёт до ' + i.expiresAt)).join('\n'));
+    }
+    if (cmd === '/revoke') {
+      return send(chatId, args[0] && await store.revokeInvite(args[0]) ? 'Код #' + esc(args[0]) + ' отозван.' : 'Не нашёл неиспользованный код с таким номером. Список: /invites');
+    }
+  }
+
   async function welcome(chatId) {
-    await send(chatId, '👋 <b>JS Control</b>\n\nОтправьте сюда <b>токен интеграции</b>, который вы получили после оплаты (начинается с <code>jsi_</code>).' +
+    await send(chatId, '👋 <b>JS Control</b>\n\nОтправьте сюда <b>пригласительный код</b> (<code>JS-XXXX-XXXX-XXXX</code>) или <b>токен интеграции</b> (<code>jsi_…</code>).' +
       (starsEnabled() ? '\n\nЕщё нет подписки? Оплатите прямо здесь:' : ''), starsEnabled() ? buyButtons() : undefined);
   }
 
@@ -84,6 +123,19 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const chatId = message.chat.id, text = String(message.text || '').trim();
     if (message.successful_payment) return onPaid(chatId, message);
     const chat = await store.chat(chatId);
+
+    if (isAdmin(chatId) && /^\/(invite|invites|revoke)\b/.test(text)) return adminCommand(chatId, text);
+
+    const code = findInviteCode(text);
+    if (code) {
+      await forget(chatId, message.message_id);
+      if (chat?.tenantId && await store.tenant(chat.tenantId)) return send(chatId, 'У этого Telegram-аккаунта уже есть доступ к JS Control. Код не использован — его можно передать другому человеку.', MENU);
+      const result = await redeemInvite(store, code, {chatId, name: message.from?.username || message.from?.first_name});
+      if (result.error) return send(chatId, INVITE_ERRORS[result.error]);
+      await send(chatId, '🎁 Код активирован! Доступ: <b>' + esc(planName(result.tenant.plan)) + '</b> до ' + result.tenant.paidUntil +
+        '.\n\nВаш токен интеграции (нужен для входа в плагин, сохраните его):\n<code>' + result.integrationToken + '</code>');
+      return bind(chatId, result.tenant);
+    }
 
     const token = findToken(text, 'integration');
     if (token) {
