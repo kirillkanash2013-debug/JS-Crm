@@ -77,6 +77,17 @@ jobs:
           printf '%s' "$(openssl rand -hex 24)"    | npx --yes wrangler secret put BILLING_WEBHOOK_SECRET
           printf '%s' "$BOT_TOKEN"                 | npx --yes wrangler secret put TELEGRAM_BOT_TOKEN
 
+      - name: Wait until the worker resolves on workers.dev
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS https://js-control-platform.kirill-kanash2013.workers.dev/health >/dev/null 2>&1; then
+              echo "Worker is reachable."; exit 0
+            fi
+            echo "waiting for workers.dev DNS/propagation... ($i)"; sleep 6
+          done
+          echo "::error::Worker did not become reachable in time."; exit 1
+
       - name: Set the Telegram webhook (every deploy)
         working-directory: platform
         env:
@@ -93,6 +104,3 @@ jobs:
             --data-urlencode "secret_token=${WH}")"
           echo "Telegram setWebhook response: $RESP"
           echo "$RESP" | grep -q '"ok":true' || { echo "::error::setWebhook failed: $RESP"; exit 1; }
-
-      - name: Check the platform is live
-        run: curl --fail --retry 5 --retry-delay 5 https://js-control-platform.kirill-kanash2013.workers.dev/health
