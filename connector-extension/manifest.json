@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JS Control",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Подключение профиля к JS Control: читает токен, cookies и прокси профиля и запускает сбор на сервере.",
   "permissions": ["scripting", "activeTab", "cookies", "storage"],
   "host_permissions": [

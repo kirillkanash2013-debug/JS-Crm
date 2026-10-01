@@ -47,7 +47,7 @@ export class Control {
    // Cheap check through the social's proxy when available; the browser container only as before.
    let c;
    try{c=this.runner.validateApi?await this.runner.validateApi(b):await this.runner.validate(b);}
-   catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed'});}
+   catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed',detail:(e&&e.message)?String(e.message).slice(0,200):null});}
    const old=this.state.connections[c.userId];
    this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||null,revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};await this.persist();return reply(201,{userId:c.userId,state:this.runner.validateApi?'verified':'unverified'});
   }

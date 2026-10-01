@@ -115,9 +115,9 @@ test('chunked responses, wrong proxy password, private proxy, non-graph URLs', a
   const log = [], connect = makeConnect(routes(), log);
   const r = await graphGet('/v25.0/chunked', {connect, proxy: {server: 'http://proxy.example:8080', username: 'user', password: 'pass'}, headers: {}});
   assert.deepEqual(JSON.parse(new TextDecoder().decode(r.body)), {data: [1, 2]});
-  await assert.rejects(graphGet('/v25.0/me', {connect, proxy: {server: 'http://proxy.example:8080', username: 'user', password: 'bad'}, headers: {}}), /login or password/);
-  await assert.rejects(graphGet('/v25.0/me', {connect, proxy: {server: 'socks5://socks.example:1080', username: 'user', password: 'bad'}, headers: {}}), /login or password/);
-  assert.throws(() => parseProxy({server: 'http://192.168.1.5:3128'}), /Private/);
+  await assert.rejects(graphGet('/v25.0/me', {connect, proxy: {server: 'http://proxy.example:8080', username: 'user', password: 'bad'}, headers: {}}), /логин или пароль/);
+  await assert.rejects(graphGet('/v25.0/me', {connect, proxy: {server: 'socks5://socks.example:1080', username: 'user', password: 'bad'}, headers: {}}), /логин или пароль/);
+  assert.throws(() => parseProxy({server: 'http://192.168.1.5:3128'}), /Локальный адрес/);
   assert.throws(() => parseProxy({server: 'ftp://x.example:21'}), /http:\/\/ or socks5/);
   const fetcher = graphFetcher({connect, connection: connection()});
   await assert.rejects(fetcher('https://evil.example/x', {method: 'GET', headers: {}}), /Only Graph API/);

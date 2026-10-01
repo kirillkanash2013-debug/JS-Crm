@@ -133,5 +133,5 @@ test('bookmarklet connection (no cookies): dead token asks the client to reconne
 test('connect errors are reported as readable codes', async () => {
   const c = new Control(initialState(), async () => {}, async () => {}, {validateApi: async () => { throw fail('proxy'); }});
   const r = await c.request('/v1/connections', 'POST', conn('105'), 10);
-  assert.equal(r.status, 422); assert.deepEqual(await r.json(), {error: 'proxy_failed'});
+  assert.equal(r.status, 422); assert.deepEqual(await r.json(), {error: 'proxy_failed', detail: 'x'});
 });

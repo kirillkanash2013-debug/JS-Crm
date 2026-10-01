@@ -68,7 +68,7 @@ async function api(path, key, body) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const map = { 401: "Ключ не подошёл.", 402: "Подписка закончилась.", 409: "Лимит соцов по тарифу.", proxy_failed: "Прокси не отвечает.", token_invalid: "Facebook не принял токен — обновите Ads Manager.", wrong_user: "Открыт другой соц.", validation_failed: "Не удалось проверить соц." };
-    throw new Error(map[j.error] || map[r.status] || "Ошибка " + r.status);
+    throw new Error((map[j.error] || map[r.status] || "Ошибка " + r.status) + (j.detail ? "\n(" + j.detail + ")" : ""));
   }
   return j;
 }
@@ -90,7 +90,7 @@ $("go").onclick = async () => {
     const ck = await cookies();
     const proxy = await adsPowerProxy(session.userId);
     const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    show("Подключаю соц на сервере…");
+    show("Подключаю соц на сервере…" + (proxy ? "\nПрокси: " + proxy.server : "\nПрокси профиля не найден."));
     await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
     await api("/v1/jobs", key, { userId: session.userId, since: today, until: today });
     await api("/v1/schedule", key, { userId: session.userId, minutes: 15 });

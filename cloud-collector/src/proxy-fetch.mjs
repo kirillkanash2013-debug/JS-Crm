@@ -66,7 +66,7 @@ export function parseProxy(proxy) {
   if (!['http:', 'socks5:'].includes(u.protocol) || !u.port) throw new ProxyError('Proxy must be http:// or socks5:// with a port');
   const host = u.hostname.replace(/^\[|\]$/g, '');
   // Workers cannot reach private networks anyway; refuse obvious local targets early.
-  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)/i.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === '::1') throw new ProxyError('Private proxy addresses are not allowed');
+  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)/i.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === '::1') throw new ProxyError('Локальный адрес прокси недоступен с сервера');
   return {type: u.protocol === 'http:' ? 'http' : 'socks5', host, port: Number(u.port), username: proxy.username || '', password: proxy.password || ''};
 }
 
@@ -77,8 +77,8 @@ async function httpTunnel(socket, p, host) {
   try {
     const head = dec.decode(await reader.until(enc.encode('\r\n\r\n'), MAX_HEAD));
     const status = Number(head.split(' ')[1]);
-    if (status === 407) throw new ProxyError('Proxy rejected the login or password');
-    if (status !== 200) throw new ProxyError('Proxy refused the tunnel (HTTP ' + status + ')');
+    if (status === 407) throw new ProxyError('Прокси отклонил логин или пароль');
+    if (status !== 200) throw new ProxyError('Прокси отклонил туннель (HTTP ' + status + ')');
     if (reader.buf.length) throw new ProxyError('Unexpected data from proxy');
   } finally { reader.release(); }
 }
@@ -88,18 +88,18 @@ async function socksTunnel(socket, p, hostName) {
   try {
     await write(socket, new Uint8Array(p.username ? [5, 2, 0, 2] : [5, 1, 0]));
     const [ver, method] = await reader.exact(2);
-    if (ver !== 5 || method === 0xff) throw new ProxyError('SOCKS5 proxy refused authentication method');
+    if (ver !== 5 || method === 0xff) throw new ProxyError('SOCKS5-прокси отклонил способ авторизации');
     if (method === 2) {
       const u = enc.encode(p.username), w = enc.encode(p.password);
       if (u.length > 255 || w.length > 255) throw new ProxyError('Proxy credentials too long');
       await write(socket, new Uint8Array([1, u.length, ...u, w.length, ...w]));
       const [, ok] = await reader.exact(2);
-      if (ok !== 0) throw new ProxyError('Proxy rejected the login or password');
+      if (ok !== 0) throw new ProxyError('Прокси отклонил логин или пароль');
     }
     const host = enc.encode(hostName);
     await write(socket, new Uint8Array([5, 1, 0, 3, host.length, ...host, 443 >> 8, 443 & 255]));
     const [, rep, , atyp] = await reader.exact(4);
-    if (rep !== 0) throw new ProxyError('SOCKS5 proxy could not connect (code ' + rep + ')');
+    if (rep !== 0) throw new ProxyError('SOCKS5-прокси не смог подключиться (код ' + rep + ')');
     const skip = atyp === 1 ? 4 : atyp === 4 ? 16 : (await reader.exact(1))[0];
     await reader.exact(skip + 2);
     if (reader.buf.length) throw new ProxyError('Unexpected data from proxy');
@@ -159,7 +159,7 @@ export async function httpsGet(host, pathAndQuery, {connect, proxy, headers, sig
   signal?.addEventListener('abort', abort, {once: true});
   try {
     if (p) {
-      try { await socket.opened; } catch { throw new ProxyError('Proxy is unreachable'); }
+      try { await socket.opened; } catch { throw new ProxyError('Прокси недоступен — не принимает подключение с сервера (возможно, привязан к вашему IP)'); }
       await (p.type === 'http' ? httpTunnel(socket, p, host) : socksTunnel(socket, p, host));
       tls = socket.startTls({expectedServerHostname: host});
     }
@@ -168,8 +168,8 @@ export async function httpsGet(host, pathAndQuery, {connect, proxy, headers, sig
     await write(tls, enc.encode(lines.join('\r\n') + '\r\n\r\n'));
     return await readResponse(tls);
   } catch (e) {
-    if (signal?.aborted) throw new ProxyError('Request timed out');
-    throw e instanceof ProxyError || e.code ? e : new ProxyError('Proxy connection failed');
+    if (signal?.aborted) throw new ProxyError('Истекло время ожидания прокси');
+    throw e instanceof ProxyError || e.code ? e : new ProxyError('Не удалось подключиться через прокси');
   } finally {
     signal?.removeEventListener('abort', abort);
     abort();

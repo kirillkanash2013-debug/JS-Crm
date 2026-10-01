@@ -45,7 +45,7 @@ test('proxy input formats and connection validation', () => {
   const ok = cleanConnection({userId: '100', token: 'EA' + 'a'.repeat(30), tokenCandidates: ['EA' + 'b'.repeat(30), 'bad'], userAgent: 'Mozilla/5.0 X', proxy: {server: 'http://1.2.3.4:8000', username: 'u', password: 'p'}});
   assert.deepEqual(ok.tokenCandidates, ['EA' + 'a'.repeat(30), 'EA' + 'b'.repeat(30)]); assert.deepEqual(ok.cookies, []);
   assert.throws(() => cleanConnection({userId: '100', token: 'EA' + 'a'.repeat(30), userAgent: 'Mozilla/5.0 X', cookies: [{name: 'c_user', value: '999', domain: '.facebook.com'}]}), /another account/);
-  assert.throws(() => cleanConnection({userId: '100', token: 'EA' + 'a'.repeat(30), userAgent: 'Mozilla/5.0 X', proxy: {server: 'http://10.0.0.1:8080'}}), /Private/);
+  assert.throws(() => cleanConnection({userId: '100', token: 'EA' + 'a'.repeat(30), userAgent: 'Mozilla/5.0 X', proxy: {server: 'http://10.0.0.1:8080'}}), /Локальный адрес/);
   const withCookies = cleanConnection({userId: '100', token: 'EA' + 'a'.repeat(30), userAgent: 'Mozilla/5.0 X',
     cookies: [{name: 'c_user', value: '100', domain: '.facebook.com', sameSite: 'no_restriction', expirationDate: 2e9}, {name: 'x', value: 'y', domain: '.google.com'}]});
   assert.deepEqual(withCookies.cookies.map(c => c.name + ':' + c.sameSite), ['c_user:None']);
