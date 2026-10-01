@@ -162,6 +162,9 @@ export async function httpsGet(host, pathAndQuery, {connect, proxy, headers, sig
       try { await socket.opened; } catch { throw new ProxyError('Прокси недоступен — не принимает подключение с сервера (возможно, привязан к вашему IP)'); }
       await (p.type === 'http' ? httpTunnel(socket, p, host) : socksTunnel(socket, p, host));
       tls = socket.startTls({expectedServerHostname: host});
+      // Wait for the TLS handshake to finish before sending the request;
+      // writing too early is reported by the runtime as "TLS Handshake Failed".
+      try { await tls.opened; } catch (e) { throw new ProxyError('TLS через прокси не установился: ' + (e && e.message ? e.message : e)); }
     }
     const lines = ['GET ' + pathAndQuery + ' HTTP/1.1', 'Host: ' + host, 'Connection: close', 'Accept-Encoding: identity'];
     for (const [k, v] of Object.entries(headers || {})) if (v) lines.push(k + ': ' + String(v).replace(/[\r\n]/g, ''));
