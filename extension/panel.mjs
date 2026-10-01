@@ -133,3 +133,22 @@ $("serverGenerateKey").onclick=()=>{
  $("serverKey").value="js_srv_"+btoa(String.fromCharCode(...bytes)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
  $("serverResult").textContent="Ключ создан локально. Сохраните его у себя и добавьте в Cloudflare → js-control-collector-claude → Settings → Variables and Secrets как Secret с именем JS_CONTROL_OWNER_KEY. Сам ключ не отправляется в чат и не сохраняется в экспорт.";
 };
+
+$("serverShowKey").onclick=()=>{
+ const field=$("serverKey");
+ field.type=field.type==="password"?"text":"password";
+ $("serverShowKey").textContent=field.type==="text"?"Скрыть ключ":"Показать ключ";
+};
+$("serverCopyKey").onclick=async()=>{
+ const field=$("serverKey");
+ if(!field.value){$("serverResult").textContent="Сначала создайте персональный ключ.";return;}
+ try {
+  await navigator.clipboard.writeText(field.value);
+  $("serverResult").textContent="Ключ скопирован. Вставьте его в Cloudflare в Value для Secret JS_CONTROL_OWNER_KEY.";
+ } catch {
+  field.type="text";
+  $("serverShowKey").textContent="Скрыть ключ";
+  field.focus();field.select();
+  $("serverResult").textContent="Ключ показан и выделен. Нажмите ⌘C на Mac или Ctrl+C на Windows, затем вставьте в Cloudflare.";
+ }
+};
