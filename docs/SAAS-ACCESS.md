@@ -1,0 +1,125 @@
+# JS Control как сервис: доступ после оплаты, бот, плагин, дашборд
+
+Ветка: `claude/saas-access`. Текущая CRM (Apps Script + Google Sheets) и бот владельца не меняются.
+
+## 1. Путь клиента
+
+```
+Оплата ──► токен интеграции jsi_… ──► бот: /start jsi_… ──► 3 шага настроек ──► плагин: вход тем же токеном ──► «Подключить соц» ──► дашборд по ссылке + отчёты в боте
+```
+
+1. **Оплата.**
+   - **На сайте** (карта или крипто): платёжный провайдер присылает подписанный webhook на `POST /billing/webhook`. Платформа создаёт клиента и выдаёт токен интеграции `jsi_…`. Страница успешной оплаты показывает токен и кнопку `t.me/<бот>?start=<токен>`: одно нажатие открывает бота и сразу привязывает чат.
+   - **В Telegram** (Telegram Stars): кнопка «Оплатить» прямо в боте. По правилам Telegram цифровые услуги внутри бота продаются только за Stars. Чат привязывается автоматически, токен бот присылает сам.
+2. **Бот: базовые настройки.**
+   - Шаг 1 — адрес Keitaro (можно пропустить).
+   - Шаг 2 — API-ключ Keitaro: проверяется живым запросом и сохраняется зашифрованным. Сообщение с ключом сразу удаляется из чата.
+   - Шаг 3 — часовой пояс.
+   - Затем бот присылает инструкцию по плагину и ссылку на дашборд.
+3. **Плагин.** Клиент входит тем же токеном `jsi_…`. Дальше работает мастер 0.7.0: Ads Manager → «Подключить соц». Сервер собирает данные каждые 15 минут, браузер можно закрыть.
+4. **Дашборд.** Секретная ссылка `/d/jsd_…`. Пока данных нет, показывает прогресс подключения. В боте: «📊 Дашборд» выдаёт новую ссылку (старая перестаёт работать), «💳 Подписка» — срок и продление, `/token` — перевыпуск токена.
+
+Токены хранятся только как SHA-256-хэши. Ключи клиентов шифруются AES-256-GCM, ключ шифрования у каждого клиента свой (HKDF от `MASTER_KEY`). Повторный webhook или повторное уведомление об оплате не создают второго клиента. После окончания подписки плагин получает 402, дашборд и бот предлагают продлить.
+
+## 2. Что уже сделано в ветке (`platform/`)
+
+| Файл | Что делает |
+|---|---|
+| `migrations/0001_init.sql` | D1: клиенты, токены (хэши), чаты, настройки, платежи |
+| `src/accounts.mjs` | тарифы, оплата и продление (идемпотентно), проверка токена и срока |
+| `src/bot.mjs` | бот: привязка, мастер настроек, Stars, меню, перевыпуск токена |
+| `src/index.mjs` | Worker: `/telegram`, `/billing/webhook`, `/v1/extension/login`, `/d/…`, `/api/d/…` |
+| `src/secrets.mjs`, `src/tokens.mjs`, `src/keitaro.mjs`, `src/dashboard.mjs` | шифрование, токены, проверка Keitaro, страница дашборда |
+
+5 тестов: полный путь клиента, оплата по webhook, Stars, истёкшая подписка, SQL на настоящем SQLite. Пока **не развёрнуто**: нужны D1, секреты и отдельный бот (раздел 6).
+
+## 3. Хватит ли Cloudflare
+
+Коротко: **да, для всего, кроме самой оплаты и публикации плагина в магазине**. Это внешние сервисы при любом хостинге.
+
+| Задача | Чем закрываем в Cloudflare | Статус и риски |
+|---|---|---|
+| Клиенты, токены, настройки | D1 (до 10 ГБ на базу, 1 ТБ на аккаунт) | ✅ |
+| Бот | Worker + webhook | ✅ уже работает для текущего бота |
+| Расписание | Cron Triggers (от 1 мин), Durable Object Alarms | ✅ |
+| Сбор Facebook | Containers + Chromium (прототип уже есть) | ✅, но IP Cloudflare — дата-центровые: у каждого соца должен быть прокси клиента |
+| Изоляция клиентов в сборщике | Durable Object на клиента (`getByName(tenantId)`) | 🔧 следующий этап: сейчас сборщик на одного владельца |
+| Сбор Keitaro | `fetch` из Worker по расписанию | ⚠️ у Workers есть ограничения на порты и прямые IP. Проверить на реальном трекере, запасной вариант — запрос через контейнер |
+| История и расчёты (ALL, ROI) | D1 / SQLite в Durable Object (10 ГБ на клиента) | 🔧 перенос логики из Apps Script |
+| Дашборд | Worker/Pages + D1 | ✅ веб-дашборд. Копия Google Sheets на клиента возможна через Google API, но упирается в квоты |
+| Раздача ZIP плагина и обновлений | Worker / R2 | ✅ |
+| Приём оплаты | **нет своего биллинга** | внешний провайдер + webhook, или Telegram Stars |
+| Публикация в Chrome Web Store | **не Cloudflare** | раздел 4 |
+
+**Стоимость** (оценка по тарифам Containers: CPU $0.00002/vCPU·с, память $0.0000025/ГиБ·с, плюс $5/мес Workers Paid с включёнными квотами):
+- Chromium (`standard-1`), ~3 минуты на сбор: примерно $0.004 за сбор. Каждые 15 минут это ~$10/мес на соц, раз в час — ~$2.5/мес.
+- Дешевле: Chromium запускать только для подтверждения или обновления сессии, а регулярные запросы к Graph API делать лёгким контейнером (`lite`) с HTTP-клиентом через прокси соца. Это центы в месяц. Workers сами не умеют ходить через HTTP-прокси, поэтому нужен контейнер.
+
+## 4. Плагин: Chrome Web Store или ZIP
+
+**Как у Dolphin.** Dolphin x Server опубликован в Chrome Web Store: умеет искать токены и передавать cookies и прокси в Dolphin. Значит, такой класс расширений в магазин пропускают, но при строгом соблюдении правил.
+
+Требования магазина (с обновлением правил от 01.07.2026, проверки с 01.08.2026):
+- **Одна цель:** «подключение рекламного аккаунта Facebook к сервису JS Control». Собирать можно только данные, строго необходимые для этой цели (Limited Use).
+- **Политика конфиденциальности** по ссылке и заполненный раздел Privacy practices: какие данные (cookies, токен, User-Agent, прокси), зачем, кому.
+- **Явное согласие** перед передачей cookies. Галочка в 0.7.0 уже есть.
+- **Минимум прав:**
+  - убрать `https://*/*`: адрес сервера фиксированный;
+  - `cookies` оставить необязательным;
+  - убрать recorder (`webRequest`), если он не нужен клиенту.
+- **Никакого удалённого кода**, понятный (не обфусцированный) код.
+- **Из магазинной сборки убрать:**
+  - запись запросов;
+  - импорт токена;
+  - кнопку тестовой кампании;
+  - демо-ключ;
+  - генератор ключа владельца;
+  - ручные серверные кнопки.
+- Аккаунт разработчика ($5, верификация личности). Публикация **по ссылке (unlisted)**, без поиска. Каждое обновление проходит проверку, от нескольких часов до нескольких дней.
+- **Риск:** отказ или снятие из-за передачи сессии, жалобы Meta. Поэтому нужен запасной канал.
+
+**Как у FBacc.** FBacc ставится по гайду с сайта или из Chrome Web Store.
+- В обычном Chrome вне магазина можно поставить только через «Загрузить распакованное» в режиме разработчика. На Windows `.crx` вне магазина блокируется, автообновления нет.
+- Антидетект-браузеры (Dolphin Anty, AdsPower, Octo), где арбитражники и держат соцы, добавляют расширения в профили из файла или по ссылке магазина. Для них ZIP — нормальный основной путь.
+- Нужно: раздача ZIP с платформы (`/plugin`), проверка версии с баннером «Доступно обновление», инструкция для каждого антидетекта.
+
+**Рекомендация:** один код и две сборки.
+1. `store` — минимальные права, публикация unlisted в Chrome Web Store.
+2. `direct` — ZIP для антидетектов и на случай проблем с магазином.
+
+Обе входят по `jsi_` токену, ключ `js_srv_` клиенту больше не нужен.
+
+## 5. Этапы
+
+1. ✅ **Доступ** (эта ветка): токены, оплата webhook и Stars, мастер в боте, вход плагина, заготовка дашборда.
+2. **Сборщик на много клиентов:**
+   - Durable Object на клиента;
+   - сборщик принимает вход по `jsi_` через service binding с платформой;
+   - лимит соцов по тарифу;
+   - плагин переходит на `jsi_`.
+3. **Расчёты:** перенос логики Dolphin/Keitaro/ALL из Apps Script в Worker + D1, цифры на дашборде, ежедневный отчёт в бот.
+4. **Плагин:** сборки `store` и `direct`, политика конфиденциальности, публикация unlisted, баннер обновлений.
+5. **Продажи:** лендинг, платёжный провайдер, напоминания о продлении.
+
+## 6. Как развернуть платформу (когда решим)
+
+```sh
+cd platform
+npx wrangler d1 create js-control-platform        # id → wrangler.jsonc
+npx wrangler d1 migrations apply js-control-platform --remote
+npx wrangler secret put TELEGRAM_BOT_TOKEN         # НОВЫЙ бот для клиентов
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+npx wrangler secret put BILLING_WEBHOOK_SECRET
+npx wrangler secret put MASTER_KEY                 # openssl rand -base64 32; потеря = потеря ключей клиентов
+npx wrangler deploy
+# setWebhook: url=<PUBLIC_URL>/telegram, secret_token=<TELEGRAM_WEBHOOK_SECRET>
+```
+
+## Источники
+
+- [Bot Payments API for Digital Goods (Telegram Stars)](https://core.telegram.org/bots/payments-stars)
+- [Chrome Web Store policy updates 2026](https://developer.chrome.com/blog/cws-policy-updates-2026), [Limited Use](https://developer.chrome.com/docs/webstore/program-policies/limited-use), [Program Policies](https://developer.chrome.com/docs/webstore/program-policies/policies)
+- [Установка расширений вне магазина](https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions), [Chrome extensions deployment FAQ](https://www.chromium.org/developers/extensions-deployment-faq/)
+- [Dolphin x Server в Chrome Web Store](https://chromewebstore.google.com/detail/dolphin-x-server/dihicliaoakcfiokadjibcobbemgdbgg), [FBacc](https://teletype.in/@finikoff/fb_acc_io)
+- [Cloudflare Containers: лимиты](https://github.com/cloudflare/cloudflare-docs/blob/production/src/content/docs/containers/platform-details/limits.mdx), [changelog](https://developers.cloudflare.com/changelog/product/containers/)
+- [D1 limits](https://developers.cloudflare.com/d1/platform/limits), [Durable Objects limits](https://developers.cloudflare.com/durable-objects/platform/limits), [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)

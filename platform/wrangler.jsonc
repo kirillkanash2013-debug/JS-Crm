@@ -1,0 +1,20 @@
+{
+  // Not deployed yet: create the D1 database and secrets first (see docs/SAAS-ACCESS.md).
+  "name": "js-control-platform",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-01",
+  "d1_databases": [
+    {"binding": "DB", "database_name": "js-control-platform", "database_id": "REPLACE_AFTER_wrangler_d1_create", "migrations_dir": "migrations"}
+  ],
+  "vars": {
+    "PUBLIC_URL": "https://js-control-platform.kirill-kanash2013.workers.dev",
+    "PLUGIN_URL": "https://js-control-platform.kirill-kanash2013.workers.dev/plugin",
+    "COLLECTOR_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev",
+    "BOT_USERNAME": "",
+    "STARS_PRICE_START": "0",
+    "STARS_PRICE_TEAM": "0",
+    "STARS_PRICE_AGENCY": "0"
+  }
+  // Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET,
+  // BILLING_WEBHOOK_SECRET, MASTER_KEY (32 random bytes, base64).
+}
