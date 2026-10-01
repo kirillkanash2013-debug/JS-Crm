@@ -2,6 +2,7 @@ import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
 import {EncryptedStore} from './crypto-store.mjs';
 import {connect} from 'cloudflare:sockets';
+import {checkKeitaroSocket,publicIP} from './keitaro-socket.mjs';
 import {Control,initialState,reply} from './control.mjs';
 import {collectViaApi} from './api-collector.mjs';
 import {graphFetcher} from './proxy-fetch.mjs';
@@ -127,6 +128,7 @@ export default {
 };
 
 async function keitaroContainerCheck(env,origin,key) {
+  try{if(publicIP(new URL(origin).hostname)){const r=await checkKeitaroSocket(origin,key,connect);if(r.result!=='unreachable')return r;}}catch{}
   if(!env.INTERNAL_KEY)return {result:'unreachable',reason:'setup_required'};
   try {
    const c=getContainer(env.BROWSER,'keitaro-api');

@@ -33,7 +33,7 @@ export async function checkKeitaroNode(origin,key,{resolve=lookup,request}={}) {
    req.setTimeout(12000,()=>req.destroy());
    const deadline=setTimeout(()=>req.destroy(),15000);
    req.on('close',()=>clearTimeout(deadline));
-   req.on('error',()=>done({result:'unreachable',reason:'network'}));
+   req.on('error',e=>done({result:'unreachable',reason:'network',networkCode:['ETIMEDOUT','ECONNREFUSED','ECONNRESET','ENETUNREACH','EHOSTUNREACH'].includes(e.code)?e.code:'other'}));
    req.end();
   });
  }catch{return {result:'unreachable',reason:'network'};}

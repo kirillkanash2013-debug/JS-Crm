@@ -22,7 +22,7 @@ export function containerKeitaro(env) {
  return async(origin,key)=>{
   try {
    const r=await env.KEITARO_BRIDGE.check(origin,key);
-   console.log(JSON.stringify({event:'keitaro_check',transport:'container',result:r.result,status:r.status||null,reason:r.reason||null}));
+   console.log(JSON.stringify({event:'keitaro_check',transport:r.transport||'container',result:r.result,status:r.status||null,reason:r.reason||null}));
    return ['ok','bad_key','forbidden','unreachable'].includes(r.result)?r.result:'unreachable';
   }catch{return 'unreachable';}
  };

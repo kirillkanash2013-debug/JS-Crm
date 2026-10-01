@@ -26,7 +26,7 @@ for(let attempt=0;attempt<6;attempt++){
   const r=await fetch('https://js-control-collector-claude.kirill-kanash2013.workers.dev/internal/keitaro-probe',{method:'POST',headers:{Authorization:'Bearer '+smokeKey},signal:AbortSignal.timeout(45000)});
   const s=await r.json();
   if(r.ok&&s.result==='bad_key'&&s.status===401){console.log('Keitaro IP container probe passed: unauthenticated API returned 401');keitaroVerified=true;break;}
-  console.log('Waiting for Keitaro container, result '+String(s.result||s.error||'unknown'));
+  console.log('Waiting for Keitaro container, result '+JSON.stringify({result:s.result,reason:s.reason,status:s.status,networkCode:s.networkCode,transport:s.transport,error:s.error}));
  }catch{console.log('Waiting for Keitaro container');}
  await new Promise(r=>setTimeout(r,5000));
 }
