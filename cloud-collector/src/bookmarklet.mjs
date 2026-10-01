@@ -22,7 +22,10 @@ export function captureSession(origin) {
   if (!/^\d{3,30}$/.test(userId) || !tokens.length) { alert('Не удалось найти доступ. Дождитесь полной загрузки Ads Manager (список кампаний) и нажмите закладку ещё раз.'); return; }
   var data = JSON.stringify({v: 1, userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent});
   var b64 = btoa(unescape(encodeURIComponent(data))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  window.open(origin + '/connect#s=' + b64, '_blank');
+  var url = origin + '/connect#s=' + b64;
+  // Popups are often blocked for a bookmarklet; fall back to the current tab.
+  var w = window.open(url, '_blank');
+  if (!w) location.href = url;
 }
 
 // AdsPower variant: besides the token, it tries the AdsPower local API
@@ -51,7 +54,10 @@ export function captureAdsPower(origin) {
   var open = function (proxy) {
     var data = JSON.stringify({v: 1, userId: userId, name: name.slice(0, 150), tokens: tokens, ua: navigator.userAgent, proxy: proxy || null, source: 'adspower'});
     var b64 = btoa(unescape(encodeURIComponent(data))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    window.open(origin + '/connect#s=' + b64, '_blank');
+    var url = origin + '/connect#s=' + b64;
+    // Popups are often blocked for a bookmarklet; fall back to the current tab.
+    var w = window.open(url, '_blank');
+    if (!w) location.href = url;
   };
   var tryApi = function (base, next) {
     try {
