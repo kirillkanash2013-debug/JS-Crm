@@ -55,7 +55,7 @@ export class SqlArchive {
   }
 
   // Stores one collection result and returns the compact summary for /v1/status.
-  async record(userId, snapshot, mode = snapshot.mode || 'api') {
+  async record(userId, snapshot, mode = snapshot.mode || 'api', label = null) {
     const at = snapshot.observedAt;
     const social = snapshot.social;
     for (const a of social.accounts) {
@@ -85,7 +85,7 @@ export class SqlArchive {
     const summary = summarize(snapshot, mode);
     this.sql.exec(`INSERT INTO socials (user_id,name,last_at,last_mode,summary) VALUES (?,?,?,?,?)
       ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, last_at=excluded.last_at, last_mode=excluded.last_mode, summary=excluded.summary`,
-      userId, social.user.name, at, mode, JSON.stringify(summary));
+      userId, label || social.user.name, at, mode, JSON.stringify(summary));
     this.sql.exec('INSERT INTO runs (at,user_id,mode,accounts,campaigns,spend) VALUES (?,?,?,?,?,?)', at, userId, mode, summary.accounts, summary.campaigns, JSON.stringify(summary.spendByCurrency));
     if (Math.random() < 0.02) this.sql.exec('DELETE FROM runs WHERE at < ?', new Date(Date.parse(at) - RUN_LOG_DAYS * 864e5).toISOString());
     await this.saveRaw(userId, snapshot);

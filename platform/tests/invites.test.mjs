@@ -8,7 +8,7 @@ import {route} from '../src/index.mjs';
 import {D1Store, MemoryStore} from '../src/store.mjs';
 import {hashToken, newToken} from '../src/tokens.mjs';
 
-const env = {MASTER_KEY: btoa('k'.repeat(32)), PUBLIC_URL: 'https://p.test', PLUGIN_URL: 'https://p.test/plugin', BOT_USERNAME: 'jscontrol_bot',
+const env = {MASTER_KEY: btoa('k'.repeat(32)), PUBLIC_URL: 'https://p.test', PLUGIN_URL: 'https://p.test/plugin', IMPORT_URL: 'https://p.test/import', BOT_USERNAME: 'jscontrol_bot',
   TELEGRAM_WEBHOOK_SECRET: 's'.repeat(20), ADMIN_CHAT_IDS: '100, 101', STARS_PRICE_START: '0'};
 
 function harness() {

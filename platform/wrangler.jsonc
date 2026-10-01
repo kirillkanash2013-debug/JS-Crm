@@ -9,6 +9,7 @@
   "vars": {
     "PUBLIC_URL": "https://js-control-platform.kirill-kanash2013.workers.dev",
     "PLUGIN_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev/bookmarklet",
+    "IMPORT_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev/import",
     "COLLECTOR_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev",
     "BOT_USERNAME": "",
     "ADMIN_CHAT_IDS": "",

@@ -70,9 +70,9 @@ export function parseProxy(proxy) {
   return {type: u.protocol === 'http:' ? 'http' : 'socks5', host, port: Number(u.port), username: proxy.username || '', password: proxy.password || ''};
 }
 
-async function httpTunnel(socket, p) {
+async function httpTunnel(socket, p, host) {
   const auth = p.username ? 'Proxy-Authorization: Basic ' + btoa(p.username + ':' + p.password) + '\r\n' : '';
-  await write(socket, enc.encode('CONNECT ' + GRAPH_HOST + ':443 HTTP/1.1\r\nHost: ' + GRAPH_HOST + ':443\r\n' + auth + '\r\n'));
+  await write(socket, enc.encode('CONNECT ' + host + ':443 HTTP/1.1\r\nHost: ' + host + ':443\r\n' + auth + '\r\n'));
   const reader = new Reader(socket.readable);
   try {
     const head = dec.decode(await reader.until(enc.encode('\r\n\r\n'), MAX_HEAD));
@@ -83,7 +83,7 @@ async function httpTunnel(socket, p) {
   } finally { reader.release(); }
 }
 
-async function socksTunnel(socket, p) {
+async function socksTunnel(socket, p, hostName) {
   const reader = new Reader(socket.readable);
   try {
     await write(socket, new Uint8Array(p.username ? [5, 2, 0, 2] : [5, 1, 0]));
@@ -96,7 +96,7 @@ async function socksTunnel(socket, p) {
       const [, ok] = await reader.exact(2);
       if (ok !== 0) throw new ProxyError('Proxy rejected the login or password');
     }
-    const host = enc.encode(GRAPH_HOST);
+    const host = enc.encode(hostName);
     await write(socket, new Uint8Array([5, 1, 0, 3, host.length, ...host, 443 >> 8, 443 & 255]));
     const [, rep, , atyp] = await reader.exact(4);
     if (rep !== 0) throw new ProxyError('SOCKS5 proxy could not connect (code ' + rep + ')');
@@ -144,22 +144,26 @@ async function readResponse(socket) {
   } finally { reader.release(); }
 }
 
-// One HTTPS GET to graph.facebook.com through the proxy (or directly).
-export async function graphGet(pathAndQuery, {connect, proxy, headers, signal}) {
+// Hosts the collector may reach through a client's proxy.
+const ALLOWED_HOSTS = new Set([GRAPH_HOST, 'adsmanager.facebook.com', 'business.facebook.com', 'www.facebook.com']);
+
+// One HTTPS GET through the proxy (or directly).
+export async function httpsGet(host, pathAndQuery, {connect, proxy, headers, signal}) {
+  if (!ALLOWED_HOSTS.has(host)) throw new ProxyError('Host not allowed');
   const p = parseProxy(proxy);
   const socket = p
     ? connect({hostname: p.host, port: p.port}, {secureTransport: 'starttls'})
-    : connect({hostname: GRAPH_HOST, port: 443}, {secureTransport: 'on'});
+    : connect({hostname: host, port: 443}, {secureTransport: 'on'});
   let tls = p ? null : socket;
   const abort = () => { try { (tls || socket).close(); } catch {} };
   signal?.addEventListener('abort', abort, {once: true});
   try {
     if (p) {
       try { await socket.opened; } catch { throw new ProxyError('Proxy is unreachable'); }
-      await (p.type === 'http' ? httpTunnel(socket, p) : socksTunnel(socket, p));
-      tls = socket.startTls({expectedServerHostname: GRAPH_HOST});
+      await (p.type === 'http' ? httpTunnel(socket, p, host) : socksTunnel(socket, p, host));
+      tls = socket.startTls({expectedServerHostname: host});
     }
-    const lines = ['GET ' + pathAndQuery + ' HTTP/1.1', 'Host: ' + GRAPH_HOST, 'Connection: close', 'Accept-Encoding: identity'];
+    const lines = ['GET ' + pathAndQuery + ' HTTP/1.1', 'Host: ' + host, 'Connection: close', 'Accept-Encoding: identity'];
     for (const [k, v] of Object.entries(headers || {})) if (v) lines.push(k + ': ' + String(v).replace(/[\r\n]/g, ''));
     await write(tls, enc.encode(lines.join('\r\n') + '\r\n\r\n'));
     return await readResponse(tls);
@@ -171,6 +175,8 @@ export async function graphGet(pathAndQuery, {connect, proxy, headers, signal}) 
     abort();
   }
 }
+
+export const graphGet = (pathAndQuery, options) => httpsGet(GRAPH_HOST, pathAndQuery, options);
 
 const COOKIE_DOMAINS = new Set(['facebook.com', '.facebook.com', 'graph.facebook.com', '.graph.facebook.com']);
 

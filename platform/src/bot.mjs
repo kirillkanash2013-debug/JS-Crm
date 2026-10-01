@@ -87,8 +87,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
 
   function pluginText() {
-    return '1. Добавьте закладку JS Control: ' + env.PLUGIN_URL +
-      '\n2. Откройте Ads Manager нужного соца и нажмите закладку.\n3. На открывшейся странице вставьте <b>токен интеграции</b>, укажите прокси соца и подтвердите. Для каждого соца — то же самое в его профиле.';
+    return 'Самый быстрый способ — подключить антидетект-браузер, и все профили подтянутся сами:\n' + env.IMPORT_URL +
+      '\nВставьте токен интеграции и API-токен антидетекта (Dolphin Anty). JS Control сам возьмёт профили, их прокси и cookies.\n\n' +
+      'Либо по одному соцу через закладку: ' + env.PLUGIN_URL + ' — откройте Ads Manager нужного соца и нажмите закладку.';
   }
 
   async function subscription(chatId, tenant) {

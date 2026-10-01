@@ -33,6 +33,58 @@ const page = (title, body, script = '') => `<!doctype html><html lang="ru"><head
 export const PAGE_HEADERS = {'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY',
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"};
 
+// Fastest, fully server-side connection: the client pastes the integration
+// token and the antidetect API token; the server reads every profile, proxy
+// and cookie and connects all Facebook socials. Nothing runs on the client.
+export function importPage() {
+  return page('JS Control — быстрое подключение', `<h1>Быстрое подключение профилей</h1>
+<p>Подключите антидетект-браузер один раз — JS Control сам возьмёт все профили, их прокси и cookies и начнёт собирать статистику. Устанавливать ничего не нужно.</p>
+<section>
+<label for="key">Токен из бота JS Control</label><input id="key" type="password" autocomplete="off" placeholder="jsi_…">
+<label for="type">Антидетект-браузер</label><select id="type"><option value="dolphin-anty">Dolphin Anty</option></select>
+<label for="token">API-токен антидетекта</label><input id="token" type="password" autocomplete="off" placeholder="Dolphin Anty → Настройки → API">
+<p class="hint">Токен берётся в антидетекте и даёт доступ только к списку профилей, их прокси и cookies. Включите облачную синхронизацию профилей, иначе cookies не отдаются.</p>
+<button id="go" disabled>Подключить и импортировать профили</button><div id="status" class="status" role="status"></div>
+<div id="result"></div></section>
+<p class="hint">Профиль = соц: название соца в отчётах совпадает с названием профиля. Прокси и cookies берутся из профиля. Повторный импорт раз в сутки подхватывает новые профили автоматически.</p>`, '<script src="/import.js"></script>');
+}
+
+export function importScript() {
+  return `(function(){'use strict';
+var $=function(id){return document.getElementById(id);};
+var show=function(t,cls){var s=$('status');s.textContent=t;s.className='status '+(cls||'');};
+try{$('key').value=localStorage.getItem('jsc_key')||'';}catch(e){}
+var sync=function(){$('go').disabled=!(/^(jsi|js_srv)_[A-Za-z0-9_-]{43}$/.test($('key').value.trim())&&$('token').value.trim());};
+$('key').oninput=sync;$('token').oninput=sync;sync();
+var ERR={401:'Токен JS Control не подошёл. Возьмите его в боте.',402:'Подписка закончилась. Продлите её в боте.',
+  antidetect_auth:'Антидетект не принял API-токен. Проверьте токен.',antidetect_type:'Этот антидетект пока не поддерживается.',
+  antidetect_unavailable:'Не удалось связаться с антидетектом. Попробуйте позже.',antidetect_token:'Вставьте API-токен антидетекта.'};
+var api=function(path,body,key,method){return fetch(path,{method:method||'POST',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(ERR[j.error]||('Ошибка '+r.status));return j;});});};
+var REASONS={no_proxy:'без прокси',no_cookies:'нет cookies (включите синхронизацию)',no_facebook:'нет входа в Facebook',logged_out:'сессия Facebook истекла',proxy:'прокси не отвечает',limit:'превышен лимит тарифа',other_user:'другой аккаунт',no_token:'берётся через браузер'};
+$('go').onclick=function(){
+  var key=$('key').value.trim();try{localStorage.setItem('jsc_key',key);}catch(e){}
+  $('go').disabled=true;show('Читаю профили антидетекта…');$('result').textContent='';
+  api('/v1/antidetect',{type:$('type').value,token:$('token').value.trim()},key)
+   .then(function(r){show('Антидетект подключён: профилей '+r.profiles+'. Импортирую соцы (это может занять пару минут)…');return poll(key,0);})
+   .catch(function(e){show(e.message,'err');$('go').disabled=false;});
+};
+function poll(key,n){return api('/v1/status',null,key,'GET').then(function(s){
+  var imp=s.antidetect&&s.antidetect.lastImport;
+  if(imp){report(s,imp);$('go').disabled=false;return;}
+  if(n>40){show('Импорт выполняется в фоне. Обновите страницу позже, чтобы увидеть результат.','');$('go').disabled=false;return;}
+  show('Импортирую соцы… ('+(n+1)+')');return new Promise(function(r){setTimeout(r,5000);}).then(function(){return poll(key,n+1);});
+});}
+function report(s,imp){
+  var ok=(s.connections||[]).length;
+  show('Готово! Подключено соцов: '+ok+'. Новых: '+(imp.added||0)+', обновлено: '+(imp.updated||0)+'. Данные обновляются каждые 15 минут.','ok');
+  var sk=imp.skipped||[];if(!sk.length)return;
+  var by={};sk.forEach(function(x){by[x.reason]=(by[x.reason]||0)+1;});
+  var parts=[];for(var k in by)parts.push((REASONS[k]||k)+': '+by[k]);
+  $('result').innerHTML='<p class="hint">Пропущены профили — '+parts.join(', ')+'.</p>';
+}
+})();`;
+}
+
 export function bookmarkletPage(origin) {
   return page('JS Control — закладка', `<h1>Закладка JS Control</h1><p>Вместо расширения — одна кнопка на панели закладок. Работает в Chrome и антидетект-браузерах (Dolphin Anty, AdsPower, Octo и др.).</p>
 <section><ol><li>Включите панель закладок: <b>Ctrl+Shift+B</b> (Mac: <b>⌘+Shift+B</b>).</li><li>Перетащите эту кнопку на панель закладок:</li></ol>

@@ -7,7 +7,7 @@ import {openSecret} from '../src/secrets.mjs';
 import {hashToken} from '../src/tokens.mjs';
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
-const env = {MASTER_KEY, PUBLIC_URL: 'https://p.test', PLUGIN_URL: 'https://p.test/plugin', COLLECTOR_URL: 'https://c.test', BOT_USERNAME: 'jscontrol_bot',
+const env = {MASTER_KEY, PUBLIC_URL: 'https://p.test', PLUGIN_URL: 'https://p.test/plugin', IMPORT_URL: 'https://p.test/import', COLLECTOR_URL: 'https://c.test', BOT_USERNAME: 'jscontrol_bot',
   TELEGRAM_WEBHOOK_SECRET: 'tg-secret-123', BILLING_WEBHOOK_SECRET: 'bill-secret', STARS_PRICE_START: '500', STARS_PRICE_TEAM: '0', STARS_PRICE_AGENCY: '0'};
 
 function harness(keitaro = 'ok') {

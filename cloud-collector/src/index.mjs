@@ -8,7 +8,10 @@ import {graphFetcher} from './proxy-fetch.mjs';
 import {resolveCaller} from './tenants.mjs';
 import {SqlArchive} from './archive.mjs';
 import {cleanConnection} from './connection.mjs';
-import {PAGE_HEADERS,bookmarkletPage,connectPage,connectScript} from './pages.mjs';
+import {PAGE_HEADERS,bookmarkletPage,connectPage,connectScript,importPage,importScript} from './pages.mjs';
+import {antidetectClient,matchProfile} from './antidetect/index.mjs';
+import {importProfiles} from './importer.mjs';
+import {tokenFromSession} from './session-token.mjs';
 import {graph} from '../../extension/meta.mjs';
 
 // New connection check without a browser: /me through the social's proxy
@@ -25,7 +28,7 @@ async function validateApi(b,containerValidate){
  if(lastError?.code===1&&c.cookies.length)return containerValidate(b);
  throw lastError;
 }
-const paths=new Map([['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST']]);
+const paths=new Map([['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
 export class BrowserContainer extends Container {
@@ -48,7 +51,14 @@ export class CollectorControl extends DurableObject {
    };
    this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,x=>call('/validate',x)),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
     // Cheap path: Graph API through the social's proxy, right here in the Durable Object.
-    collectApi:(c,range,previous)=>collectViaApi(c,range,{fetcher:graphFetcher({connect,connection:c}),previous})},
+    collectApi:(c,range,previous)=>collectViaApi(c,range,{fetcher:graphFetcher({connect,connection:c}),previous}),
+    // Fresh token from the live cookies without a browser.
+    refreshToken:async c=>(await tokenFromSession(c,{connect})).tokens[0],
+    // Antidetect integration: the client pastes only an API token; profiles,
+    // proxies and cookies are read here, never on the client's machine.
+    antidetectProfiles:config=>antidetectClient(config).profiles(),
+    importProfiles:config=>importProfiles(antidetectClient(config),{connect,browserAvailable:true}),
+    matchProfile:async(config,userAgent)=>matchProfile(await antidetectClient(config).profiles(),userAgent)},
     // Client's own database (SQLite in this Durable Object) + raw archive in R2.
     new SqlArchive(ctx.storage.sql,env.ARCHIVE||null));
   });
@@ -76,6 +86,9 @@ export default {
   if(request.method==='GET'&&url.pathname==='/bookmarklet')return new Response(bookmarkletPage(url.origin),{headers:PAGE_HEADERS});
   if(request.method==='GET'&&url.pathname==='/connect')return new Response(connectPage(),{headers:PAGE_HEADERS});
   if(request.method==='GET'&&url.pathname==='/connect.js')return new Response(connectScript(),{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store'}});
+  // Fully server-side quick connect: paste one antidetect API token, import all profiles.
+  if(request.method==='GET'&&url.pathname==='/import')return new Response(importPage(),{headers:PAGE_HEADERS});
+  if(request.method==='GET'&&url.pathname==='/import.js')return new Response(importScript(),{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store'}});
   if(request.method==='GET'&&url.pathname==='/health')return reply(200,{ok:true,service:'js-control-collector',platform:'cloudflare-containers',mode:'live',ownerConfigured:/^js_srv_[A-Za-z0-9_-]{43}$/.test(env.JS_CONTROL_OWNER_KEY||'')});
   if(request.method==='POST'&&url.pathname==='/internal/smoke'){if(!env.DEPLOY_SMOKE_KEY||!env.INTERNAL_KEY||!env.VAULT_KEY||!await equal(request.headers.get('authorization'),'Bearer '+env.DEPLOY_SMOKE_KEY))return reply(401,{error:'unauthorized'});try{return await env.CONTROL.getByName('owner').fetch(new Request('http://internal/internal/smoke',{method:'POST',headers:{'x-control-internal':env.INTERNAL_KEY}}));}catch{return reply(503,{error:'browser_unavailable'});}}
   if(!paths.get(url.pathname)?.split(',').includes(request.method))return reply(404,{error:'not_found'});
