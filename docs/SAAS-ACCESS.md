@@ -232,6 +232,29 @@ npx wrangler deploy
 # setWebhook: url=<PUBLIC_URL>/telegram, secret_token=<TELEGRAM_WEBHOOK_SECRET>
 ```
 
+## Запуск бота через GitHub Actions (без командной строки)
+
+Автодеплой платформы — workflow `.github/workflows/platform-deploy.yml` (кнопка
+Run в Actions). Разовая настройка перед первым запуском:
+
+1. **@BotFather** в Telegram → создать бота → скопировать токен и `@username`.
+2. **Cloudflare → Workers & Pages → D1 → Create** базу `js-control-platform` →
+   скопировать её id. Вписать id в `platform/wrangler.jsonc` и раскомментировать
+   привязку той же базы в `cloud-collector/wrangler.jsonc` (это делает Claude).
+3. **@userinfobot** → скопировать свой числовой Telegram id.
+4. В `platform/wrangler.jsonc` проставить `BOT_USERNAME` (без `@`) и
+   `ADMIN_CHAT_IDS` (твой id) — делает Claude.
+5. **Repo → Settings → Secrets and variables → Actions → Secret**
+   `TELEGRAM_BOT_TOKEN` = токен из п.1. (`CLOUDFLARE_API_TOKEN`,
+   `CLOUDFLARE_ACCOUNT_ID` уже есть.)
+6. Запустить `platform-deploy` с `provision_secrets = true`. Workflow сам
+   прогонит миграции, сгенерит `MASTER_KEY` и секреты вебхука (нигде не печатая
+   их), задеплоит воркер и зарегистрирует вебхук. Повторные деплои — с
+   `provision_secrets = false`, чтобы `MASTER_KEY` не менялся.
+
+После этого путь клиента: написать боту → `/testtoken` (имитация оплаты) или
+инвайт-код → онбординг → подключить соц плагином → дашборд.
+
 ## Источники
 
 - [Bot Payments API for Digital Goods (Telegram Stars)](https://core.telegram.org/bots/payments-stars)
