@@ -15,11 +15,13 @@ import {importProfiles} from './importer.mjs';
 import {tokenFromSession} from './session-token.mjs';
 import {graph} from '../../extension/meta.mjs';
 
-// New connection check without a browser: /me through the social's proxy
-// with each token the page offered. Falls back to the browser container
-// only when Graph rejects the request form (code 1) and cookies exist.
-async function validateApi(b,containerValidate){
- const c=cleanConnection(b);let lastError;
+// Connection check. With a proxy → the Node container (reliable SOCKS5+TLS,
+// Workers can't do SOCKS5+login). Without a proxy → the Worker socket path,
+// trying each token the page offered; browser fallback on request-form reject.
+async function validateApi(b,{apiValidate,containerValidate}){
+ const c=cleanConnection(b);
+ if(c.proxy){const {tokenCandidates,...clean}=c;await apiValidate({...clean});return clean;}
+ let lastError;
  for(const token of c.tokenCandidates){
   try{const me=await graph('me',{fields:'id'},token,graphFetcher({connect,connection:{...c,token}}));
    if(String(me.id)!==c.userId)throw Object.assign(new Error('Another user'),{code:'identity'});
@@ -48,11 +50,12 @@ export class CollectorControl extends DurableObject {
    this.vault=new EncryptedStore(ctx.storage,env.VAULT_KEY);
    const call=async(path,body)=>{
     const c=getContainer(env.BROWSER,'browser:'+ctx.id.toString());const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));const value=await r.json();
-    if(!r.ok)throw Object.assign(new Error('Collector failed'),{code:value.code});return value;
+    if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail});return value;
    };
-   this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,x=>call('/validate',x)),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
-    // Cheap path: Graph API through the social's proxy, right here in the Durable Object.
-    collectApi:(c,range,previous)=>collectViaApi(c,range,{fetcher:graphFetcher({connect,connection:c}),previous}),
+   this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,{apiValidate:x=>call('/api-validate',x),containerValidate:x=>call('/validate',x)}),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
+    // Cheap path: with a proxy use the Node container (reliable SOCKS5+TLS);
+    // without a proxy, Graph API straight from the Durable Object socket.
+    collectApi:(c,range,previous)=>c.proxy?call('/api-collect',{connection:c,range,previous}):collectViaApi(c,range,{fetcher:graphFetcher({connect,connection:c}),previous}),
     // Fresh token from the live cookies without a browser.
     refreshToken:async c=>(await tokenFromSession(c,{connect})).tokens[0],
     // Antidetect integration: the client pastes only an API token; profiles,
