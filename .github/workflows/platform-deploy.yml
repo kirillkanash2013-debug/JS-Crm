@@ -1,24 +1,22 @@
 name: Provision & deploy JS Control platform (bot + D1)
-# Manual only: run from the Actions tab after the one-time setup below.
+# Runs on push to the SaaS branch (workflow_dispatch needs the file on the
+# default branch, which we must not touch). Secrets are generated once and then
+# left alone, so repeated pushes redeploy the bot without rotating MASTER_KEY.
 #
 # One-time setup you do first (see docs/SAAS-ACCESS.md → "Запуск бота"):
-#   1. @BotFather: create a bot → copy its token and @username.
-#   2. Cloudflare dashboard → Workers & Pages → D1 → create "js-control-platform"
-#      → copy the database id. Put it in platform/wrangler.jsonc and
-#      cloud-collector/wrangler.jsonc (Claude does this commit for you).
-#   3. @userinfobot: copy your numeric Telegram id.
-#   4. Repository → Settings → Secrets and variables → Actions:
-#        Secret  TELEGRAM_BOT_TOKEN = <token from BotFather>
-#        (CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID already exist.)
-#      Variables already live in platform/wrangler.jsonc (BOT_USERNAME, ADMIN_CHAT_IDS).
-# Then run this workflow once with provision_secrets = true. Later deploys: false.
+#   1. @BotFather: create a bot → token + @username.
+#   2. Cloudflare → D1 → create "js-control-platform" → id into the wrangler
+#      configs (Claude commits this).
+#   3. @userinfobot: your numeric Telegram id → ADMIN_CHAT_IDS (Claude commits).
+#   4. Repo → Settings → Secrets and variables → Actions → Secret
+#      TELEGRAM_BOT_TOKEN = <token>. (CLOUDFLARE_API_TOKEN / _ACCOUNT_ID exist.)
 on:
+  push:
+    branches: [claude/saas-access]
+    paths:
+      - 'platform/**'
+      - '.github/workflows/platform-deploy.yml'
   workflow_dispatch:
-    inputs:
-      provision_secrets:
-        description: 'Generate MASTER_KEY + webhook secrets and set the bot token (true on the FIRST run only; false afterwards so MASTER_KEY never rotates).'
-        type: boolean
-        default: true
 permissions:
   contents: read
 concurrency:
@@ -60,31 +58,30 @@ jobs:
         working-directory: platform
         run: npx --yes wrangler d1 migrations apply js-control-platform --remote
 
-      - name: Provision secrets (first run only)
-        if: ${{ inputs.provision_secrets }}
-        working-directory: platform
-        run: |
-          set -euo pipefail
-          # MASTER_KEY: generated here, printed nowhere, stored only as a Worker secret.
-          printf '%s' "$(openssl rand -base64 32)" | npx --yes wrangler secret put MASTER_KEY
-          # Webhook secret: reused below to register the Telegram webhook in this same run.
-          WH="$(openssl rand -hex 24)"; echo "::add-mask::$WH"; echo "WEBHOOK_SECRET=$WH" >> "$GITHUB_ENV"
-          printf '%s' "$WH" | npx --yes wrangler secret put TELEGRAM_WEBHOOK_SECRET
-          printf '%s' "$(openssl rand -hex 24)" | npx --yes wrangler secret put BILLING_WEBHOOK_SECRET
-          printf '%s' '${{ secrets.TELEGRAM_BOT_TOKEN }}' | npx --yes wrangler secret put TELEGRAM_BOT_TOKEN
-
       - name: Deploy the platform worker
         working-directory: platform
         run: npx --yes wrangler deploy
 
-      - name: Register the Telegram webhook (first run only)
-        if: ${{ inputs.provision_secrets }}
+      - name: Provision secrets and Telegram webhook (first run only)
+        working-directory: platform
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           set -euo pipefail
-          curl -fsS "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/setWebhook" \
+          HAVE="$(npx --yes wrangler secret list 2>/dev/null || echo '[]')"
+          if echo "$HAVE" | grep -q '"MASTER_KEY"'; then
+            echo "Secrets already provisioned — leaving MASTER_KEY untouched."; exit 0
+          fi
+          # Generated here, printed nowhere, stored only as Worker secrets.
+          printf '%s' "$(openssl rand -base64 32)" | npx --yes wrangler secret put MASTER_KEY
+          WH="$(openssl rand -hex 24)"; echo "::add-mask::$WH"
+          printf '%s' "$WH"  | npx --yes wrangler secret put TELEGRAM_WEBHOOK_SECRET
+          printf '%s' "$(openssl rand -hex 24)" | npx --yes wrangler secret put BILLING_WEBHOOK_SECRET
+          printf '%s' "$BOT_TOKEN" | npx --yes wrangler secret put TELEGRAM_BOT_TOKEN
+          curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
             --data-urlencode "url=https://js-control-platform.kirill-kanash2013.workers.dev/telegram" \
-            --data-urlencode "secret_token=${WEBHOOK_SECRET}" \
-            --data-urlencode "allowed_updates=[\"message\",\"callback_query\",\"pre_checkout_query\"]"
+            --data-urlencode "secret_token=${WH}" \
+            --data-urlencode 'allowed_updates=["message","callback_query","pre_checkout_query"]'
           echo
 
       - name: Check the platform is live
