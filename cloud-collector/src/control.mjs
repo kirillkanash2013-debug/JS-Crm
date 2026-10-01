@@ -121,7 +121,7 @@ export class Control {
    const old=this.state.connections[item.userId];
    if(!old&&Object.keys(this.state.connections).length>=limit){skipped.push({name:item.label,reason:'limit'});continue;}
    this.state.connections[item.userId]={...old,...item,token:item.token||old?.token||null,mode:'api',apiFailures:0,
-    schedule:old?.schedule||{minutes:15,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
+    schedule:old?.schedule||{minutes:60,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
    old?updated++:added++;
   }
   j.state='done';

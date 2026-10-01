@@ -81,7 +81,7 @@ function poll(key,n){return api('/v1/status',null,key,'GET').then(function(s){
 });}
 function report(s,imp){
   var ok=(s.connections||[]).length;
-  show('Готово! Подключено соцов: '+ok+'. Новых: '+(imp.added||0)+', обновлено: '+(imp.updated||0)+'. Данные обновляются каждые 15 минут.','ok');
+  show('Готово! Подключено соцов: '+ok+'. Новых: '+(imp.added||0)+', обновлено: '+(imp.updated||0)+'. Данные обновляются раз в час.','ok');
   var sk=imp.skipped||[];if(!sk.length)return;
   var by={};sk.forEach(function(x){by[x.reason]=(by[x.reason]||0)+1;});
   var parts=[];for(var k in by)parts.push((REASONS[k]||k)+': '+by[k]);
@@ -168,7 +168,7 @@ export function connectPage() {
 <p class="hint">Числовой ID берётся из cookies автоматически. Если cookies не вставляете — впишите ID вручную (его тоже показывает наш способ).</p>
 <label for="proxy">Прокси соца (тот же, что в профиле браузера)</label>
 <div class="row"><select id="ptype"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select><input id="proxy" autocomplete="off" placeholder="host:port:логин:пароль"></div>
-<p class="hint" id="proxyNote">Через этот прокси сервер будет обновлять данные каждые 15 минут — Facebook видит привычный IP.</p>
+<p class="hint" id="proxyNote">Через этот прокси сервер будет обновлять данные раз в час — Facebook видит привычный IP.</p>
 <label for="cookies">Cookies профиля (JSON)</label>
 <p class="hint">Экспортируйте cookies профиля в AdsPower (профиль → экспорт cookies) и вставьте сюда. Из них берётся ID соца; с ними сервер сам обновляет доступ при закрытом браузере.</p>
 <textarea id="cookies" placeholder='[{"name":"c_user","value":"100...","domain":".facebook.com"}, ...]'></textarea>
@@ -231,8 +231,8 @@ $('go').onclick=function(){
   $('go').disabled=true;show('status','Проверяю соц через прокси…');
   api('/v1/connections',{userId:userId,token:token,tokenCandidates:(session&&session.tokens||[token]),userAgent:ua,label:$('label').value.trim()||undefined,proxy:proxy||undefined,cookies:cookies})
    .then(function(){show('status','Запускаю первый сбор…');return api('/v1/jobs',{userId:userId,since:today,until:today});})
-   .then(function(){return api('/v1/schedule',{userId:userId,minutes:15});})
-   .then(function(){$('token').value='';$('proxy').value='';$('cookies').value='';show('status','Готово! Соц подключён, данные обновляются каждые 15 минут. Страницу можно закрыть.','ok');})
+   .then(function(){return api('/v1/schedule',{userId:userId,minutes:60});})
+   .then(function(){$('token').value='';$('proxy').value='';$('cookies').value='';show('status','Готово! Соц подключён, данные обновляются раз в час. Страницу можно закрыть.','ok');})
    .catch(function(e){show('status',e.message,'err');$('go').disabled=false;});
 };
 })();`;

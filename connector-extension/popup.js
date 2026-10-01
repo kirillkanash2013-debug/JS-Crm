@@ -95,8 +95,8 @@ $("go").onclick = async () => {
     show("Подключаю соц на сервере…" + proxyInfo);
     await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
     await api("/v1/jobs", key, { userId: session.userId, since: today, until: today });
-    await api("/v1/schedule", key, { userId: session.userId, minutes: 15 });
-    show("✓ Готово! Соц «" + (session.name || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nДанные обновляются каждые 15 минут. Браузер можно закрыть.", "ok");
+    await api("/v1/schedule", key, { userId: session.userId, minutes: 60 });
+    show("✓ Готово! Соц «" + (session.name || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nДанные обновляются раз в час (можно обновить вручную на странице статуса). Браузер можно закрыть.", "ok");
   } catch (e) {
     show((e.message || String(e)) + proxyInfo, "err");
   } finally {
