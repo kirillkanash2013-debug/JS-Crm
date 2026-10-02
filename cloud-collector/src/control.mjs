@@ -5,6 +5,10 @@ const API_PARALLEL=4;
 // client at once, with no need to redistribute the extension.
 const DEFAULT_SCHEDULE_MINUTES=60;
 const IMPORT_USER='__import__';
+// Диапазон сбора «текущего дня»: вчера+сегодня по UTC. Шире одного дня, чтобы
+// текущие сутки любого рекламного аккаунта (FB считает спенд в поясе кабинета)
+// точно попадали в запрос, даже когда пояс аккаунта смещён относительно UTC.
+const COLLECT_RANGE=()=>{const t=Date.now(),d=u=>new Date(u).toISOString().slice(0,10);return {since:d(t-86400000),until:d(t)};};
 const NEEDS_AUTH=['needs_auth','identity',190,102];
 const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
@@ -48,7 +52,7 @@ export class Control {
   if(method==='GET'&&path==='/v1/status')return reply(200,this.status());
   if(method==='GET'&&path==='/v1/report'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,this.archive.report({since:b?.since,until:b?.until,userId:b?.userId||null}));}
   if(method==='GET'&&path==='/v1/changes'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{changes:this.archive.changes({since:b?.since||'1970-01-01',objectId:b?.objectId||null})});}
-  if(method==='GET'&&path==='/v1/campaigns'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{campaigns:this.archive.campaigns({userId:b?.userId||null,date:b?.date||new Date().toISOString().slice(0,10)})});}
+  if(method==='GET'&&path==='/v1/campaigns'){if(!this.archive)return reply(404,{error:'not_found'});const accountToday=b?.accountToday==='1'||b?.accountToday===true;return reply(200,{campaigns:this.archive.campaigns({userId:b?.userId||null,date:accountToday?null:(b?.date||new Date().toISOString().slice(0,10)),accountToday})});}
   if(method==='POST'&&path==='/v1/connections'){
    if(Object.keys(this.state.connections).length>=limit&&!this.state.connections[b?.userId])return reply(409,{error:'social_limit',limit});
    // Bookmark without a proxy: take proxy and name from the antidetect profile with the same User-Agent.
@@ -68,7 +72,7 @@ export class Control {
    // Re-arm the one-time "collected" notification for this (re)connection, so the
    // fresh card gets its "✅ loaded" update even if the social was announced before.
    if(this.state.announced)delete this.state.announced[c.userId];
-   const date=new Date().toISOString().slice(0,10);this.enqueue({userId:c.userId,since:date,until:date});
+   const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});
    await this.persist();return reply(201,{userId:c.userId,label:conn.label,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
   if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');
@@ -95,7 +99,7 @@ export class Control {
   for(const c of Object.values(this.state.connections)){
    // Daily retry of the cheap path; one more rejection sends it back to the browser.
    if(c.mode==='browser'&&c.apiRetryAt<=now){c.mode='api';c.apiFailures=2;}
-   if(c.schedule?.nextAt<=now){const date=new Date().toISOString().slice(0,10);this.enqueue({userId:c.userId,since:date,until:date});c.schedule.nextAt=now+c.schedule.minutes*60000;}
+   if(c.schedule?.nextAt<=now){const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});c.schedule.nextAt=now+c.schedule.minutes*60000;}
   }
   const ad=this.state.antidetect;
   if(ad&&ad.nextAt<=now&&!this.state.jobs.some(j=>j.kind==='import'&&['queued','running'].includes(j.state))){
@@ -166,7 +170,7 @@ export class Control {
   else if(j.action){const a=result?.actionResult;if(!a||a.campaignId!==j.action.campaignId){j.state='failed';j.error={code:'invalid_action_result'};}else{j.state=a.state;j.actionResult=a;j.observedAt=a.observedAt;if(result.storageState)c.storageState=result.storageState;
    // Успешное действие → ставим пересбор, чтобы архив (источник статуса/бюджета)
    // быстро подтянул новое состояние из кабинета (persist ниже назначит аларм).
-   if(a.state==='done'){try{const date=new Date().toISOString().slice(0,10);this.enqueue({userId:j.userId,since:date,until:date});}catch{}}}}
+   if(a.state==='done'){try{const r=COLLECT_RANGE();this.enqueue({userId:j.userId,since:r.since,until:r.until});}catch{}}}}
   else if(!result?.snapshot?.complete||result.snapshot.source!=='facebook-server'||result.snapshot.social?.user.id!==j.userId){j.state='failed';j.error={code:'invalid_snapshot'};}
   else{
    // History goes to the client's database; state keeps only a compact summary.

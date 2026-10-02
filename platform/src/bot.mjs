@@ -264,10 +264,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const fbAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
     const fbTime = fbAt ? new Date(fbAt).toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'}) : '—';
     // Параллельно: кампании по каждому соцу + отчёт Keitaro (не ждём по очереди).
-    // Спенд берём за тот же день (в часовом поясе тенанта), что и Keitaro — иначе
-    // на стыке суток FB-спенд (UTC-«сегодня») и доход (tz-«сегодня») разъезжаются.
+    // Спенд — за «сегодня» в поясе каждого рекламного аккаунта (FB считает спенд
+    // по времени кабинета); доход Keitaro — в нашем поясе (кабинет Keitaro по Минску).
     const [campaignsArrays, kt] = await Promise.all([
-      Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&date=' + day))),
+      Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&accountToday=1'))),
       loadKeitaro(tenantId, day, tz)
     ]);
     const campaigns = [];
@@ -426,9 +426,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Fetches this social's campaigns + jobs and applies the overlay — the single
   // «live» view both the board and the toggle/budget handlers must read from.
   async function liveCampaigns(tenantId, userId) {
-    const day = todayIn((await store.settings(tenantId)).timezone);
     const [cr, sr] = await Promise.all([
-      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&date=' + day),
+      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&accountToday=1'),
       collectorCall(tenantId, '/v1/status')
     ]);
     const camps = (cr && cr.body && cr.body.campaigns) || [];
@@ -478,7 +477,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const tz = s.timezone || 'UTC';
     const day = todayIn(tz);
     const [cr, {keitaro}] = await Promise.all([
-      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&date=' + day),
+      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&accountToday=1'),
       loadKeitaro(tenantId, day, tz)
     ]);
     const conns = (sr && sr.body && sr.body.connections) || [];

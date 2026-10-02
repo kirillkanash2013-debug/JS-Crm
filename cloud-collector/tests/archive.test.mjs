@@ -95,3 +95,24 @@ test('collector keeps only compact summaries in state; report via API; history s
   assert.deepEqual(c.status().results, {});
   assert.deepEqual((await (await c.request('/v1/report', 'GET', {since: '2026-10-01', until: '2026-10-01'})).json()).totals, {USD: 7}, 'history kept');
 });
+
+test('campaigns accountToday: spend is taken by the ad account timezone day', async () => {
+  const sql = doSql();
+  const a = new SqlArchive(sql, {put: async () => {}});
+  const tz = 'Asia/Almaty';
+  const today = new Date().toLocaleDateString('en-CA', {timeZone: tz});
+  const old = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+  const at = new Date().toISOString();
+  const s = structure('777', at);
+  // Account in a specific tz; spend recorded for the account's today and for an older day.
+  const snapshot = {schemaVersion: 1, source: 'facebook-server', mode: 'api', complete: true, observedAt: at,
+    social: {user: {id: '100', name: 'Owner'}, accounts: [{id: '777', name: 'Acc', currency: 'USD', timezone: tz, statusRaw: 1, business: {id: '9', name: 'BM'}}]},
+    reports: {'777': {account: {id: '777', currency: 'USD'}, campaigns: [{id: '7771', accountId: '777', name: 'Camp', status: 'ACTIVE', effectiveStatus: 'ACTIVE', dailyBudgetRaw: '1000'}],
+      metrics: [{campaignId: '7771', since: today, until: today, spend: 42, currency: 'USD'}, {campaignId: '7771', since: old, until: old, spend: 999, currency: 'USD'}]}},
+    structures: {'777': s}};
+  await a.record('100', snapshot);
+  const camps = a.campaigns({userId: '100', accountToday: true});
+  assert.equal(camps.length, 1);
+  assert.equal(camps[0].spend, 42); // account's own "today", not the 999 from another day
+  assert.equal(camps[0].accountTz, undefined); // internal field not leaked
+});

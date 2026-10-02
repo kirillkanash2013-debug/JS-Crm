@@ -152,7 +152,26 @@ export class SqlArchive {
   }
 
   // Current campaigns with today's spend — for managing them from the bot.
-  campaigns({userId, date}) {
+  campaigns({userId, date, accountToday}) {
+    // Спенд за «сегодня» в поясе КАЖДОГО рекламного аккаунта: FB считает спенд по
+    // времени кабинета, поэтому дату берём из timezone аккаунта, а не общую.
+    if (accountToday) {
+      const camps = rows(this.sql, `SELECT o.id AS campaignId, o.name, o.status, o.effective_status AS effectiveStatus, o.daily_budget AS dailyBudget,
+          o.account_id AS accountId, a.name AS accountName, a.currency, a.timezone AS accountTz
+        FROM objects o JOIN accounts a ON a.id=o.account_id
+        WHERE o.level=? AND (? IS NULL OR a.user_id=?) ORDER BY a.name, o.name`,
+        'campaign', userId ?? null, userId ?? null);
+      const spend = {}, seen = {};
+      for (const c of camps) {
+        if (!seen[c.accountId]) {
+          seen[c.accountId] = true;
+          let day; try { day = new Date().toLocaleDateString('en-CA', {timeZone: c.accountTz || 'UTC'}); } catch { day = new Date().toISOString().slice(0, 10); }
+          for (const r of rows(this.sql, 'SELECT campaign_id, spend FROM daily_spend WHERE account_id=? AND date=?', c.accountId, day)) spend[r.campaign_id] = r.spend;
+        }
+      }
+      for (const c of camps) { c.spend = spend[c.campaignId] || 0; delete c.accountTz; }
+      return camps;
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Invalid date');
     return rows(this.sql, `SELECT o.id AS campaignId, o.name, o.status, o.effective_status AS effectiveStatus, o.daily_budget AS dailyBudget,
         o.account_id AS accountId, a.name AS accountName, a.currency, COALESCE(d.spend,0) AS spend
