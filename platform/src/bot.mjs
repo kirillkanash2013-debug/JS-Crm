@@ -32,6 +32,15 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   async function adminCommand(chatId, text) {
     const [cmd, ...args] = text.split(/\s+/);
     if (cmd === '/reset') { await store.unbindChat(chatId); return send(chatId, '♻️ Чат отвязан. Отправьте /start (увидите экран нового клиента), затем /testtoken — и пройдите путь заново.'); }
+    if (cmd === '/diag') {
+      const chat = await store.chat(chatId);
+      const t = chat?.tenantId ? await store.tenant(chat.tenantId) : null;
+      let st = null; try { st = chat?.tenantId ? await collectorCall(chat.tenantId, '/v1/status') : null; } catch {}
+      const conns = (st && st.body && st.body.connections) || [];
+      return send(chatId, '🔧 <b>Диагностика</b>\nchat.tenantId: <code>' + (chat?.tenantId || 'нет') + '</code>\nsealed token: ' + (!!t?.integrationTokenEnc) +
+        '\ncollector /v1/status: ' + (st ? (st.status + ', соцов: ' + conns.length) : 'нет ответа') +
+        (conns.length ? '\n' + conns.map(c => '• ' + (c.label || c.userId)).join('\n') : ''));
+    }
     if (cmd === '/invite') {
       let days = 30, plan = 'team';
       const note = [];
@@ -323,7 +332,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (message.successful_payment) return onPaid(chatId, message);
     const chat = await store.chat(chatId);
 
-    if (isAdmin(chatId) && /^\/(invite|invites|revoke|reset|testtoken|teststatus|testcollect|testreport)\b/.test(text)) return adminCommand(chatId, text);
+    if (isAdmin(chatId) && /^\/(invite|invites|revoke|reset|diag|testtoken|teststatus|testcollect|testreport)\b/.test(text)) return adminCommand(chatId, text);
 
     const code = findInviteCode(text);
     if (code) {
@@ -350,6 +359,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
     const tenant = await store.tenant(chat.tenantId);
     if (!isActive(tenant)) return subscription(chatId, tenant);
+
+    // Key is retrievable at any point, even mid-onboarding.
+    if (text === '🔑 Ключ' || text === '/key') return showKey(chatId, tenant.id);
 
     if (chat.state === 'keitaro_url') {
       const origin = keitaroOrigin(text);
