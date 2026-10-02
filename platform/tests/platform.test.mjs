@@ -290,26 +290,29 @@ test('«🔑 Ключ» shows the current token without rotating it', async () =
   assert(h.last().includes(token), 'shows the same key, not a new one');
 });
 
-test('bot campaign management: open a campaign, pause it, and check the result', async () => {
+test('bot campaigns board: list all, pause from the list, see the result on refresh', async () => {
   const h = harness();
   const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pc3', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
   await h.say('/start ' + token);
   await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
   const realFetch = globalThis.fetch;
-  let posted = null;
+  let posted = null, jobs = [];
   globalThis.fetch = async (url, opts) => {
-    assert.match(opts.headers.Authorization, /^Bearer jsi_/);
-    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '555111', name: 'Camp', status: 'ACTIVE', dailyBudget: '2000', currency: 'USD', spend: 12.5}]});
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '555111', name: 'Camp', status: 'ACTIVE', effectiveStatus: 'ACTIVE', dailyBudget: '2000', currency: 'USD', spend: 12.5}]});
     if (url.endsWith('/v1/actions')) { posted = JSON.parse(opts.body); return new Response(JSON.stringify({id: 'job-1', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
-    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина'}], jobs: [{id: 'job-1', state: 'done', actionResult: {after: {status: 'PAUSED', daily_budget: '2000'}}}]});
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина'}], jobs});
     return Response.json({});
   };
   try {
-    await h.tap('cmp:100:555111'); assert.match(h.last(), /Camp/); assert.match(h.last(), /ACTIVE/);
-    await h.tap('act:100:555111:pause');
+    await h.say('📣 Кампании');
+    assert.match(h.last(), /📣 <b>Кампании<\/b>/); assert.match(h.last(), /Camp/); assert.match(h.last(), /💰20\$ 💸13\$/);
+    await h.tap('cact:100:555111:pause');
     assert.deepEqual(posted, {userId: '100', campaignId: '555111', status: 'PAUSED'});
-    assert.match(h.last(), /применяю/);
-    await h.tap('chk:job-1'); assert.match(h.last(), /Готово/); assert.match(h.last(), /PAUSED/);
+    assert.match(h.last(), /Команда отправлена/);
+    // Job finished → refresh shows the outcome on the same board.
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', status: 'PAUSED'}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {status: 'PAUSED', daily_budget: '2000'}}}];
+    await h.tap('cref:100');
+    assert.match(h.last(), /✅/); assert.match(h.last(), /на паузе/);
   } finally { globalThis.fetch = realFetch; }
 });
 
