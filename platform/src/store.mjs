@@ -74,6 +74,7 @@ export class D1Store {
     return (r.meta?.changes ?? r.changes ?? 0) === 1;
   }
   async createAgent(tenantId, name) { const id = crypto.randomUUID().slice(0, 8); await this.db.prepare('INSERT INTO agents (id,tenant_id,name,created_at) VALUES (?,?,?,?)').bind(id, tenantId, name, now()).run(); return {id, name}; }
+  async deleteAgent(tenantId, agentId) { await this.db.prepare('UPDATE socials SET agent_id=NULL WHERE tenant_id=? AND agent_id=?').bind(tenantId, agentId).run(); await this.db.prepare('DELETE FROM agents WHERE tenant_id=? AND id=?').bind(tenantId, agentId).run(); }
   async listAgents(tenantId) { const r = await this.db.prepare('SELECT id,name FROM agents WHERE tenant_id=? ORDER BY name').bind(tenantId).all(); return (r.results || []).map(a => ({id: a.id, name: a.name})); }
   async social(tenantId, userId) { const r = await this.db.prepare('SELECT user_id AS userId, label, agent_id AS agentId FROM socials WHERE tenant_id=? AND user_id=?').bind(tenantId, String(userId)).first(); return r ? {userId: r.userId, label: r.label, agentId: r.agentId} : null; }
   async addSocial(tenantId, userId, label) { await this.db.prepare('INSERT INTO socials (tenant_id,user_id,label,seen_at) VALUES (?,?,?,?)').bind(tenantId, String(userId), label ?? null, now()).run(); }
@@ -117,6 +118,7 @@ export class MemoryStore {
     i.revokedAt = now(); return true;
   }
   async createAgent(tenantId, name) { const id = crypto.randomUUID().slice(0, 8); this.agents.set(id, {id, tenantId, name}); return {id, name}; }
+  async deleteAgent(tenantId, agentId) { for (const s of this.socialsMap.values()) if (s.tenantId === tenantId && s.agentId === agentId) s.agentId = null; const a = this.agents.get(agentId); if (a && a.tenantId === tenantId) this.agents.delete(agentId); }
   async listAgents(tenantId) { return [...this.agents.values()].filter(a => a.tenantId === tenantId).map(a => ({id: a.id, name: a.name})); }
   async social(tenantId, userId) { const s = this.socialsMap.get(tenantId + ':' + userId); return s ? {userId: s.userId, label: s.label, agentId: s.agentId} : null; }
   async addSocial(tenantId, userId, label) { this.socialsMap.set(tenantId + ':' + String(userId), {tenantId, userId: String(userId), label: label ?? null, agentId: null}); }

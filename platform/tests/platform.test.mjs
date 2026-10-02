@@ -192,10 +192,11 @@ test('agents: deleting a social removes it from the bot and tells the collector'
     if (opts?.method === 'DELETE' && String(url).includes('/v1/connections')) { deleted = true; return Response.json({ok: true}); }
     return Response.json({});
   };
-  try { await h.tap('delok:100'); } finally { globalThis.fetch = realFetch; }
+  try { await h.tap('ag:dpo:100'); } finally { globalThis.fetch = realFetch; }
   assert(deleted, 'collector DELETE /v1/connections called');
   assert.equal(await h.store.social(tid, '100'), null, 'social removed from store');
-  assert(h.sent.some(m => /удал[её]н/.test(m.text || '')), 'deletion confirmed to the client');
+  // After deletion the «Агенты» screen is re-rendered (edited) without that profile.
+  assert(h.sent.some(m => m.method === 'editMessageText' && /👥/.test(m.text || '')), 'agents screen refreshed');
 });
 
 test('push: collector announces a connected social to the tenant chat', async () => {
@@ -251,7 +252,7 @@ test('agents: a new social is detected, prompted, and assigned to a new agent', 
     assert(h.sent.some(m => /Профиль «Алина» успешно добавлен/.test(m.text || '')), 'new social prompted for assignment');
     await h.tap('assign:100:new'); assert.match(h.last(), /имя нового агента/);
     await h.say('Иван'); assert.match(h.last(), /закреплён/i);
-    await h.say('👥 Агенты'); assert.match(h.last(), /Иван/); assert.match(h.last(), /Нераспределённых соцев: <b>0<\/b>/);
+    await h.say('👥 Агенты'); assert.match(h.last(), /Иван/); assert.match(h.last(), /Без агента<\/b> — профилей: 0/);
   } finally { globalThis.fetch = realFetch; }
 });
 

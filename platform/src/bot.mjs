@@ -21,6 +21,12 @@ const validTimezone = tz => { try { new Intl.DateTimeFormat('ru', {timeZone: tz}
 
 export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   const send = (chatId, text, markup) => tg('sendMessage', {chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(markup ? {reply_markup: markup} : {})});
+  // Edit a message in place (one evolving screen, no chat spam). Falls back to a
+  // fresh message if the edit fails (e.g. message too old or unchanged).
+  const edit = async (chatId, messageId, text, markup) => {
+    try { await tg('editMessageText', {chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: markup || {inline_keyboard: []}}); }
+    catch { await send(chatId, text, markup); }
+  };
   const forget = (chatId, messageId) => tg('deleteMessage', {chat_id: chatId, message_id: messageId}).catch(() => {});
   const starsEnabled = () => Number(env.STARS_PRICE_START) > 0;
   const buyButtons = () => ({inline_keyboard: Object.entries(PLANS).filter(([id]) => Number(env['STARS_PRICE_' + id.toUpperCase()]) > 0)
@@ -279,22 +285,49 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     for (const s of await syncSocials(tenantId)) await promptAssign(chatId, tenantId, s);
   }
 
+  // Main «Агенты» screen: each agent numbered, with its profiles listed under it,
+  // then the unassigned ones. Returned as {text, markup} so it can be sent once
+  // and then edited in place for every sub-action (no chat spam).
+  async function agentsView(tenantId) {
+    const agents = await store.listAgents(tenantId), socials = await store.listSocials(tenantId);
+    const byAgent = {}; for (const s of socials) { const k = s.agentId || '_'; (byAgent[k] = byAgent[k] || []).push(s); }
+    let text = '👥 <b>Агенты</b>\n';
+    if (!agents.length) text += '\n<i>Агентов пока нет — добавьте кнопкой ниже.</i>';
+    agents.forEach((a, i) => {
+      const list = byAgent[a.id] || [];
+      text += '\n<b>' + (i + 1) + '. ' + esc(a.name) + '</b> — профилей: ' + list.length +
+        (list.length ? '\n' + list.map(s => '   • ' + esc(s.label || s.userId)).join('\n') : '');
+    });
+    const un = byAgent['_'] || [];
+    text += '\n\n<b>Без агента</b> — профилей: ' + un.length +
+      (un.length ? '\n' + un.map(s => '   • ' + esc(s.label || s.userId)).join('\n') : '');
+    const markup = {inline_keyboard: [
+      [{text: '➕ Агент', callback_data: 'ag:add'}],
+      [{text: '🗑 Удалить агента', callback_data: 'ag:dalist'}, {text: '🗑 Удалить профиль', callback_data: 'ag:dplist'}],
+      [{text: '🔄 Обновить', callback_data: 'ag:main'}]
+    ]};
+    return {text, markup};
+  }
+
+  async function delAgentView(tenantId) {
+    const agents = await store.listAgents(tenantId);
+    const rows = agents.map((a, i) => [{text: (i + 1) + '. ' + (a.name || a.id), callback_data: 'ag:da:' + a.id}]);
+    rows.push([{text: '↩️ Назад', callback_data: 'ag:main'}]);
+    return {text: '🗑 <b>Удалить агента</b>\nЕго профили станут «без агента» (сами профили не удаляются).' + (agents.length ? '\n\nВыберите номер:' : '\n\n<i>Агентов нет.</i>'), markup: {inline_keyboard: rows}};
+  }
+
+  async function delSocView(tenantId) {
+    const socials = await store.listSocials(tenantId), agents = await store.listAgents(tenantId);
+    const an = {}; for (const a of agents) an[a.id] = a.name;
+    const rows = socials.slice(0, 30).map((s, i) => [{text: (i + 1) + '. ' + (s.label || s.userId) + ' — ' + (s.agentId ? (an[s.agentId] || 'агент') : 'без агента'), callback_data: 'ag:dp:' + s.userId}]);
+    rows.push([{text: '↩️ Назад', callback_data: 'ag:main'}]);
+    return {text: '🗑 <b>Удалить профиль</b>\nСбор по нему остановится, собранные данные удалятся.' + (socials.length ? '\n\nВыберите номер:' : '\n\n<i>Профилей нет.</i>'), markup: {inline_keyboard: rows}};
+  }
+
   async function showAgents(chatId, tenantId) {
     await notifyNewSocials(chatId, tenantId);
-    const agents = await store.listAgents(tenantId), socials = await store.listSocials(tenantId);
-    const count = {}; for (const s of socials) if (s.agentId) count[s.agentId] = (count[s.agentId] || 0) + 1;
-    const agentName = {}; for (const a of agents) agentName[a.id] = a.name;
-    const unassigned = socials.filter(s => !s.agentId);
-    let text = '👥 <b>Агенты</b>\n' + (agents.length ? agents.map(a => '• ' + esc(a.name) + ' — соцев: ' + (count[a.id] || 0)).join('\n') : 'Пока нет агентов.');
-    text += '\n\nНераспределённых соцев: <b>' + unassigned.length + '</b>';
-    text += socials.length ? '\n\nСоцы — 📌 закрепить за агентом, 🗑 удалить:' : '\n\nСоцев пока нет. Подключите — «🧩 Подключить соц».';
-    // Each social: a row with the assign button (shows its current agent) + a delete button.
-    const rows = socials.slice(0, 20).map(s => [
-      {text: '📌 ' + (s.label || s.userId) + ' — ' + (s.agentId ? (agentName[s.agentId] || 'агент') : 'без агента'), callback_data: 'pick:' + s.userId},
-      {text: '🗑', callback_data: 'del:' + s.userId}
-    ]);
-    rows.push([{text: '➕ Добавить агента', callback_data: 'newagent'}]);
-    await send(chatId, text, {inline_keyboard: rows});
+    const v = await agentsView(tenantId);
+    await send(chatId, v.text, v.markup);
   }
 
   // Shows the current access key (decrypted from the sealed copy) without
@@ -479,11 +512,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (!menuHit && chat.state && chat.state.startsWith('newagent')) {
       const name = String(text).trim().slice(0, 40);
       if (!name || /^\//.test(name)) return send(chatId, 'Введите имя агента, например <code>Иван</code>.');
-      const agent = await store.createAgent(tenant.id, name);
+      // Reuse an agent with the same name instead of making a duplicate.
+      let agent = (await store.listAgents(tenant.id)).find(a => (a.name || '').toLowerCase() === name.toLowerCase());
+      if (!agent) agent = await store.createAgent(tenant.id, name);
       await store.setChat(chatId, tenant.id, 'ready');
       const userId = chat.state.split(':')[1];
-      if (userId) { await store.assignSocial(tenant.id, userId, agent.id); return send(chatId, '✅ Агент «' + esc(name) + '» создан, соц закреплён за ним.', MENU); }
-      return send(chatId, '✅ Агент «' + esc(name) + '» добавлен.', MENU);
+      if (userId) { await store.assignSocial(tenant.id, userId, agent.id); return send(chatId, '✅ Соц закреплён за агентом «' + esc(agent.name) + '».', MENU); }
+      await send(chatId, '✅ Агент «' + esc(agent.name) + '» добавлен.');
+      return showAgents(chatId, tenant.id);
     }
 
     if (text === '📊 Статистика' || text === '/stats') return showStats(chatId, tenant.id);
@@ -532,21 +568,28 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       return send(chatId, '✅ Соц закреплён за агентом «' + esc(a.name) + '».', MENU);
     }
     if (data.startsWith('pick:')) { const userId = data.slice(5); const s = await store.social(chat.tenantId, userId); return send(chatId, '📌 Закрепить соц «' + esc((s && s.label) || userId) + '» за агентом:', await agentButtons(chat.tenantId, userId)); }
-    if (data === 'agents') return showAgents(chatId, chat.tenantId);
-    if (data.startsWith('del:')) {
-      const userId = data.slice(4); const s = await store.social(chat.tenantId, userId);
-      return send(chatId, '🗑 Удалить соц «' + esc((s && s.label) || userId) + '»?\nСбор по нему остановится, собранные данные будут удалены. Отменить нельзя.',
-        {inline_keyboard: [[{text: '🗑 Да, удалить', callback_data: 'delok:' + userId}, {text: '↩️ Отмена', callback_data: 'agents'}]]});
+    // «Агенты» screen — one evolving message, edited in place for every action.
+    if (data === 'ag:main') { const v = await agentsView(chat.tenantId); return edit(chatId, q.message.message_id, v.text, v.markup); }
+    if (data === 'ag:dalist') { const v = await delAgentView(chat.tenantId); return edit(chatId, q.message.message_id, v.text, v.markup); }
+    if (data === 'ag:dplist') { const v = await delSocView(chat.tenantId); return edit(chatId, q.message.message_id, v.text, v.markup); }
+    if (data === 'ag:add') { await store.setChat(chatId, chat.tenantId, 'newagent'); return send(chatId, '➕ Введите имя нового агента:'); }
+    if (data.startsWith('ag:da:')) {
+      const id = data.slice(6); const a = (await store.listAgents(chat.tenantId)).find(x => x.id === id);
+      if (!a) { const v = await delAgentView(chat.tenantId); return edit(chatId, q.message.message_id, v.text, v.markup); }
+      return edit(chatId, q.message.message_id, '🗑 Удалить агента «' + esc(a.name) + '»?\nЕго профили станут «без агента».',
+        {inline_keyboard: [[{text: '✅ Да, удалить', callback_data: 'ag:dao:' + id}, {text: '↩️ Назад', callback_data: 'ag:dalist'}]]});
     }
-    if (data.startsWith('delok:')) {
+    if (data.startsWith('ag:dao:')) { await store.deleteAgent(chat.tenantId, data.slice(7)); const v = await agentsView(chat.tenantId); return edit(chatId, q.message.message_id, v.text, v.markup); }
+    if (data.startsWith('ag:dp:')) {
       const userId = data.slice(6); const s = await store.social(chat.tenantId, userId);
-      // Stop collection + forget data on the server, then drop it from the bot.
-      const r = await collectorCall(chat.tenantId, '/v1/connections', {userId}, 'DELETE');
+      return edit(chatId, q.message.message_id, '🗑 Удалить профиль «' + esc((s && s.label) || userId) + '»?\nСбор остановится, данные удалятся.',
+        {inline_keyboard: [[{text: '✅ Да, удалить', callback_data: 'ag:dpo:' + userId}, {text: '↩️ Назад', callback_data: 'ag:dplist'}]]});
+    }
+    if (data.startsWith('ag:dpo:')) {
+      const userId = data.slice(7);
+      await collectorCall(chat.tenantId, '/v1/connections', {userId}, 'DELETE');
       await store.deleteSocial(chat.tenantId, userId);
-      await send(chatId, (r && !r.ok)
-        ? '⚠️ Соц «' + esc((s && s.label) || userId) + '» убран из бота, но сервер ответил ошибкой (' + esc(String(r.status)) + '). Если он вернётся в списке — повторите удаление.'
-        : '✅ Соц «' + esc((s && s.label) || userId) + '» удалён, сбор остановлен.');
-      return showAgents(chatId, chat.tenantId);
+      const v = await agentsView(chat.tenantId); return edit(chatId, q.message.message_id, v.text, v.markup);
     }
     if (data === 'newagent') { await store.setChat(chatId, chat.tenantId, 'newagent:'); return send(chatId, '➕ Введите имя нового агента:'); }
   }
