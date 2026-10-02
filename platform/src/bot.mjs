@@ -221,10 +221,18 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     try { await tg('sendDocument', {chat_id: chatId, document: docUrl, caption: 'Расширение JS Control' + (ver ? ' v' + ver : '') + ' для антидетекта'}); } catch {}
   }
 
+  // Keitaro-отчёт тяжёлый (TCP-сокет к трекеру), а борд перерисовывается часто
+  // (каждое «Обновить»/действие). Поэтому кэшируем успешный результат на 60 c по
+  // (tenant, день) — данные всё равно обновляются раз в 30–120 мин. Живёт в
+  // пределах инстанса воркера; при частых тапах подряд снимает основную задержку.
+  const keitaroCache = new Map();
   // Fetches the Keitaro aggregation for one day (shared by the «Сейчас» report
   // and the campaigns board). Returns {keitaro, subIndex, note}; keitaro is null
   // when Keitaro isn't set up or is unreachable, and note explains why.
   async function loadKeitaro(tenantId, day, tz) {
+    const ck = tenantId + '|' + day;
+    const hit = keitaroCache.get(ck);
+    if (hit && Date.now() - hit.at < 60000) return {keitaro: hit.keitaro, subIndex: hit.subIndex, note: ''};
     const s = await store.settings(tenantId);
     const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
     let key = null;
@@ -232,7 +240,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const subIndex = Number(String(s.keitaroSub || '').match(/\d+/)?.[0]) || 4;
     if (origin && key && env.KEITARO_BRIDGE) {
       const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex});
-      if (res && res.result === 'ok') return {keitaro: aggregateKeitaro(res, {subIndex, day}), subIndex, note: ''};
+      if (res && res.result === 'ok') { const keitaro = aggregateKeitaro(res, {subIndex, day}); keitaroCache.set(ck, {at: Date.now(), keitaro, subIndex}); return {keitaro, subIndex, note: ''}; }
       return {keitaro: null, subIndex, note: '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.'};
     }
     if (!origin || !key) return {keitaro: null, subIndex, note: '\n\n💡 Подключите Keitaro в «👤 Профиль → Инструкции» — тогда увидите доход, прибыль и ROI.'};
@@ -252,12 +260,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const nowHHMM = new Date().toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'});
     const fbAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
     const fbTime = fbAt ? new Date(fbAt).toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'}) : '—';
+    // Параллельно: кампании по каждому соцу + отчёт Keitaro (не ждём по очереди).
+    const [campaignsArrays, kt] = await Promise.all([
+      Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId)))),
+      loadKeitaro(tenantId, day, tz)
+    ]);
     const campaigns = [];
-    for (const c of conns) {
-      const r = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId));
-      for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
-    }
-    const {keitaro, subIndex, note} = await loadKeitaro(tenantId, day, tz);
+    for (const r of campaignsArrays) for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
+    const {keitaro, subIndex, note} = kt;
     return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note;
   }
 
@@ -414,8 +424,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // и только кнопка «🔄 Обновить» — они держатся, пока не придёт зелёная галочка
   // (цифры изменённых кампаний подтянутся из кабинета) или ошибка. {text, markup, pending}.
   async function campaignsBoard(tenantId, userId, opts = {}) {
-    const cr = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId));
-    const sr = await collectorCall(tenantId, '/v1/status');
+    // Параллельно: кампании соца, статус/джобы и настройки (часовой пояс).
+    const [cr, sr, s] = await Promise.all([
+      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId)),
+      collectorCall(tenantId, '/v1/status'),
+      store.settings(tenantId)
+    ]);
     const camps = (cr && cr.body && cr.body.campaigns) || [];
     const conns = (sr && sr.body && sr.body.connections) || [];
     const jobs = (sr && sr.body && sr.body.jobs) || [];
@@ -425,7 +439,6 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const footMulti = multi ? [[{text: '⬅️ Другой соц', callback_data: 'csoc'}]] : [];
     if (!camps.length) return {text: head + '\n\nКампаний пока нет (ещё не собрались). Загляните позже.', markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}, pending: false};
 
-    const s = await store.settings(tenantId);
     const tz = s.timezone || 'UTC';
     const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});
     const {keitaro} = await loadKeitaro(tenantId, day, tz);
