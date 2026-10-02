@@ -1,7 +1,12 @@
 "use strict";
 const COLLECTOR = "https://js-control-collector-claude.kirill-kanash2013.workers.dev";
 const $ = (id) => document.getElementById(id);
-const show = (t, cls) => { const s = $("status"); s.textContent = t; s.className = cls || ""; };
+// Render status; when `spin` is set, prepend a rotating loader before the text.
+const show = (t, cls, spin) => {
+  const s = $("status"); s.className = cls || ""; s.textContent = "";
+  if (spin) { const d = document.createElement("span"); d.className = "spinner"; s.appendChild(d); }
+  s.appendChild(document.createTextNode(t));
+};
 
 // Restore the key.
 chrome.storage.local.get("key").then((o) => { if (o.key) $("key").value = o.key; });
@@ -54,15 +59,6 @@ async function adsPowerProfile(userId) {
   return { proxy: null, name: null };
 }
 
-// Human text for whatever interval the SERVER returned — nothing about the
-// schedule is decided or stored here; the plugin only reflects the server.
-function intervalText(s) {
-  var m = s && s.minutes;
-  if (!m) return " автоматически";
-  if (m % 60 === 0) { var h = m / 60; return h === 1 ? " раз в час" : " раз в " + h + " ч"; }
-  return " каждые " + m + " мин";
-}
-
 async function cookies() {
   try {
     const all = await chrome.cookies.getAll({ domain: "facebook.com" });
@@ -89,30 +85,27 @@ $("go").onclick = async () => {
   if (!/^(jsi|js_srv)_[A-Za-z0-9_-]{43}$/.test(key)) return show("Вставьте ключ доступа (jsi_… или js_srv_…).", "err");
   await chrome.storage.local.set({ key });
   $("go").disabled = true;
-  let proxyInfo = "";
   try {
-    show("Проверяю ключ…");
+    // One calm progress state — a spinner and «Подключаем соц…» — instead of
+    // narrating each step (key / token / cookies / proxy).
+    show("Подключаем соц…", "", true);
     await api("/v1/me", key);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !/^https:\/\/(adsmanager|business|www)\.facebook\.com\//.test(tab.url || "")) throw new Error("Откройте в этом профиле вкладку Ads Manager нужного соца.");
-    show("Читаю токен со страницы…");
     const [{ result: session }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: readSession });
     if (!session || !/^\d{3,30}$/.test(session.userId) || !session.tokens.length) throw new Error("Не нашёл токен. Дождитесь полной загрузки списка кампаний и нажмите снова.");
-    show("Беру cookies и прокси профиля…");
     const ck = await cookies();
-    const profile = $("noproxy").checked ? { proxy: null, name: null } : await adsPowerProfile(session.userId);
+    const profile = await adsPowerProfile(session.userId);
     const proxy = profile.proxy;
     // Label the soc by the antidetect profile name; fall back to the FB account
     // name only if the profile name couldn't be read (e.g. AdsPower not running).
     const label = profile.name || session.name || undefined;
-    proxyInfo = $("noproxy").checked ? "\nБез прокси (тест): Facebook видит IP сервера." : proxy ? "\nПрокси: " + proxy.server + " (логин: " + (proxy.username ? "есть" : "нет") + ")" : "\nПрокси профиля не найден (AdsPower запущен?).";
-    show("Подключаю соц на сервере…" + proxyInfo);
     // Only credentials go up. The server sets the schedule and starts the
     // first collection itself; all settings live on the server, not here.
-    const res = await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: label, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
-    show("✓ Готово! Соц «" + (label || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nСервер запустил сбор и обновляет данные" + intervalText(res && res.schedule) + ". Браузер можно закрыть.", "ok");
+    await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: label, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
+    show("✓ Готово! Профиль «" + (label || session.userId) + "» подключён.", "ok");
   } catch (e) {
-    show((e.message || String(e)) + proxyInfo, "err");
+    show(e.message || String(e), "err");
   } finally {
     $("go").disabled = false;
   }

@@ -11,15 +11,16 @@ button:disabled{opacity:.5}
 #status{margin-top:12px;font-size:13px;white-space:pre-wrap}
 .ok{color:#8fff8a}.err{color:#ff8b86}
 .ver{color:#55657a;font-size:10px;text-align:center;padding:6px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #394c67;border-top-color:#8fff8a;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
 </style></head><body>
 <header>JS CONTROL</header>
 <main>
 <label for="key">Ключ доступа (из бота)</label>
 <input id="key" type="password" autocomplete="off" placeholder="jsi_… или js_srv_…">
 <button id="go">Подключить этот профиль</button>
-<label style="display:flex;gap:6px;align-items:center;margin-top:10px;color:#8fa3bf;font-size:12px"><input id="noproxy" type="checkbox" style="width:auto">Тест без прокси (разово, для диагностики)</label>
-<p class="hint">Откройте в этом профиле Ads Manager нужного соца и нажмите кнопку. Расширение само возьмёт токен, cookies и прокси и запустит сбор на сервере.</p>
+<p class="hint">Откройте в этом профиле Ads Manager нужного соца, вставьте ключ интеграции и нажмите кнопку.</p>
 <div id="status" role="status"></div>
 </main>
-<div class="ver">v0.8.8</div>
+<div class="ver">v0.9.0</div>
 <script src="popup.js"></script></body></html>
