@@ -6,7 +6,7 @@ import {checkKeitaro, keitaroOrigin} from './keitaro.mjs';
 import {openSecret, sealSecret} from './secrets.mjs';
 import {findToken} from './tokens.mjs';
 
-const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Кампании'}], [{text: '🧩 Подключить соц'}, {text: '🔑 Ключ'}], [{text: '💳 Подписка'}, {text: '⚙️ Настройки'}]], resize_keyboard: true};
+const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Кампании'}], [{text: '👥 Агенты'}, {text: '🧩 Подключить соц'}], [{text: '🔑 Ключ'}, {text: '💳 Подписка'}], [{text: '⚙️ Настройки'}]], resize_keyboard: true};
 const INVITE_ERRORS = {
   invalid: '❌ Код не найден. Проверьте, что скопировали его полностью.',
   used: '❌ Этот код уже использован. Каждый код работает только один раз.',
@@ -156,14 +156,68 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
 
   async function showStats(chatId, tenantId) {
+    await notifyNewSocials(chatId, tenantId);
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = (st && st.body && st.body.connections) || [];
     if (!conns.length) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц — кнопка «🧩 Подключить соц».', MENU);
     const today = new Date().toISOString().slice(0, 10);
     const rep = await collectorCall(tenantId, '/v1/report?since=' + today + '&until=' + today);
+    const rows = (rep && rep.body && rep.body.rows) || [];
     const totals = Object.entries((rep && rep.body && rep.body.totals) || {}).map(([c, v]) => v + ' ' + c).join(' · ') || 'нет данных';
-    const lines = conns.map(c => '• ' + esc(c.label || c.userId) + ' — ' + esc(c.collectMode || 'api'));
-    await send(chatId, '📊 <b>Статистика за сегодня</b>\nСоцев: ' + conns.length + '\nРасход: ' + esc(totals) + '\n\n' + lines.join('\n'), MENU);
+    // Spend grouped by agent (sum over the socials assigned to each).
+    const socials = await store.listSocials(tenantId), agents = await store.listAgents(tenantId);
+    const agentOf = {}; for (const s of socials) agentOf[s.userId] = s.agentId;
+    const agentName = {}; for (const a of agents) agentName[a.id] = a.name;
+    const byAgent = {};
+    for (const r of rows) { const name = agentOf[String(r.userId)] ? (agentName[agentOf[String(r.userId)]] || 'агент') : 'без агента'; (byAgent[name] = byAgent[name] || {})[r.currency] = Math.round(((byAgent[name][r.currency] || 0) + r.spend) * 100) / 100; }
+    const agentLines = Object.entries(byAgent).map(([name, cur]) => '• ' + esc(name) + ': ' + Object.entries(cur).map(([c, v]) => v + ' ' + c).join(' · '));
+    const socLines = conns.map(c => '• ' + esc(c.label || c.userId) + ' — ' + esc(c.collectMode || 'api'));
+    await send(chatId, '📊 <b>Статистика за сегодня</b>\nСоцев: ' + conns.length + '\nРасход всего: ' + esc(totals) +
+      (agentLines.length ? '\n\n<b>По агентам:</b>\n' + agentLines.join('\n') : '') +
+      '\n\n<b>Соцы:</b>\n' + socLines.join('\n'), MENU);
+  }
+
+  // --- Agents: assign each connected social to a buyer for spend accounting ---
+  async function syncSocials(tenantId) {
+    const st = await collectorCall(tenantId, '/v1/status');
+    const conns = (st && st.body && st.body.connections) || [];
+    const fresh = [];
+    for (const c of conns) {
+      const existing = await store.social(tenantId, c.userId);
+      if (!existing) { await store.addSocial(tenantId, c.userId, c.label || String(c.userId)); fresh.push({userId: String(c.userId), label: c.label || String(c.userId)}); }
+      else if (c.label && c.label !== existing.label) await store.setSocialLabel(tenantId, c.userId, c.label);
+    }
+    return fresh;
+  }
+
+  async function agentButtons(tenantId, userId) {
+    const agents = await store.listAgents(tenantId);
+    const rows = agents.map(a => [{text: '👤 ' + a.name, callback_data: 'assign:' + userId + ':' + a.id}]);
+    rows.push([{text: '➕ Новый агент', callback_data: 'assign:' + userId + ':new'}]);
+    return {inline_keyboard: rows};
+  }
+
+  async function promptAssign(chatId, tenantId, userId, label) {
+    await send(chatId, '🆕 Соц «' + esc(label) + '» добавлен. Закрепите за агентом для учёта спендов:', await agentButtons(tenantId, userId));
+  }
+
+  // Detects newly connected socials and prompts to assign each. Works whether
+  // the client added one or many — each new social is prompted once; all
+  // unassigned ones also stay listed under «👥 Агенты».
+  async function notifyNewSocials(chatId, tenantId) {
+    for (const s of await syncSocials(tenantId)) await promptAssign(chatId, tenantId, s.userId, s.label);
+  }
+
+  async function showAgents(chatId, tenantId) {
+    await notifyNewSocials(chatId, tenantId);
+    const agents = await store.listAgents(tenantId), socials = await store.listSocials(tenantId);
+    const count = {}; for (const s of socials) if (s.agentId) count[s.agentId] = (count[s.agentId] || 0) + 1;
+    const unassigned = socials.filter(s => !s.agentId);
+    let text = '👥 <b>Агенты</b>\n' + (agents.length ? agents.map(a => '• ' + esc(a.name) + ' — соцев: ' + (count[a.id] || 0)).join('\n') : 'Пока нет агентов.');
+    text += '\n\nНераспределённых соцев: <b>' + unassigned.length + '</b>' + (unassigned.length ? ' — нажмите, чтобы закрепить:' : '');
+    const rows = unassigned.slice(0, 20).map(s => [{text: '📌 ' + (s.label || s.userId), callback_data: 'pick:' + s.userId}]);
+    rows.push([{text: '➕ Добавить агента', callback_data: 'newagent'}]);
+    await send(chatId, text, {inline_keyboard: rows});
   }
 
   // Shows the current access key (decrypted from the sealed copy) without
@@ -179,6 +233,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   const campIcon = s => s === 'ACTIVE' ? '🟢' : s === 'PAUSED' ? '⏸' : '⚪';
 
   async function campaignsEntry(chatId, tenantId) {
+    await notifyNewSocials(chatId, tenantId);
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = (st && st.body && st.body.connections) || [];
     if (!conns.length) return send(chatId, '📣 Нет подключённых соцов. Подключите соц — «🧩 Подключить соц».', MENU);
@@ -334,10 +389,20 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       await store.setChat(chatId, tenant.id, 'ready');
       return runAction(chatId, tenant.id, {userId, campaignId: cid, dailyBudget: Math.round(dollars * 100)}, 'Бюджет ' + dollars);
     }
+    if (chat.state && chat.state.startsWith('newagent')) {
+      const name = String(text).trim().slice(0, 40);
+      if (!name || /^\//.test(name)) return send(chatId, 'Введите имя агента, например <code>Иван</code>.');
+      const agent = await store.createAgent(tenant.id, name);
+      await store.setChat(chatId, tenant.id, 'ready');
+      const userId = chat.state.split(':')[1];
+      if (userId) { await store.assignSocial(tenant.id, userId, agent.id); return send(chatId, '✅ Агент «' + esc(name) + '» создан, соц закреплён за ним.', MENU); }
+      return send(chatId, '✅ Агент «' + esc(name) + '» добавлен.', MENU);
+    }
 
     if (text === '📊 Статистика' || text === '/stats') return showStats(chatId, tenant.id);
     if (text === '📣 Кампании' || text === '/campaigns') return campaignsEntry(chatId, tenant.id);
     if (text === '🔑 Ключ' || text === '/key') return showKey(chatId, tenant.id);
+    if (text === '👥 Агенты' || text === '/agents') return showAgents(chatId, tenant.id);
     if (text === '/dashboard') return send(chatId, '📊 Веб-ссылка (необязательно, всё есть в «📊 Статистика»):\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
     if (text === '🧩 Подключить соц' || text === '/plugin') return sendPluginKit(chatId, tenant.id);
     if (text === '⚙️ Настройки' || text === '/settings') return askKeitaroUrl(chatId);
@@ -368,6 +433,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (data.startsWith('act:')) { const [, userId, cid, op] = data.split(':'); return runAction(chatId, chat.tenantId, {userId, campaignId: cid, status: op === 'pause' ? 'PAUSED' : 'ACTIVE'}, op === 'pause' ? 'Пауза' : 'Включение'); }
     if (data.startsWith('budg:')) { const [, userId, cid] = data.split(':'); await store.setChat(chatId, chat.tenantId, 'budget:' + userId + ':' + cid); return send(chatId, '💰 Введите новый дневной бюджет (в валюте кабинета), например <code>15</code>:'); }
     if (data.startsWith('chk:')) return checkJob(chatId, chat.tenantId, data.slice(4));
+    if (data.startsWith('assign:')) {
+      const [, userId, agentId] = data.split(':');
+      if (agentId === 'new') { await store.setChat(chatId, chat.tenantId, 'newagent:' + userId); return send(chatId, '➕ Введите имя нового агента:'); }
+      const a = (await store.listAgents(chat.tenantId)).find(x => x.id === agentId);
+      if (!a) return send(chatId, 'Агент не найден.', MENU);
+      await store.assignSocial(chat.tenantId, userId, agentId);
+      return send(chatId, '✅ Соц закреплён за агентом «' + esc(a.name) + '».', MENU);
+    }
+    if (data.startsWith('pick:')) { const userId = data.slice(5); const s = await store.social(chat.tenantId, userId); return send(chatId, '📌 Закрепить соц «' + esc((s && s.label) || userId) + '» за агентом:', await agentButtons(chat.tenantId, userId)); }
+    if (data === 'newagent') { await store.setChat(chatId, chat.tenantId, 'newagent:'); return send(chatId, '➕ Введите имя нового агента:'); }
   }
 
   return async function handleUpdate(update) {

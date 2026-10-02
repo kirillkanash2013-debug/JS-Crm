@@ -175,6 +175,26 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /Алина/);
 });
 
+test('agents: a new social is detected, prompted, and assigned to a new agent', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pa', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  const tenantId = (await h.store.chat(1)).tenantId;
+  await h.store.setChat(1, tenantId, 'ready');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}]});
+    return Response.json({totals: {}, rows: []});
+  };
+  try {
+    await h.say('👥 Агенты');
+    assert(h.sent.some(m => /Соц «Алина» добавлен/.test(m.text || '')), 'new social prompted for assignment');
+    await h.tap('assign:100:new'); assert.match(h.last(), /имя нового агента/);
+    await h.say('Иван'); assert.match(h.last(), /закреплён/i);
+    await h.say('👥 Агенты'); assert.match(h.last(), /Иван/); assert.match(h.last(), /Нераспределённых соцев: <b>0<\/b>/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('«🔑 Ключ» shows the current token without rotating it', async () => {
   const h = harness();
   const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pk', provider: 'test', plan: 'team', masterKey: MASTER_KEY});

@@ -72,12 +72,19 @@ export class D1Store {
     const r = await this.db.prepare('UPDATE invites SET revoked_at=? WHERE id=? AND used_at IS NULL AND revoked_at IS NULL').bind(now(), id).run();
     return (r.meta?.changes ?? r.changes ?? 0) === 1;
   }
+  async createAgent(tenantId, name) { const id = crypto.randomUUID().slice(0, 8); await this.db.prepare('INSERT INTO agents (id,tenant_id,name,created_at) VALUES (?,?,?,?)').bind(id, tenantId, name, now()).run(); return {id, name}; }
+  async listAgents(tenantId) { const r = await this.db.prepare('SELECT id,name FROM agents WHERE tenant_id=? ORDER BY name').bind(tenantId).all(); return (r.results || []).map(a => ({id: a.id, name: a.name})); }
+  async social(tenantId, userId) { const r = await this.db.prepare('SELECT user_id AS userId, label, agent_id AS agentId FROM socials WHERE tenant_id=? AND user_id=?').bind(tenantId, String(userId)).first(); return r ? {userId: r.userId, label: r.label, agentId: r.agentId} : null; }
+  async addSocial(tenantId, userId, label) { await this.db.prepare('INSERT INTO socials (tenant_id,user_id,label,seen_at) VALUES (?,?,?,?)').bind(tenantId, String(userId), label ?? null, now()).run(); }
+  async setSocialLabel(tenantId, userId, label) { await this.db.prepare('UPDATE socials SET label=? WHERE tenant_id=? AND user_id=?').bind(label, tenantId, String(userId)).run(); }
+  async assignSocial(tenantId, userId, agentId) { await this.db.prepare('UPDATE socials SET agent_id=? WHERE tenant_id=? AND user_id=?').bind(agentId, tenantId, String(userId)).run(); }
+  async listSocials(tenantId) { const r = await this.db.prepare('SELECT user_id AS userId, label, agent_id AS agentId FROM socials WHERE tenant_id=?').bind(tenantId).all(); return (r.results || []).map(s => ({userId: s.userId, label: s.label, agentId: s.agentId})); }
 }
 
 const inviteRow = r => ({id: r.id, plan: r.plan, days: r.days, note: r.note, createdAt: r.created_at, expiresAt: r.expires_at, revokedAt: r.revoked_at, usedAt: r.used_at, tenantId: r.tenant_id, usedByChat: r.used_by_chat});
 
 export class MemoryStore {
-  constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); }
+  constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); this.agents = new Map(); this.socialsMap = new Map(); }
   async createTenant(t) { this.tenants.set(t.id, {id: t.id, name: t.name, plan: t.plan, socialLimit: t.socialLimit, status: 'active', paidUntil: t.paidUntil}); return this.tenant(t.id); }
   async tenant(id) { const t = this.tenants.get(id); return t ? {integrationTokenEnc: null, ...t} : null; }
   async extendTenant(id, paidUntil) { Object.assign(this.tenants.get(id), {paidUntil, status: 'active'}); }
@@ -106,4 +113,11 @@ export class MemoryStore {
     if (!i || i.usedAt || i.revokedAt) return false;
     i.revokedAt = now(); return true;
   }
+  async createAgent(tenantId, name) { const id = crypto.randomUUID().slice(0, 8); this.agents.set(id, {id, tenantId, name}); return {id, name}; }
+  async listAgents(tenantId) { return [...this.agents.values()].filter(a => a.tenantId === tenantId).map(a => ({id: a.id, name: a.name})); }
+  async social(tenantId, userId) { const s = this.socialsMap.get(tenantId + ':' + userId); return s ? {userId: s.userId, label: s.label, agentId: s.agentId} : null; }
+  async addSocial(tenantId, userId, label) { this.socialsMap.set(tenantId + ':' + String(userId), {tenantId, userId: String(userId), label: label ?? null, agentId: null}); }
+  async setSocialLabel(tenantId, userId, label) { const s = this.socialsMap.get(tenantId + ':' + userId); if (s) s.label = label; }
+  async assignSocial(tenantId, userId, agentId) { const s = this.socialsMap.get(tenantId + ':' + userId); if (s) s.agentId = agentId; }
+  async listSocials(tenantId) { return [...this.socialsMap.values()].filter(s => s.tenantId === tenantId).map(s => ({userId: s.userId, label: s.label, agentId: s.agentId})); }
 }

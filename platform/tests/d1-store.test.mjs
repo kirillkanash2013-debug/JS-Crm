@@ -9,7 +9,7 @@ import {D1Store} from '../src/store.mjs';
 function d1(db) {
   return {prepare(sql) {
     let args = [];
-    const stmt = {bind(...a) { args = a; return stmt; }, async run() { db.prepare(sql).run(...args); return {success: true}; }, async first() { return db.prepare(sql).get(...args) ?? null; }};
+    const stmt = {bind(...a) { args = a; return stmt; }, async run() { db.prepare(sql).run(...args); return {success: true}; }, async first() { return db.prepare(sql).get(...args) ?? null; }, async all() { return {results: db.prepare(sql).all(...args)}; }};
     return stmt;
   }};
 }
@@ -31,4 +31,14 @@ test('D1Store works with the migration schema', async () => {
   assert.deepEqual(await store.chat(5), {tenantId: tenant.id, state: 'ready'});
   await store.saveSettings(tenant.id, {keitaroUrl: 'https://k.test'}); await store.saveSettings(tenant.id, {timezone: 'UTC'});
   assert.deepEqual(await store.settings(tenant.id), {keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null});
+
+  // Agents and socials.
+  const ag = await store.createAgent(tenant.id, 'Иван');
+  assert.deepEqual(await store.listAgents(tenant.id), [{id: ag.id, name: 'Иван'}]);
+  assert.equal(await store.social(tenant.id, '100'), null);
+  await store.addSocial(tenant.id, '100', 'Алина');
+  assert.deepEqual(await store.social(tenant.id, '100'), {userId: '100', label: 'Алина', agentId: null});
+  await store.assignSocial(tenant.id, '100', ag.id);
+  assert.equal((await store.social(tenant.id, '100')).agentId, ag.id);
+  assert.deepEqual(await store.listSocials(tenant.id), [{userId: '100', label: 'Алина', agentId: ag.id}]);
 });
