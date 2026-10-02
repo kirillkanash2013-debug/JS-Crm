@@ -23,5 +23,5 @@ test('profile timezone over IP socket closes connection and excludes credentials
  const body=JSON.stringify({preferences:{timezone:'Europe/Minsk'},login:'private'});
  const connect=()=>({opened:Promise.resolve(),writable:new WritableStream({write:v=>wire+=new TextDecoder().decode(v)}),readable:new ReadableStream({start:s=>{s.enqueue(new TextEncoder().encode('HTTP/1.1 200 OK\r\nContent-Length: '+body.length+'\r\n\r\n'+body));s.close();}}),close:async()=>{closed=true;}});
  assert.deepEqual(await timezoneKeitaroSocket('http://91.223.123.254','secret-key',connect),{result:'ok',timezone:'Europe/Minsk'});
- assert.match(wire,/GET \/admin_api\/v1\/profile/);assert.ok(closed);
+ assert.match(wire,/GET \/admin\/\?object=profile\.show HTTP\/1\.1/);assert.ok(closed);
 });

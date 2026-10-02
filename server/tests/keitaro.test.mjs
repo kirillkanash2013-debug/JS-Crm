@@ -36,7 +36,7 @@ import {timezoneKeitaroNode} from '../keitaro.mjs';
 import {profileTimezone} from '../keitaro-timezone.mjs';
 test('current profile timezone is read with pinned DNS without leaking profile or key', async()=>{
  const r=await timezoneKeitaroNode('http://91.223.123.254','secret-key',{resolve,request:fake(200,JSON.stringify({login:'private',preferences:{timezone:'Asia/Almaty'}}),(url,o)=>{
-  assert.equal(url.pathname,'/admin_api/v1/profile');assert.equal(o.method,'GET');
+  assert.equal(url.pathname,'/admin/');assert.equal(url.search,'?object=profile.show');assert.equal(o.method,'GET');
   o.lookup('tracker',{},(_e,ip)=>assert.equal(ip,'91.223.123.254'));
  })});
  assert.deepEqual(r,{result:'ok',timezone:'Asia/Almaty'});

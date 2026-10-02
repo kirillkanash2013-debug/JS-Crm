@@ -14,7 +14,7 @@ async function keitaroNodeGet(origin,key,{resolve=lookup,request}={},profile=fal
   if(!ips.length||ips.some(a=>!publicIPv4(a.address)))return {result:'unreachable',reason:'private_address'};
   const transport=request||(u.protocol==='https:'?https.request:http.request);
   return await new Promise(done=>{
-   const req=transport(new URL(profile?'/admin_api/v1/profile':'/admin_api/v1/campaigns',u),{
+   const req=transport(new URL(profile?'/admin/?object=profile.show':'/admin_api/v1/campaigns',u),{
     method:'GET',headers:{'Api-Key':key,Accept:'application/json'},
     lookup:(_host,opts,cb)=>opts.all?cb(null,[ips[0]]):cb(null,ips[0].address,4)
    },res=>{
@@ -97,6 +97,7 @@ export async function reportKeitaroNode(origin,key,{from,to,timezone,subIndex}={
 }
 
 export const checkKeitaroNode = (origin,key,options) => keitaroNodeGet(origin,key,options);
-// /profile is a version-dependent UI API endpoint, not guaranteed by the public
+// profile.show is the current-user UI read command observed in Keitaro Network.
+// API-key access is version-dependent and is not guaranteed by the public
 // Admin API spec. An unavailable profile must fall back to explicit user input.
 export const timezoneKeitaroNode = (origin,key,options) => keitaroNodeGet(origin,key,options,true);

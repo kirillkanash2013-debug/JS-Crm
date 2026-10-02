@@ -47,7 +47,7 @@ export function keitaroTimezone(env) {
     const r=await env.KEITARO_BRIDGE.timezone(origin,key);
     return r?.result==='ok'?profileTimezone({preferences:{timezone:r.timezone}}):null;
    }
-   const r=await fetch(origin+'/admin_api/v1/profile',{headers:{'Api-Key':key,Accept:'application/json'},redirect:'manual',signal:AbortSignal.timeout(10000)});
+   const r=await fetch(origin+'/admin/?object=profile.show',{headers:{'Api-Key':key,Accept:'application/json'},redirect:'manual',signal:AbortSignal.timeout(10000)});
    return r.ok?profileTimezone(await r.json()):null;
   }catch{return null;}
  };
