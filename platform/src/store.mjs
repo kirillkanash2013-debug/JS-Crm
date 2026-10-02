@@ -80,6 +80,7 @@ export class D1Store {
   async setSocialLabel(tenantId, userId, label) { await this.db.prepare('UPDATE socials SET label=? WHERE tenant_id=? AND user_id=?').bind(label, tenantId, String(userId)).run(); }
   async assignSocial(tenantId, userId, agentId) { await this.db.prepare('UPDATE socials SET agent_id=? WHERE tenant_id=? AND user_id=?').bind(agentId, tenantId, String(userId)).run(); }
   async listSocials(tenantId) { const r = await this.db.prepare('SELECT user_id AS userId, label, agent_id AS agentId FROM socials WHERE tenant_id=?').bind(tenantId).all(); return (r.results || []).map(s => ({userId: s.userId, label: s.label, agentId: s.agentId})); }
+  async deleteSocial(tenantId, userId) { await this.db.prepare('DELETE FROM socials WHERE tenant_id=? AND user_id=?').bind(tenantId, String(userId)).run(); }
 }
 
 const inviteRow = r => ({id: r.id, plan: r.plan, days: r.days, note: r.note, createdAt: r.created_at, expiresAt: r.expires_at, revokedAt: r.revoked_at, usedAt: r.used_at, tenantId: r.tenant_id, usedByChat: r.used_by_chat});
@@ -122,4 +123,5 @@ export class MemoryStore {
   async setSocialLabel(tenantId, userId, label) { const s = this.socialsMap.get(tenantId + ':' + userId); if (s) s.label = label; }
   async assignSocial(tenantId, userId, agentId) { const s = this.socialsMap.get(tenantId + ':' + userId); if (s) s.agentId = agentId; }
   async listSocials(tenantId) { return [...this.socialsMap.values()].filter(s => s.tenantId === tenantId).map(s => ({userId: s.userId, label: s.label, agentId: s.agentId})); }
+  async deleteSocial(tenantId, userId) { this.socialsMap.delete(tenantId + ':' + String(userId)); }
 }

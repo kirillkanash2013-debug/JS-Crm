@@ -166,14 +166,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Reach the collector through the service binding when it's available (reliable
   // worker-to-worker, no public edge in between), else over the public URL.
   function collectorFetch(path, init) { const url = collectorUrl(path); return env.COLLECTOR ? env.COLLECTOR.fetch(url, init) : fetch(url, init); }
-  async function collectorCall(tenantId, path, body) {
+  async function collectorCall(tenantId, path, body, method) {
     if ((!env.COLLECTOR && !env.COLLECTOR_URL) || !env.MASTER_KEY) return null;
     const t = await store.tenant(tenantId);
     if (!t?.integrationTokenEnc) return null;
     let token;
     try { token = await openSecret(env.MASTER_KEY, tenantId, t.integrationTokenEnc); } catch { return null; }
     try {
-      const r = await collectorFetch(path, {method: body ? 'POST' : 'GET', headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
+      const r = await collectorFetch(path, {method: method || (body ? 'POST' : 'GET'), headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
       return {ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))};
     } catch { return null; }
   }
@@ -283,10 +283,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await notifyNewSocials(chatId, tenantId);
     const agents = await store.listAgents(tenantId), socials = await store.listSocials(tenantId);
     const count = {}; for (const s of socials) if (s.agentId) count[s.agentId] = (count[s.agentId] || 0) + 1;
+    const agentName = {}; for (const a of agents) agentName[a.id] = a.name;
     const unassigned = socials.filter(s => !s.agentId);
     let text = '👥 <b>Агенты</b>\n' + (agents.length ? agents.map(a => '• ' + esc(a.name) + ' — соцев: ' + (count[a.id] || 0)).join('\n') : 'Пока нет агентов.');
-    text += '\n\nНераспределённых соцев: <b>' + unassigned.length + '</b>' + (unassigned.length ? ' — нажмите, чтобы закрепить:' : '');
-    const rows = unassigned.slice(0, 20).map(s => [{text: '📌 ' + (s.label || s.userId), callback_data: 'pick:' + s.userId}]);
+    text += '\n\nНераспределённых соцев: <b>' + unassigned.length + '</b>';
+    text += socials.length ? '\n\nСоцы — 📌 закрепить за агентом, 🗑 удалить:' : '\n\nСоцев пока нет. Подключите — «🧩 Подключить соц».';
+    // Each social: a row with the assign button (shows its current agent) + a delete button.
+    const rows = socials.slice(0, 20).map(s => [
+      {text: '📌 ' + (s.label || s.userId) + ' — ' + (s.agentId ? (agentName[s.agentId] || 'агент') : 'без агента'), callback_data: 'pick:' + s.userId},
+      {text: '🗑', callback_data: 'del:' + s.userId}
+    ]);
     rows.push([{text: '➕ Добавить агента', callback_data: 'newagent'}]);
     await send(chatId, text, {inline_keyboard: rows});
   }
@@ -526,6 +532,22 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       return send(chatId, '✅ Соц закреплён за агентом «' + esc(a.name) + '».', MENU);
     }
     if (data.startsWith('pick:')) { const userId = data.slice(5); const s = await store.social(chat.tenantId, userId); return send(chatId, '📌 Закрепить соц «' + esc((s && s.label) || userId) + '» за агентом:', await agentButtons(chat.tenantId, userId)); }
+    if (data === 'agents') return showAgents(chatId, chat.tenantId);
+    if (data.startsWith('del:')) {
+      const userId = data.slice(4); const s = await store.social(chat.tenantId, userId);
+      return send(chatId, '🗑 Удалить соц «' + esc((s && s.label) || userId) + '»?\nСбор по нему остановится, собранные данные будут удалены. Отменить нельзя.',
+        {inline_keyboard: [[{text: '🗑 Да, удалить', callback_data: 'delok:' + userId}, {text: '↩️ Отмена', callback_data: 'agents'}]]});
+    }
+    if (data.startsWith('delok:')) {
+      const userId = data.slice(6); const s = await store.social(chat.tenantId, userId);
+      // Stop collection + forget data on the server, then drop it from the bot.
+      const r = await collectorCall(chat.tenantId, '/v1/connections', {userId}, 'DELETE');
+      await store.deleteSocial(chat.tenantId, userId);
+      await send(chatId, (r && !r.ok)
+        ? '⚠️ Соц «' + esc((s && s.label) || userId) + '» убран из бота, но сервер ответил ошибкой (' + esc(String(r.status)) + '). Если он вернётся в списке — повторите удаление.'
+        : '✅ Соц «' + esc((s && s.label) || userId) + '» удалён, сбор остановлен.');
+      return showAgents(chatId, chat.tenantId);
+    }
     if (data === 'newagent') { await store.setChat(chatId, chat.tenantId, 'newagent:'); return send(chatId, '➕ Введите имя нового агента:'); }
   }
 

@@ -179,6 +179,25 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /Добавьте Keitaro/);
 });
 
+test('agents: deleting a social removes it from the bot and tells the collector', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pdel', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  const tid = (await h.store.chat(1)).tenantId;
+  await h.store.setChat(1, tid, 'ready');
+  await h.store.addSocial(tid, '100', 'Профиль-100');
+  let deleted = false;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts?.method === 'DELETE' && String(url).includes('/v1/connections')) { deleted = true; return Response.json({ok: true}); }
+    return Response.json({});
+  };
+  try { await h.tap('delok:100'); } finally { globalThis.fetch = realFetch; }
+  assert(deleted, 'collector DELETE /v1/connections called');
+  assert.equal(await h.store.social(tid, '100'), null, 'social removed from store');
+  assert(h.sent.some(m => /удал[её]н/.test(m.text || '')), 'deletion confirmed to the client');
+});
+
 test('push: collector announces a connected social to the tenant chat', async () => {
   const store = new MemoryStore(), sent = [];
   const tg = async (m, p) => { sent.push({method: m, ...p}); return {}; };
