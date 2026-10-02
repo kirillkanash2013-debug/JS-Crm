@@ -323,9 +323,12 @@ test('bot campaigns board: active-only numbered list, budget + toggle by text, p
     assert.match(h.last(), /Alpha[\s\S]*Обновления отправлены/); // status sits below the cards
     // One-at-a-time: a new submit while pending is refused.
     await h.tap('cbud:100'); await h.say('1-99'); assert.match(h.last(), /Дождитесь/);
-    // Job done → green line + buttons return (numbers come from the cabinet feed).
-    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', dailyBudget: 5000}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {daily_budget: '5000'}}}];
-    await h.tap('cref:100'); assert.match(h.last(), /✅ <b>Всё прошло успешно/);
+    // Job failed → the real Facebook reason is shown (not a bare "failed").
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', dailyBudget: 5000}, state: 'failed', createdAt: '2026-10-02T00:00:00Z', actionResult: {state: 'failed', stage: 'write', campaignId: '555111', error: {message: 'Бюджет задаётся на уровне группы объявлений'}}}];
+    await h.tap('cref:100'); assert.match(h.last(), /Бюджет задаётся на уровне группы объявлений/);
+    // Job done → green line + buttons return; changed budget shows fresh (read-after-write).
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', dailyBudget: 5000}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {campaignId: '555111', after: {status: 'ACTIVE', daily_budget: '5000'}}}];
+    await h.tap('cref:100'); assert.match(h.last(), /✅ <b>Всё прошло успешно/); assert.match(h.last(), /💰50\$/);
     // Toggle flow: Вкл/Выкл prompts like budget (space-separated, board numbering).
     posted = []; jobs = [];
     await h.tap('ctog:100'); assert.match(h.last(), /1 2 3/); assert.doesNotMatch(h.last(), /Charlie/);

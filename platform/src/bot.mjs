@@ -407,15 +407,23 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Есть ли незавершённая операция этого соца (очередь занята — новую не шлём).
   const hasPending = (jobs, userId) => (jobs || []).some(j => j.action && String(j.userId) === String(userId) && ['queued', 'running'].includes(j.state));
 
-  // Строка статуса последней операции — показывается В САМОМ НИЗУ борда.
+  // Строка статуса последней операции — показывается В САМОМ НИЗУ борда. На ошибке
+  // достаём настоящую причину Facebook из actionResult (error.message/stage), а не
+  // сухое «failed», чтобы было понятно, что именно не так.
   function boardJobLine(jobs, userId, campsById) {
     const mine = (jobs || []).filter(j => j.action && String(j.userId) === String(userId)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const j = mine[0]; if (!j) return '';
+    if (['queued', 'running'].includes(j.state)) return '';
     const name = esc((campsById[String(j.action.campaignId)] || {}).name || j.action.campaignId);
-    if (j.state === 'needs_auth') return '❌ <b>Не удалось:</b> Facebook требует повторный вход — переподключите соц.';
-    if (!['done', 'queued', 'running'].includes(j.state)) return '❌ <b>' + name + '</b>: не удалось применить (' + esc((j.error && (j.error.message || j.error.code)) || j.state) + ').';
-    if (j.state !== 'done') return '';
-    return '✅ <b>Всё прошло успешно.</b>';
+    if (j.state === 'done') return '✅ <b>Всё прошло успешно.</b>';
+    if (j.state === 'needs_auth') return '❌ <b>' + name + '</b>: Facebook требует повторный вход — переподключите соц.';
+    if (j.state === 'rate_limited') return '⏳ <b>' + name + '</b>: Facebook ограничил частоту — повторите чуть позже.';
+    if (j.state === 'unverified') return '⚠️ <b>' + name + '</b>: отправлено, но Facebook пока не подтвердил — нажмите «🔄 Обновить» ещё раз.';
+    const a = j.actionResult || {};
+    let reason = (a.error && (a.error.message || a.error.code)) || (j.error && (j.error.message || j.error.code));
+    if (!reason && a.stage === 'unsupported_status') reason = 'бюджетом/статусом управляет адсет (CBO), а не кампания';
+    reason = reason || a.stage || 'Facebook отклонил изменение';
+    return '❌ <b>' + name + '</b>: ' + esc(String(reason)) + '.';
   }
 
   // Борд кампаний: нумерованный список рабочих кампаний в формате «Сейчас» (через
@@ -433,6 +441,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const camps = (cr && cr.body && cr.body.campaigns) || [];
     const conns = (sr && sr.body && sr.body.connections) || [];
     const jobs = (sr && sr.body && sr.body.jobs) || [];
+    // Накладываем свежие значения из read-after-write Facebook (actionResult.after)
+    // на карточки — чтобы у изменённых кампаний бюджет/статус обновились сразу, из
+    // кабинета, не дожидаясь следующего сбора. Берём только недавние (до 15 мин).
+    for (const j of jobs.filter(x => x.action && x.state === 'done' && x.actionResult && x.actionResult.after && String(x.userId) === String(userId)).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))) {
+      if (j.observedAt && Date.now() - Date.parse(j.observedAt) > 900000) continue;
+      const c = camps.find(x => String(x.campaignId) === String(j.action.campaignId)); if (!c) continue;
+      const af = j.actionResult.after;
+      if (af.status) { c.status = af.status; c.effectiveStatus = af.effective_status || af.status; }
+      if (af.daily_budget != null) c.dailyBudget = af.daily_budget;
+    }
     const multi = conns.length > 1;
     const label = (conns.find(c => String(c.userId) === String(userId)) || {}).label || userId;
     const head = '📣 <b>Кампании</b> · ' + esc(label);
