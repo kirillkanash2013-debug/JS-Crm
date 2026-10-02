@@ -84,14 +84,15 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
 // integration token is stored sealed (per-tenant AES-GCM), so the platform can
 // call the collector as that tenant without any shared cross-worker secret.
 export async function collectorStatus(env, store, tenantId) {
-  if (!env.COLLECTOR_URL || !env.MASTER_KEY) return null;
+  if ((!env.COLLECTOR && !env.COLLECTOR_URL) || !env.MASTER_KEY) return null;
   const tenant = await store.tenant(tenantId);
   if (!tenant?.integrationTokenEnc) return null;
   let token;
   try { token = await openSecret(env.MASTER_KEY, tenantId, tenant.integrationTokenEnc); } catch { return null; }
   const base = String(env.COLLECTOR_URL || '').replace(/\/+$/, '');
+  // Prefer the service binding (reliable worker-to-worker) over the public URL.
   const get = async path => {
-    try { const r = await fetch(base + path, {headers: {Authorization: 'Bearer ' + token}}); return r.ok ? await r.json() : null; }
+    try { const r = await (env.COLLECTOR ? env.COLLECTOR.fetch(base + path, {headers: {Authorization: 'Bearer ' + token}}) : fetch(base + path, {headers: {Authorization: 'Bearer ' + token}})); return r.ok ? await r.json() : null; }
     catch { return null; }
   };
   const status = await get('/v1/status');

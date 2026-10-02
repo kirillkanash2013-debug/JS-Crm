@@ -48,6 +48,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       return send(chatId, '🔧 <b>Диагностика</b>' +
         '\nchat.tenantId: <code>' + (chat?.tenantId || 'нет') + '</code>' +
         '\nCOLLECTOR_URL: <code>' + esc(env.COLLECTOR_URL || 'нет') + '</code>' +
+        '\nservice binding COLLECTOR: ' + (env.COLLECTOR ? 'да' : 'нет') +
         '\nsealed token: ' + (!!t?.integrationTokenEnc) + (tok ? ' (<code>' + esc(tok.slice(0, 8)) + '…</code>, ' + tok.length + ' симв.)' : '') +
         '\n/v1/status: ' + (st ? (st.status + ' ' + esc(st.body?.error || 'ok') + ', соцов: ' + conns.length) : 'нет ответа') +
         '\n/v1/me: ' + (me ? (me.status + ' ' + esc(me.body?.error || (me.body?.account?.name || 'ok'))) : 'нет ответа') +
@@ -87,7 +88,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (cmd === '/teststatus' || cmd === '/testcollect' || cmd === '/testreport') {
       const token = args[0];
       if (!/^jsi_[A-Za-z0-9_-]{43}$/.test(token || '')) return send(chatId, 'Укажите токен: <code>' + cmd + ' jsi_…</code> (получить: /testtoken)');
-      const call = (path, opts) => fetch(collectorUrl(path), {headers: {Authorization: 'Bearer ' + token, ...(opts?.body ? {'Content-Type': 'application/json'} : {})}, ...opts})
+      const call = (path, opts) => collectorFetch(path, {headers: {Authorization: 'Bearer ' + token, ...(opts?.body ? {'Content-Type': 'application/json'} : {})}, ...opts})
         .then(async r => ({ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))}));
       if (cmd === '/teststatus') {
         const r = await call('/v1/status');
@@ -146,14 +147,17 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // COLLECTOR_URL would otherwise make `.../`+`/v1/status` → pathname
   // `//v1/status`, which the collector doesn't know and answers 404.
   function collectorUrl(path) { return String(env.COLLECTOR_URL || '').replace(/\/+$/, '') + path; }
+  // Reach the collector through the service binding when it's available (reliable
+  // worker-to-worker, no public edge in between), else over the public URL.
+  function collectorFetch(path, init) { const url = collectorUrl(path); return env.COLLECTOR ? env.COLLECTOR.fetch(url, init) : fetch(url, init); }
   async function collectorCall(tenantId, path, body) {
-    if (!env.COLLECTOR_URL || !env.MASTER_KEY) return null;
+    if ((!env.COLLECTOR && !env.COLLECTOR_URL) || !env.MASTER_KEY) return null;
     const t = await store.tenant(tenantId);
     if (!t?.integrationTokenEnc) return null;
     let token;
     try { token = await openSecret(env.MASTER_KEY, tenantId, t.integrationTokenEnc); } catch { return null; }
     try {
-      const r = await fetch(collectorUrl(path), {method: body ? 'POST' : 'GET', headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
+      const r = await collectorFetch(path, {method: body ? 'POST' : 'GET', headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
       return {ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))};
     } catch { return null; }
   }

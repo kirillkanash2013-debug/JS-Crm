@@ -4,7 +4,14 @@
   "main": "src/index.mjs",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
-  "services": [{"binding":"KEITARO_BRIDGE","service":"js-control-collector-claude","entrypoint":"KeitaroBridge"}],
+  "services": [
+    {"binding":"KEITARO_BRIDGE","service":"js-control-collector-claude","entrypoint":"KeitaroBridge"},
+    // Internal calls to the collector go through this binding, not the public
+    // workers.dev URL: a Worker fetching another Worker's workers.dev host on
+    // the same account can be answered by Cloudflare's edge with a 404 instead
+    // of reaching the worker. The binding targets the collector's default fetch.
+    {"binding":"COLLECTOR","service":"js-control-collector-claude"}
+  ],
   "d1_databases": [
     {"binding": "DB", "database_name": "js-control-platform", "database_id": "2ea0f7c2-48b6-4f7e-892f-89eb637abf90", "migrations_dir": "migrations"}
   ],
