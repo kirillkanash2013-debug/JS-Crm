@@ -35,11 +35,23 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (cmd === '/diag') {
       const chat = await store.chat(chatId);
       const t = chat?.tenantId ? await store.tenant(chat.tenantId) : null;
-      let st = null; try { st = chat?.tenantId ? await collectorCall(chat.tenantId, '/v1/status') : null; } catch {}
+      // Decrypt the sealed token the bot would use, so we can see its prefix and
+      // call the collector exactly as collectorCall does — reporting the RAW
+      // status AND body.error, which tells route-404 (not_found) from auth
+      // (unauthorized/subscription_expired) apart. /v1/me is probed too: it
+      // echoes the account even on some errors, isolating token vs routing.
+      let tok = null;
+      if (t?.integrationTokenEnc && env.MASTER_KEY) { try { tok = await openSecret(env.MASTER_KEY, chat.tenantId, t.integrationTokenEnc); } catch {} }
+      const st = chat?.tenantId ? await collectorCall(chat.tenantId, '/v1/status') : null;
+      const me = chat?.tenantId ? await collectorCall(chat.tenantId, '/v1/me') : null;
       const conns = (st && st.body && st.body.connections) || [];
-      return send(chatId, '🔧 <b>Диагностика</b>\nchat.tenantId: <code>' + (chat?.tenantId || 'нет') + '</code>\nsealed token: ' + (!!t?.integrationTokenEnc) +
-        '\ncollector /v1/status: ' + (st ? (st.status + ', соцов: ' + conns.length) : 'нет ответа') +
-        (conns.length ? '\n' + conns.map(c => '• ' + (c.label || c.userId)).join('\n') : ''));
+      return send(chatId, '🔧 <b>Диагностика</b>' +
+        '\nchat.tenantId: <code>' + (chat?.tenantId || 'нет') + '</code>' +
+        '\nCOLLECTOR_URL: <code>' + esc(env.COLLECTOR_URL || 'нет') + '</code>' +
+        '\nsealed token: ' + (!!t?.integrationTokenEnc) + (tok ? ' (<code>' + esc(tok.slice(0, 8)) + '…</code>, ' + tok.length + ' симв.)' : '') +
+        '\n/v1/status: ' + (st ? (st.status + ' ' + esc(st.body?.error || 'ok') + ', соцов: ' + conns.length) : 'нет ответа') +
+        '\n/v1/me: ' + (me ? (me.status + ' ' + esc(me.body?.error || (me.body?.account?.name || 'ok'))) : 'нет ответа') +
+        (conns.length ? '\n' + conns.map(c => '• ' + esc(c.label || c.userId)).join('\n') : ''));
     }
     if (cmd === '/invite') {
       let days = 30, plan = 'team';
@@ -75,7 +87,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (cmd === '/teststatus' || cmd === '/testcollect' || cmd === '/testreport') {
       const token = args[0];
       if (!/^jsi_[A-Za-z0-9_-]{43}$/.test(token || '')) return send(chatId, 'Укажите токен: <code>' + cmd + ' jsi_…</code> (получить: /testtoken)');
-      const call = (path, opts) => fetch(env.COLLECTOR_URL + path, {headers: {Authorization: 'Bearer ' + token, ...(opts?.body ? {'Content-Type': 'application/json'} : {})}, ...opts})
+      const call = (path, opts) => fetch(collectorUrl(path), {headers: {Authorization: 'Bearer ' + token, ...(opts?.body ? {'Content-Type': 'application/json'} : {})}, ...opts})
         .then(async r => ({ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))}));
       if (cmd === '/teststatus') {
         const r = await call('/v1/status');
@@ -130,6 +142,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   // Calls the collector as this tenant, using the sealed integration token —
   // no cross-worker secret. Returns {ok,status,body} or null if not set up.
+  // Join the collector base and a path safely: a stray trailing slash on
+  // COLLECTOR_URL would otherwise make `.../`+`/v1/status` → pathname
+  // `//v1/status`, which the collector doesn't know and answers 404.
+  function collectorUrl(path) { return String(env.COLLECTOR_URL || '').replace(/\/+$/, '') + path; }
   async function collectorCall(tenantId, path, body) {
     if (!env.COLLECTOR_URL || !env.MASTER_KEY) return null;
     const t = await store.tenant(tenantId);
@@ -137,7 +153,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     let token;
     try { token = await openSecret(env.MASTER_KEY, tenantId, t.integrationTokenEnc); } catch { return null; }
     try {
-      const r = await fetch(env.COLLECTOR_URL + path, {method: body ? 'POST' : 'GET', headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
+      const r = await fetch(collectorUrl(path), {method: body ? 'POST' : 'GET', headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
       return {ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))};
     } catch { return null; }
   }
@@ -160,7 +176,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       (token ? '🔑 <b>Ваш ключ доступа:</b>\n<code>' + token + '</code>\n\n' : '') +
       '✅ Дальше сервер собирает данные сам — браузер можно закрыть. Статистику смотрите в «📊 Статистика».\n\n' +
       'Либо подключить все профили сразу по API-токену антидетекта: ' + env.IMPORT_URL);
-    try { await tg('sendDocument', {chat_id: chatId, document: env.COLLECTOR_URL + '/extension.zip', caption: 'Расширение JS Control для антидетекта'}); } catch {}
+    try { await tg('sendDocument', {chat_id: chatId, document: collectorUrl('/extension.zip'), caption: 'Расширение JS Control для антидетекта'}); } catch {}
   }
 
   async function showStats(chatId, tenantId) {

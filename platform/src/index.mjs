@@ -89,8 +89,9 @@ export async function collectorStatus(env, store, tenantId) {
   if (!tenant?.integrationTokenEnc) return null;
   let token;
   try { token = await openSecret(env.MASTER_KEY, tenantId, tenant.integrationTokenEnc); } catch { return null; }
+  const base = String(env.COLLECTOR_URL || '').replace(/\/+$/, '');
   const get = async path => {
-    try { const r = await fetch(env.COLLECTOR_URL + path, {headers: {Authorization: 'Bearer ' + token}}); return r.ok ? await r.json() : null; }
+    try { const r = await fetch(base + path, {headers: {Authorization: 'Bearer ' + token}}); return r.ok ? await r.json() : null; }
     catch { return null; }
   };
   const status = await get('/v1/status');
