@@ -6,9 +6,7 @@ export function keitaroOrigin(text) {
   return u.origin;
 }
 
-// Returns 'ok' | 'bad_key' | 'forbidden' | 'unreachable'. Uses the same Api-Key
-// header as the CRM. 403 (even without a valid key) means Keitaro blocks the API
-// itself — an IP allowlist or WAF — not a wrong key.
+// IP origins are checked through the private container service binding.
 export async function checkKeitaro(origin, key, fetcher = fetch) {
   let r;
   try {
@@ -18,4 +16,14 @@ export async function checkKeitaro(origin, key, fetcher = fetch) {
   if (r.status === 403) return 'forbidden';
   if (!r.ok) return 'unreachable';
   try { return Array.isArray(await r.json()) ? 'ok' : 'unreachable'; } catch { return 'unreachable'; }
+}
+
+export function containerKeitaro(env) {
+ return async(origin,key)=>{
+  try {
+   const r=await env.KEITARO_BRIDGE.check(origin,key);
+   console.log(JSON.stringify({event:'keitaro_check',transport:r.transport||'container',result:r.result,status:r.status||null,reason:r.reason||null}));
+   return ['ok','bad_key','forbidden','unreachable'].includes(r.result)?r.result:'unreachable';
+  }catch{return 'unreachable';}
+ };
 }

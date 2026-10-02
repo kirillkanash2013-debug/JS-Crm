@@ -1,7 +1,8 @@
-import {DurableObject} from 'cloudflare:workers';
+import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
 import {EncryptedStore} from './crypto-store.mjs';
 import {connect} from 'cloudflare:sockets';
+import {checkKeitaroSocket,publicIP} from './keitaro-socket.mjs';
 import {Control,initialState,reply} from './control.mjs';
 import {collectViaApi} from './api-collector.mjs';
 import {graphFetcher} from './proxy-fetch.mjs';
@@ -102,6 +103,10 @@ export default {
   if(request.method==='GET'&&url.pathname==='/status.js')return new Response(statusScript(),{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store'}});
   if(request.method==='GET'&&url.pathname==='/health')return reply(200,{ok:true,service:'js-control-collector',version:VERSION,platform:'cloudflare-containers',mode:'live',ownerConfigured:/^js_srv_[A-Za-z0-9_-]{43}$/.test(env.JS_CONTROL_OWNER_KEY||'')});
   if(request.method==='POST'&&url.pathname==='/internal/smoke'){if(!env.DEPLOY_SMOKE_KEY||!env.INTERNAL_KEY||!env.VAULT_KEY||!await equal(request.headers.get('authorization'),'Bearer '+env.DEPLOY_SMOKE_KEY))return reply(401,{error:'unauthorized'});try{return await env.CONTROL.getByName('owner').fetch(new Request('http://internal/internal/smoke',{method:'POST',headers:{'x-control-internal':env.INTERNAL_KEY}}));}catch{return reply(503,{error:'browser_unavailable'});}}
+  if(request.method==='POST'&&url.pathname==='/internal/keitaro-probe'){
+   if(!env.DEPLOY_SMOKE_KEY||!await equal(request.headers.get('authorization'),'Bearer '+env.DEPLOY_SMOKE_KEY))return reply(401,{error:'unauthorized'});
+   try{return reply(200,await keitaroContainerCheck(env,'http://91.223.123.254',''));}catch{return reply(503,{error:'container_unavailable'});}
+  }
   if(!paths.get(url.pathname)?.split(',').includes(request.method))return reply(404,{error:'not_found'});
   if(!env.VAULT_KEY||!env.INTERNAL_KEY)return reply(503,{error:'setup_required'});
   // Owner key → the owner's space; client integration token (jsi_) → that client's
@@ -121,3 +126,18 @@ export default {
   try{return await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));}catch{return reply(503,{error:'collector_unavailable'});}
  }
 };
+
+async function keitaroContainerCheck(env,origin,key) {
+  try{if(publicIP(new URL(origin).hostname)){const r=await checkKeitaroSocket(origin,key,connect);if(r.result!=='unreachable')return r;}}catch{}
+  if(!env.INTERNAL_KEY)return {result:'unreachable',reason:'setup_required'};
+  try {
+   const c=getContainer(env.BROWSER,'keitaro-api');
+   const r=await c.fetch(new Request('http://localhost/keitaro-check',{
+    method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify({origin,key})
+   }));
+   return r.ok?await r.json():{result:'unreachable',reason:'container'};
+  }catch{return {result:'unreachable',reason:'container'};}
+}
+export class KeitaroBridge extends WorkerEntrypoint {
+ async check(origin,key){return keitaroContainerCheck(this.env,origin,key);}
+}

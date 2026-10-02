@@ -120,7 +120,7 @@ function decodeChunked(body) {
   }
 }
 
-async function readResponse(socket) {
+export async function readResponse(socket) {
   const reader = new Reader(socket.readable);
   try {
     const head = dec.decode(await reader.until(enc.encode('\r\n\r\n'), MAX_HEAD)).split('\r\n');

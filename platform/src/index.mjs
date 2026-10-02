@@ -2,6 +2,7 @@
 // → plugin login → dashboard. One deployment serves every client (tenant).
 import {PLANS, applyPayment, authenticate} from './accounts.mjs';
 import {createBot} from './bot.mjs';
+import {containerKeitaro} from './keitaro.mjs';
 import {dashboardPage, dashboardSummary} from './dashboard.mjs';
 import {openSecret} from './secrets.mjs';
 import {D1Store} from './store.mjs';
@@ -33,13 +34,13 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
   const url = new URL(request.url);
   const path = url.pathname;
 
-  if (request.method === 'GET' && path === '/health') return json(200, {ok: true, service: 'js-control-platform'});
+  if (request.method === 'GET' && path === '/health') return json(200, {ok: true, service: 'js-control-platform', keitaroTransport: env.KEITARO_BRIDGE?'container':'worker'});
 
   // Telegram webhook. Secret header is set by setWebhook(secret_token=...).
   if (request.method === 'POST' && path === '/telegram') {
     if (!await sameSecret(request.headers.get('x-telegram-bot-api-secret-token'), env.TELEGRAM_WEBHOOK_SECRET)) return json(401, {error: 'unauthorized'});
     const update = await request.json();
-    await createBot({store, tg, env})(update);
+    await createBot({store, tg, env, ...(env.KEITARO_BRIDGE?{keitaro:containerKeitaro(env)}:{})})(update);
     return json(200, {ok: true});
   }
 

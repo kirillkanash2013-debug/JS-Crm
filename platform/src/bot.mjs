@@ -201,7 +201,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const result = await keitaro(s.keitaroUrl, text);
       const skipBtn = {inline_keyboard: [[{text: 'Пропустить Keitaro', callback_data: 'skip:keitaro'}]]};
       if (result === 'bad_key') return send(chatId, '❌ Keitaro не принял ключ. Проверьте ключ и отправьте ещё раз — или пропустите, его можно подключить позже.', skipBtn);
-      if (result === 'forbidden') return send(chatId, '❌ Keitaro закрыл доступ к API (код 403) — ключ тут ни при чём. Обычно это ограничение API по IP в Keitaro (Настройки → доступ к API / «Разрешённые IP») или фаервол/WAF. Снимите ограничение или добавьте наш сервер в список, затем пришлите ключ снова — либо пропустите и подключите позже.', skipBtn);
+      if (result === 'forbidden') return send(chatId, '❌ Сервер отказал в доступе к API (403). Причиной могут быть права пользователя или ограничения сервера. Проверка выполнена через облачный сервер, включая адреса по IP. Проверьте доступ к кампаниям через API с администратором трекера — либо пропустите и подключите позже.', skipBtn);
       if (result === 'unreachable') return send(chatId, '❌ Не удалось связаться с ' + esc(s.keitaroUrl) + '. Проверьте адрес (/settings) или доступность трекера — или пропустите.', skipBtn);
       await store.saveSettings(tenant.id, {keitaroKeyEnc: await sealSecret(env.MASTER_KEY, tenant.id, text)});
       await send(chatId, '✅ Keitaro подключён.');
