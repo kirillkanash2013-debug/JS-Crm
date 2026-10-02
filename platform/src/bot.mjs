@@ -28,6 +28,9 @@ const TIMEZONES = ['Europe/Minsk', 'Europe/Moscow', 'Europe/Kyiv', 'Asia/Almaty'
 const planName = id => PLANS[id]?.name || id;
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const validTimezone = tz => { try { new Intl.DateTimeFormat('ru', {timeZone: tz}); return true; } catch { return false; } };
+// Текущая дата YYYY-MM-DD в часовом поясе тенанта — один «день» и для спенда FB,
+// и для Keitaro, чтобы на стыке суток они не разъезжались.
+const todayIn = tz => new Date().toLocaleDateString('en-CA', {timeZone: tz || 'UTC'});
 
 export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   const send = (chatId, text, markup) => tg('sendMessage', {chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(markup ? {reply_markup: markup} : {})});
@@ -261,8 +264,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const fbAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
     const fbTime = fbAt ? new Date(fbAt).toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'}) : '—';
     // Параллельно: кампании по каждому соцу + отчёт Keitaro (не ждём по очереди).
+    // Спенд берём за тот же день (в часовом поясе тенанта), что и Keitaro — иначе
+    // на стыке суток FB-спенд (UTC-«сегодня») и доход (tz-«сегодня») разъезжаются.
     const [campaignsArrays, kt] = await Promise.all([
-      Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId)))),
+      Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&date=' + day))),
       loadKeitaro(tenantId, day, tz)
     ]);
     const campaigns = [];
@@ -421,8 +426,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Fetches this social's campaigns + jobs and applies the overlay — the single
   // «live» view both the board and the toggle/budget handlers must read from.
   async function liveCampaigns(tenantId, userId) {
+    const day = todayIn((await store.settings(tenantId)).timezone);
     const [cr, sr] = await Promise.all([
-      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId)),
+      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&date=' + day),
       collectorCall(tenantId, '/v1/status')
     ]);
     const camps = (cr && cr.body && cr.body.campaigns) || [];
@@ -466,11 +472,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // и только кнопка «🔄 Обновить» — они держатся, пока не придёт зелёная галочка
   // (цифры изменённых кампаний подтянутся из кабинета) или ошибка. {text, markup, pending}.
   async function campaignsBoard(tenantId, userId, opts = {}) {
-    // Параллельно: кампании соца, статус/джобы и настройки (часовой пояс).
-    const [cr, sr, s] = await Promise.all([
-      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId)),
-      collectorCall(tenantId, '/v1/status'),
-      store.settings(tenantId)
+    // Сначала статус/джобы и настройки (нужен часовой пояс, чтобы запросить спенд
+    // за правильный день); потом кампании за этот день и Keitaro — параллельно.
+    const [sr, s] = await Promise.all([collectorCall(tenantId, '/v1/status'), store.settings(tenantId)]);
+    const tz = s.timezone || 'UTC';
+    const day = todayIn(tz);
+    const [cr, {keitaro}] = await Promise.all([
+      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&date=' + day),
+      loadKeitaro(tenantId, day, tz)
     ]);
     const conns = (sr && sr.body && sr.body.connections) || [];
     const jobs = (sr && sr.body && sr.body.jobs) || [];
@@ -483,9 +492,6 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const footMulti = multi ? [[{text: '⬅️ Другой соц', callback_data: 'csoc'}]] : [];
     if (!camps.length) return {text: head + '\n\nКампаний пока нет (ещё не собрались). Загляните позже.', markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}, pending: false};
 
-    const tz = s.timezone || 'UTC';
-    const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});
-    const {keitaro} = await loadKeitaro(tenantId, day, tz);
     const byCampaign = (keitaro && keitaro.byCampaign) || {};
     const empty = {inst: 0, reg: 0, dep: 0, rev: 0};
     const ordered = boardCampaigns(camps);
