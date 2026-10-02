@@ -9,7 +9,7 @@ const NEEDS_AUTH=['needs_auth','identity',190,102];
 const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
 const BROWSER_FALLBACK=[1,190,102];
-const CONNECT_ERRORS={proxy:'proxy_failed',190:'token_invalid',102:'token_invalid',identity:'wrong_user',cookies_owner:'cookies_owner',cookies:'validation_failed',invalid:'validation_failed'};
+const CONNECT_ERRORS={proxy:'proxy_failed',190:'token_invalid',102:'token_invalid',identity:'wrong_user',cookies_owner:'cookies_owner',cookies:'validation_failed',invalid:'validation_failed',container_unavailable:'validation_failed'};
 const validateAction=a=>{
  const campaignId=String(a?.campaignId||'');
  if(!/^\d{5,20}$/.test(campaignId))throw new Error('Unsupported action');
@@ -59,7 +59,7 @@ export class Control {
    // Cheap check through the social's proxy when available; the browser container only as before.
    let c;
    try{c=this.runner.validateApi?await this.runner.validateApi(b):await this.runner.validate(b);}
-   catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed',detail:(e&&e.message)?String(e.message).slice(0,200):null});}
+   catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed',detail:((e&&(e.detail||e.message))?String(e.detail||e.message):null)?.slice(0,200)??null});}
    const old=this.state.connections[c.userId];
    // The server owns the settings: a social gets the default schedule from the
    // server (not the client) and an immediate first collection. The plugin only

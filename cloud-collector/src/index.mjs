@@ -51,7 +51,12 @@ export class CollectorControl extends DurableObject {
   ctx.blockConcurrencyWhile(async()=>{
    this.vault=new EncryptedStore(ctx.storage,env.VAULT_KEY);
    const call=async(path,body)=>{
-    const c=getContainer(env.BROWSER,'browser:'+ctx.id.toString());const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));const value=await r.json();
+    const c=getContainer(env.BROWSER,'browser:'+ctx.id.toString());const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));
+    // The container can return a non-JSON body when it is cold-starting or
+    // crashed (e.g. a plain "Failed to ..." page). Surface that as a clean
+    // error with a snippet, instead of leaking a raw JSON.parse SyntaxError.
+    const text=await r.text();let value;
+    try{value=text?JSON.parse(text):{};}catch{throw Object.assign(new Error('container_non_json'),{code:'container_unavailable',detail:'Коллектор ещё запускается, попробуйте ещё раз. ('+text.slice(0,120)+')'});}
     if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail});return value;
    };
    this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,{apiValidate:x=>call('/api-validate',x),containerValidate:x=>call('/validate',x)}),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
