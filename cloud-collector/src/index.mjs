@@ -78,9 +78,27 @@ export class CollectorControl extends DurableObject {
   // Even internal DO calls require the gateway's secret. No public forwarding to Chromium.
   if(!await equal(request.headers.get('x-control-internal'),this.env.INTERNAL_KEY))return reply(401,{error:'unauthorized'});
   if(new URL(request.url).pathname==='/internal/smoke'){try{const result=await this.control.runner.smoke();await this.ctx.blockConcurrencyWhile(async()=>{this.control.state.platformCheck=result;await this.control.persist();});return reply(200,result);}catch{return reply(503,{error:'browser_unavailable'});}}
+  // Remember which tenant owns this DO, so collection-finish notifications can
+  // be addressed to the right bot chat (persisted whenever a request persists).
+  const tid=request.headers.get('x-tenant-id');if(tid)this.control.state.tenantId=tid;
   try{return await this.ctx.blockConcurrencyWhile(async()=>{
    const url=new URL(request.url),b=request.method==='GET'?Object.fromEntries(url.searchParams):await request.json();const limit=Number(request.headers.get('x-social-limit'))||1;return this.control.request(url.pathname,request.method,b,limit);
   });}catch{return reply(400,{error:'invalid_request'});}
+ }
+ // Sends the queued "social connected" notifications (with real counts) to the
+ // bot, once each, outside the storage gate. Failures stay queued for next time.
+ async announcePending(){
+  const pending=this.control.state.pendingAnnounce;
+  if(!pending?.length||!this.env.PLATFORM||!this.control.state.tenantId)return;
+  const tenantId=this.control.state.tenantId,done=[];
+  for(const userId of [...pending]){
+   try{
+    const c=this.control.state.connections[userId],sum=this.control.archive?.socialSummary?.(userId)||{};
+    await this.env.PLATFORM.socialConnected(tenantId,{userId,label:c?.label||null,accounts:sum.accounts??null,businesses:sum.businesses??null,pages:sum.pages??null,collectedAt:sum.lastAt||null});
+    done.push(userId);
+   }catch{}
+  }
+  if(done.length)await this.ctx.blockConcurrencyWhile(async()=>{this.control.state.pendingAnnounce=(this.control.state.pendingAnnounce||[]).filter(u=>!done.includes(u));await this.control.persist();});
  }
  // Takes every job that may run now (several cheap API jobs in parallel), runs
  // them outside the storage gate and records each result as soon as it ends.
@@ -88,6 +106,7 @@ export class CollectorControl extends DurableObject {
   const works=[];
   for(let work;(work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare()));)works.push(work);
   await Promise.all(works.map(async work=>{const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));}));
+  await this.announcePending();
  }
 }
 export default {
@@ -130,16 +149,11 @@ export default {
   }
   const headers=new Headers(request.headers);headers.delete('authorization');headers.set('x-control-internal',env.INTERNAL_KEY);
   headers.set('x-social-limit',String(caller.socialLimit));
-  try{
-   const resp=await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));
-   // A new/updated connection → tell the bot (fire-and-forget), so the client
-   // gets a "profile connected" message right away, not only on the next screen.
-   if(env.PLATFORM&&request.method==='POST'&&url.pathname==='/v1/connections'&&resp.ok&&caller.space.startsWith('tenant:')){
-    const tenantId=caller.space.slice('tenant:'.length);
-    ctx?.waitUntil((async()=>{try{const d=await resp.clone().json();await env.PLATFORM.socialConnected(tenantId,{userId:d.userId,label:d.label??null});}catch{}})());
-   }
-   return resp;
-  }catch{return reply(503,{error:'collector_unavailable'});}
+  // Tell the DO which tenant it serves, so it can address the bot after the
+  // first collection (the notification is sent there, with real counts).
+  if(caller.space.startsWith('tenant:'))headers.set('x-tenant-id',caller.space.slice('tenant:'.length));
+  try{return await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));}
+  catch{return reply(503,{error:'collector_unavailable'});}
  }
 };
 

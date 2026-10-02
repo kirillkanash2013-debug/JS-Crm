@@ -160,6 +160,10 @@ export class Control {
   else{
    // History goes to the client's database; state keeps only a compact summary.
    this.state.results[j.userId]=this.archive?await this.archive.record(j.userId,result.snapshot,result.viaBrowser?'browser':'api',c.label):result.snapshot;j.state='done';j.observedAt=result.snapshot.observedAt;j.mode=result.viaBrowser?'browser':'api';
+   // First successful collection for this social → queue a one-time "connected"
+   // notification to the bot (with real accounts/БМ/pages counts). The DO sends
+   // it outside the storage gate after the alarm finishes.
+   if(!j.action){this.state.announced=this.state.announced||{};this.state.pendingAnnounce=this.state.pendingAnnounce||[];if(!this.state.announced[j.userId]){this.state.announced[j.userId]=true;this.state.pendingAnnounce.push(j.userId);}}
    if(result.storageState)c.storageState=result.storageState;
    if(typeof result.token==='string'&&/^EA[A-Za-z0-9_-]{18,4094}$/.test(result.token))c.token=result.token;
    if(!result.viaBrowser)c.apiFailures=0;
