@@ -6,7 +6,7 @@ import {checkKeitaro, keitaroOrigin} from './keitaro.mjs';
 import {openSecret, sealSecret} from './secrets.mjs';
 import {findToken} from './tokens.mjs';
 
-const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '🧩 Подключить соц'}], [{text: '⚙️ Настройки'}, {text: '💳 Подписка'}]], resize_keyboard: true};
+const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Кампании'}], [{text: '🧩 Подключить соц'}, {text: '💳 Подписка'}], [{text: '⚙️ Настройки'}]], resize_keyboard: true};
 const INVITE_ERRORS = {
   invalid: '❌ Код не найден. Проверьте, что скопировали его полностью.',
   used: '❌ Этот код уже использован. Каждый код работает только один раз.',
@@ -157,6 +157,55 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await send(chatId, '📊 <b>Статистика за сегодня</b>\nСоцев: ' + conns.length + '\nРасход: ' + esc(totals) + '\n\n' + lines.join('\n'), MENU);
   }
 
+  const campIcon = s => s === 'ACTIVE' ? '🟢' : s === 'PAUSED' ? '⏸' : '⚪';
+
+  async function campaignsEntry(chatId, tenantId) {
+    const st = await collectorCall(tenantId, '/v1/status');
+    const conns = (st && st.body && st.body.connections) || [];
+    if (!conns.length) return send(chatId, '📣 Нет подключённых соцов. Подключите соц — «🧩 Подключить соц».', MENU);
+    if (conns.length === 1) return showCampaigns(chatId, tenantId, conns[0].userId);
+    return send(chatId, '📣 <b>Кампании</b>\nВыберите соц:', {inline_keyboard: conns.map(c => [{text: c.label || c.userId, callback_data: 'soc:' + c.userId}])});
+  }
+
+  async function showCampaigns(chatId, tenantId, userId) {
+    const r = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId));
+    const camps = (r && r.body && r.body.campaigns) || [];
+    if (!camps.length) return send(chatId, '📣 Кампаний пока нет (ещё не собрались). Загляните позже.', MENU);
+    return send(chatId, '📣 <b>Кампании</b> (' + camps.length + '). Нажмите на кампанию:',
+      {inline_keyboard: camps.slice(0, 40).map(c => [{text: campIcon(c.status) + ' ' + String(c.name || c.campaignId).slice(0, 40), callback_data: 'cmp:' + userId + ':' + c.campaignId}])});
+  }
+
+  async function showCampaign(chatId, tenantId, userId, cid) {
+    const r = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId));
+    const c = ((r && r.body && r.body.campaigns) || []).find(x => x.campaignId === cid);
+    if (!c) return send(chatId, 'Кампания не найдена. Обновите список: «📣 Кампании».', MENU);
+    const budget = c.dailyBudget ? (Number(c.dailyBudget) / 100).toFixed(2) + ' ' + (c.currency || '') : '—';
+    const toggle = c.status === 'ACTIVE' ? {text: '⏸ Пауза', callback_data: 'act:' + userId + ':' + cid + ':pause'} : {text: '▶️ Включить', callback_data: 'act:' + userId + ':' + cid + ':on'};
+    await send(chatId, '📣 <b>' + esc(c.name || cid) + '</b>\nСтатус: ' + campIcon(c.status) + ' ' + esc(c.status || '—') +
+      '\nДневной бюджет: ' + esc(budget) + '\nРасход сегодня: ' + esc((c.spend || 0) + ' ' + (c.currency || '')),
+      {inline_keyboard: [[toggle], [{text: '💰 Бюджет', callback_data: 'budg:' + userId + ':' + cid}, {text: '🔄 Обновить', callback_data: 'cmp:' + userId + ':' + cid}]]});
+  }
+
+  async function runAction(chatId, tenantId, body, label) {
+    const r = await collectorCall(tenantId, '/v1/actions', body);
+    if (!r) return send(chatId, '❌ Не удалось отправить команду. Попробуйте позже.', MENU);
+    if (r.status === 409) return send(chatId, '⏳ Сейчас выполняется другая операция. Повторите через минуту.', MENU);
+    if (!r.ok) return send(chatId, '❌ ' + esc((r.body && (r.body.error || r.body.detail)) || r.status), MENU);
+    return send(chatId, '⏳ ' + label + ' — применяю, это займёт ~минуту.', {inline_keyboard: [[{text: '🔄 Проверить результат', callback_data: 'chk:' + (r.body && r.body.id)}]]});
+  }
+
+  async function checkJob(chatId, tenantId, jobId) {
+    const r = await collectorCall(tenantId, '/v1/status');
+    const job = ((r && r.body && r.body.jobs) || []).find(j => j.id === jobId);
+    if (!job) return send(chatId, 'Задача не найдена (возможно, устарела). Проверьте статус в «📣 Кампании».', MENU);
+    if (['queued', 'running'].includes(job.state)) return send(chatId, '⏳ Ещё выполняется — нажмите «Проверить» ещё раз через момент.', {inline_keyboard: [[{text: '🔄 Проверить результат', callback_data: 'chk:' + jobId}]]});
+    if (job.state === 'needs_auth') return send(chatId, '❌ Facebook требует вход заново — переподключите соц через расширение.', MENU);
+    if (job.state !== 'done') return send(chatId, '❌ Не удалось применить (' + esc((job.error && job.error.code) || job.state) + ').', MENU);
+    const after = (job.actionResult && job.actionResult.after) || {};
+    const budget = after.daily_budget ? (Number(after.daily_budget) / 100).toFixed(2) : null;
+    return send(chatId, '✅ Готово. Статус: ' + esc(after.status || '—') + (budget ? ', дневной бюджет: ' + esc(budget) : ''), MENU);
+  }
+
   async function finish(chatId, tenantId, tz) {
     await store.saveSettings(tenantId, {timezone: tz, currency: 'USD', onboardedAt: new Date().toISOString()});
     await store.setChat(chatId, tenantId, 'ready');
@@ -262,8 +311,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!validTimezone(text)) return send(chatId, 'Не знаю такой пояс. Пример: <code>Europe/Minsk</code>');
       return finish(chatId, tenant.id, text);
     }
+    if (chat.state && chat.state.startsWith('budget:')) {
+      const [, userId, cid] = chat.state.split(':');
+      const dollars = Number(String(text).replace(',', '.').replace(/[^\d.]/g, ''));
+      if (!(dollars > 0)) return send(chatId, 'Введите сумму дневного бюджета в валюте кабинета, например <code>15</code> или <code>15.50</code>.');
+      await store.setChat(chatId, tenant.id, 'ready');
+      return runAction(chatId, tenant.id, {userId, campaignId: cid, dailyBudget: Math.round(dollars * 100)}, 'Бюджет ' + dollars);
+    }
 
     if (text === '📊 Статистика' || text === '/stats') return showStats(chatId, tenant.id);
+    if (text === '📣 Кампании' || text === '/campaigns') return campaignsEntry(chatId, tenant.id);
     if (text === '/dashboard') return send(chatId, '📊 Веб-ссылка (необязательно, всё есть в «📊 Статистика»):\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
     if (text === '🧩 Подключить соц' || text === '/plugin') return sendPluginKit(chatId);
     if (text === '⚙️ Настройки' || text === '/settings') return askKeitaroUrl(chatId);
@@ -289,6 +346,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null}); return askTimezone(chatId, chat.tenantId); }
     if (data.startsWith('ksub:') && /^[1-6]$/.test(data.slice(5)) && chat.state === 'keitaro_sub') { await store.saveSettings(chat.tenantId, {keitaroSub: 'sub_id_' + data.slice(5)}); return askTimezone(chatId, chat.tenantId); }
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
+    if (data.startsWith('soc:')) return showCampaigns(chatId, chat.tenantId, data.slice(4));
+    if (data.startsWith('cmp:')) { const [, userId, cid] = data.split(':'); return showCampaign(chatId, chat.tenantId, userId, cid); }
+    if (data.startsWith('act:')) { const [, userId, cid, op] = data.split(':'); return runAction(chatId, chat.tenantId, {userId, campaignId: cid, status: op === 'pause' ? 'PAUSED' : 'ACTIVE'}, op === 'pause' ? 'Пауза' : 'Включение'); }
+    if (data.startsWith('budg:')) { const [, userId, cid] = data.split(':'); await store.setChat(chatId, chat.tenantId, 'budget:' + userId + ':' + cid); return send(chatId, '💰 Введите новый дневной бюджет (в валюте кабинета), например <code>15</code>:'); }
+    if (data.startsWith('chk:')) return checkJob(chatId, chat.tenantId, data.slice(4));
   }
 
   return async function handleUpdate(update) {

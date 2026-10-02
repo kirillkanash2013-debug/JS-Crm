@@ -174,6 +174,29 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /Алина/);
 });
 
+test('bot campaign management: open a campaign, pause it, and check the result', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pc3', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  const realFetch = globalThis.fetch;
+  let posted = null;
+  globalThis.fetch = async (url, opts) => {
+    assert.match(opts.headers.Authorization, /^Bearer jsi_/);
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '555111', name: 'Camp', status: 'ACTIVE', dailyBudget: '2000', currency: 'USD', spend: 12.5}]});
+    if (url.endsWith('/v1/actions')) { posted = JSON.parse(opts.body); return new Response(JSON.stringify({id: 'job-1', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина'}], jobs: [{id: 'job-1', state: 'done', actionResult: {after: {status: 'PAUSED', daily_budget: '2000'}}}]});
+    return Response.json({});
+  };
+  try {
+    await h.tap('cmp:100:555111'); assert.match(h.last(), /Camp/); assert.match(h.last(), /ACTIVE/);
+    await h.tap('act:100:555111:pause');
+    assert.deepEqual(posted, {userId: '100', campaignId: '555111', status: 'PAUSED'});
+    assert.match(h.last(), /применяю/);
+    await h.tap('chk:job-1'); assert.match(h.last(), /Готово/); assert.match(h.last(), /PAUSED/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('dashboard renders collector spend and marks the social step done', () => {
   const summary = dashboardSummary({name: 'A', plan: 'team', paidUntil: '2026-10-31'}, {onboardedAt: 'x', timezone: 'UTC'},
     {socials: 1, observedAt: '2026-10-01T10:00:00Z', connections: [{label: 'Алина', mode: 'api'}], totals: {USD: 82.29}, rows: 3});
