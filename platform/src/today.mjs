@@ -97,6 +97,12 @@ function campIcon(c) {
   return (!active ? '🔴' : c.spend > 0 ? '🟢' : '⚪') + (c.errorAds ? ' ⚠️' : '');
 }
 
+// Numbered per-campaign card for the campaigns board: "N. <icon> name" + the
+// 💰/💸/🤑 and metrics lines. Reuses the same rendering as the «Сейчас» report.
+export function campaignCard(n, c, k = {inst: 0, reg: 0, dep: 0, rev: 0}) {
+  return '<b>' + n + '.</b> ' + campaignLines(c, k);
+}
+
 // One campaign: name, 💰budget 💸spend 🤑rev, then inst/CPI − reg/CPR − dep/CPA (ROI%).
 function campaignLines(c, k) {
   const budget = c.dailyBudget ? Math.round(num(c.dailyBudget) / 100) : 0;

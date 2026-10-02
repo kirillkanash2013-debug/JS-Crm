@@ -71,7 +71,12 @@ export class Control {
    const date=new Date().toISOString().slice(0,10);this.enqueue({userId:c.userId,since:date,until:date});
    await this.persist();return reply(201,{userId:c.userId,label:conn.label,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
-  if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');if(this.state.jobs.some(j=>['queued','running'].includes(j.state)))return reply(409,{error:'busy'});const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
+  if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');
+   // Allow queuing several actions at once (bulk budget / on-off). prepare()
+   // runs heavy/action jobs one at a time, so they apply sequentially; cap the
+   // pending action queue to avoid abuse.
+   if(this.state.jobs.filter(j=>j.action&&['queued','running'].includes(j.state)).length>=25)return reply(409,{error:'busy'});
+   const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/schedule'){
    const c=this.state.connections[b.userId];if(!c||!Number.isInteger(b.minutes)||b.minutes<0||b.minutes>1440||(b.minutes>0&&b.minutes<15))throw new Error('Invalid schedule');

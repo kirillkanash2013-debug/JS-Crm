@@ -290,29 +290,42 @@ test('«🔑 Ключ» shows the current token without rotating it', async () =
   assert(h.last().includes(token), 'shows the same key, not a new one');
 });
 
-test('bot campaigns board: list all, pause from the list, see the result on refresh', async () => {
+test('bot campaigns board: numbered list, toggle + budget, pending then result on refresh', async () => {
   const h = harness();
   const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pc3', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
   await h.say('/start ' + token);
   await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
   const realFetch = globalThis.fetch;
-  let posted = null, jobs = [];
+  let posted = [], jobs = [];
   globalThis.fetch = async (url, opts) => {
-    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '555111', name: 'Camp', status: 'ACTIVE', effectiveStatus: 'ACTIVE', dailyBudget: '2000', currency: 'USD', spend: 12.5}]});
-    if (url.endsWith('/v1/actions')) { posted = JSON.parse(opts.body); return new Response(JSON.stringify({id: 'job-1', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [
+      {campaignId: '555111', name: 'Alpha', status: 'ACTIVE', effectiveStatus: 'ACTIVE', dailyBudget: '2000', currency: 'USD', spend: 12.5},
+      {campaignId: '555222', name: 'Bravo', status: 'PAUSED', effectiveStatus: 'PAUSED', dailyBudget: '1000', currency: 'USD', spend: 0}]});
+    if (url.endsWith('/v1/actions')) { posted.push(JSON.parse(opts.body)); return new Response(JSON.stringify({id: 'job-1', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
     if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина'}], jobs});
     return Response.json({});
   };
   try {
     await h.say('📣 Кампании');
-    assert.match(h.last(), /📣 <b>Кампании<\/b>/); assert.match(h.last(), /Camp/); assert.match(h.last(), /💰20\$ 💸13\$/);
-    await h.tap('cact:100:555111:pause');
-    assert.deepEqual(posted, {userId: '100', campaignId: '555111', status: 'PAUSED'});
-    assert.match(h.last(), /Команда отправлена/);
-    // Job finished → refresh shows the outcome on the same board.
+    assert.match(h.last(), /📣 <b>Кампании<\/b>/);
+    assert.match(h.last(), /<b>1\.<\/b>/); assert.match(h.last(), /<b>2\.<\/b>/); // numbered, name-sorted (Alpha, Bravo)
+    assert.match(h.last(), /Alpha/); assert.match(h.last(), /💰20\$ 💸13\$/);
+    // Toggle picker → tap campaign 1 (ACTIVE → PAUSED).
+    await h.tap('ctog:100'); assert.match(h.last(), /Вкл\/Выкл/);
+    await h.tap('ctg:100:555111');
+    assert.deepEqual(posted.at(-1), {userId: '100', campaignId: '555111', status: 'PAUSED'});
+    // Pending: queued job → "ждём подтверждения" + only Обновить.
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', status: 'PAUSED'}, state: 'queued', createdAt: '2026-10-02T00:00:00Z'}];
+    await h.tap('cref:100'); assert.match(h.last(), /ждём подтверждения/);
+    // Job done → refresh shows outcome + buttons return.
     jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', status: 'PAUSED'}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {status: 'PAUSED', daily_budget: '2000'}}}];
-    await h.tap('cref:100');
-    assert.match(h.last(), /✅/); assert.match(h.last(), /на паузе/);
+    await h.tap('cref:100'); assert.match(h.last(), /на паузе/);
+    // Budget flow: multiple pairs "1-50 2-30" → two /v1/actions with dailyBudget.
+    jobs = [];
+    posted = [];
+    await h.tap('cbud:100'); assert.match(h.last(), /1-234 2-423/);
+    await h.say('1-50 2-30');
+    assert.deepEqual(posted.map(p => [p.campaignId, p.dailyBudget]), [['555111', 5000], ['555222', 3000]]);
   } finally { globalThis.fetch = realFetch; }
 });
 
