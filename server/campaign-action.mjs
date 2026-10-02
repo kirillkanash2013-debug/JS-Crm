@@ -1,6 +1,8 @@
 // Campaign write actions: pause/resume and daily budget. Scoped to the social's
 // own token+session; every write reads before and after and verifies the result.
 // status is ACTIVE|PAUSED; dailyBudget is minor currency units (e.g. cents).
+import {nodeGraphRequest} from './api-fetch.mjs';
+
 export function validateAction(a) {
   const campaignId = String(a?.campaignId || '');
   if (!/^\d{5,20}$/.test(campaignId)) throw new Error('Unsupported action');
@@ -16,6 +18,33 @@ export function validateAction(a) {
   }
   if (out.status === undefined && out.dailyBudget === undefined) throw new Error('Unsupported action');
   return out;
+}
+
+// Proxy-agnostic campaign action: the write (status / daily budget) is done as a
+// Graph API call in Node, THROUGH the social's proxy — including SOCKS5 with login,
+// which the browser path cannot use. Reads the campaign before and after and
+// verifies the result, same shape as the browser version. No browser launched.
+export async function applyCampaignActionApi(connection, action, {request} = {}) {
+  const act = validateAction(action);
+  const call = request || nodeGraphRequest(connection);
+  const F = 'id,name,account_id,status,effective_status,daily_budget';
+  const clean = r => ({httpStatus: r.httpStatus, code: r.body?.error?.code, subcode: r.body?.error?.error_subcode, message: r.body?.error?.error_user_msg || r.body?.error?.message});
+  const stamp = x => ({...x, campaignId: act.campaignId, requestedStatus: act.status || null, requestedBudget: act.dailyBudget || null, observedAt: new Date().toISOString()});
+  // Identity: the token must belong to this social (как в браузерной проверке).
+  const me = await call('GET', 'me', {fields: 'id'});
+  if (String(me.body?.id || '') !== String(connection.userId)) throw Object.assign(new Error('Identity mismatch'), {code: 'identity'});
+  const before = await call('GET', act.campaignId, {fields: F});
+  if (before.body?.id !== act.campaignId || before.body?.error) return {actionResult: stamp({state: 'failed', stage: 'read_before', error: clean(before)})};
+  if (!['PAUSED', 'ACTIVE'].includes(before.body.status)) return {actionResult: stamp({state: 'failed', stage: 'unsupported_status', before: before.body})};
+  const patch = {};
+  if (act.status && before.body.status !== act.status) patch.status = act.status;
+  if (act.dailyBudget && String(before.body.daily_budget || '') !== String(act.dailyBudget)) patch.daily_budget = String(act.dailyBudget);
+  let changed = false;
+  if (Object.keys(patch).length) { const w = await call('POST', act.campaignId, patch); if (w.body?.success !== true) return {actionResult: stamp({state: 'failed', stage: 'write', before: before.body, error: clean(w)})}; changed = true; }
+  const after = await call('GET', act.campaignId, {fields: F});
+  const okStatus = !act.status || after.body?.status === act.status;
+  const okBudget = !act.dailyBudget || String(after.body?.daily_budget || '') === String(act.dailyBudget);
+  return {actionResult: stamp({state: after.body?.id === act.campaignId && okStatus && okBudget ? 'done' : 'unverified', before: before.body, after: after.body?.error ? undefined : after.body, error: after.body?.error ? clean(after) : undefined, changed})};
 }
 
 export async function applyCampaignAction(connection, action, {chromium} = {}) {
