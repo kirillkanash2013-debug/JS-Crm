@@ -1,7 +1,7 @@
 {
   // Not deployed yet: create the D1 database and secrets first (see docs/SAAS-ACCESS.md).
   "name": "js-control-platform",
-  "main": "src/index.mjs",
+  "main": "src/entry.mjs",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
   "services": [

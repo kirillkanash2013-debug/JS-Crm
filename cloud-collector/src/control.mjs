@@ -66,7 +66,7 @@ export class Control {
    // forwards credentials — it never sends a schedule or a collection job.
    const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()+DEFAULT_SCHEDULE_MINUTES*60000},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
    const date=new Date().toISOString().slice(0,10);this.enqueue({userId:c.userId,since:date,until:date});
-   await this.persist();return reply(201,{userId:c.userId,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
+   await this.persist();return reply(201,{userId:c.userId,label:conn.label,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
   if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');if(this.state.jobs.some(j=>['queued','running'].includes(j.state)))return reply(409,{error:'busy'});const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}

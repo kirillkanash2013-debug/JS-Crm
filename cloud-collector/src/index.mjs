@@ -91,7 +91,7 @@ export class CollectorControl extends DurableObject {
  }
 }
 export default {
- async fetch(request,env){
+ async fetch(request,env,ctx){
   const url=new URL(request.url);
   // FBacc-style connection without an extension: bookmark + connect page.
   if(request.method==='GET'&&url.pathname==='/bookmarklet')return new Response(bookmarkletPage(url.origin),{headers:PAGE_HEADERS});
@@ -130,7 +130,16 @@ export default {
   }
   const headers=new Headers(request.headers);headers.delete('authorization');headers.set('x-control-internal',env.INTERNAL_KEY);
   headers.set('x-social-limit',String(caller.socialLimit));
-  try{return await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));}catch{return reply(503,{error:'collector_unavailable'});}
+  try{
+   const resp=await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));
+   // A new/updated connection → tell the bot (fire-and-forget), so the client
+   // gets a "profile connected" message right away, not only on the next screen.
+   if(env.PLATFORM&&request.method==='POST'&&url.pathname==='/v1/connections'&&resp.ok&&caller.space.startsWith('tenant:')){
+    const tenantId=caller.space.slice('tenant:'.length);
+    ctx?.waitUntil((async()=>{try{const d=await resp.clone().json();await env.PLATFORM.socialConnected(tenantId,{userId:d.userId,label:d.label??null});}catch{}})());
+   }
+   return resp;
+  }catch{return reply(503,{error:'collector_unavailable'});}
  }
 };
 

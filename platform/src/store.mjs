@@ -33,6 +33,7 @@ export class D1Store {
       .bind(String(chatId), tenantId, state, now()).run();
   }
   async unbindChat(chatId) { await this.db.prepare('DELETE FROM chats WHERE chat_id=?').bind(String(chatId)).run(); }
+  async chatForTenant(tenantId) { const r = await this.db.prepare('SELECT chat_id FROM chats WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 1').bind(tenantId).first(); return r ? r.chat_id : null; }
   async settings(tenantId) {
     const r = await this.db.prepare('SELECT * FROM settings WHERE tenant_id=?').bind(tenantId).first();
     return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at} : {};
@@ -95,6 +96,7 @@ export class MemoryStore {
   async chat(chatId) { const c = this.chats.get(String(chatId)); return c ? {...c} : null; }
   async setChat(chatId, tenantId, state) { this.chats.set(String(chatId), {tenantId, state}); }
   async unbindChat(chatId) { this.chats.delete(String(chatId)); }
+  async chatForTenant(tenantId) { for (const [cid, c] of this.chats) if (c.tenantId === tenantId) return cid; return null; }
   async settings(tenantId) { return {...(this.prefs.get(tenantId) || {})}; }
   async saveSettings(tenantId, patch) { this.prefs.set(tenantId, {...(this.prefs.get(tenantId) || {}), ...patch}); }
   async payment(id) { return this.payments.get(id) || null; }

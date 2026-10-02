@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyPayment, authenticate} from '../src/accounts.mjs';
 import {collectorStatus, route} from '../src/index.mjs';
+import {createBot} from '../src/bot.mjs';
 import {dashboardPage, dashboardSummary} from '../src/dashboard.mjs';
 import {MemoryStore} from '../src/store.mjs';
 import {openSecret} from '../src/secrets.mjs';
@@ -176,6 +177,24 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /Spend <b>\$82\.29<\/b>/);
   assert.match(h.last(), /KG_A/);
   assert.match(h.last(), /Добавьте Keitaro/);
+});
+
+test('push: collector announces a connected social to the tenant chat', async () => {
+  const store = new MemoryStore(), sent = [];
+  const tg = async (m, p) => { sent.push({method: m, ...p}); return {}; };
+  const {tenant} = await applyPayment(store, {paymentId: 'pn', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await store.setChat(42, tenant.id, 'ready');
+  const bot = createBot({store, tg, env});
+  await bot.notifySocialConnected(tenant.id, {userId: '900', label: 'Профиль-900'});
+  const msg = sent.find(m => /успешно добавлен/.test(m.text || ''));
+  assert(msg, 'connected notification sent to the chat');
+  assert.match(msg.text, /Профиль-900/);
+  assert.ok(msg.chat_id, 'addressed to a chat');
+  assert(await store.social(tenant.id, '900'), 'social recorded in the store');
+  // Unknown tenant → no crash, no message.
+  const before = sent.length;
+  await bot.notifySocialConnected('nope', {userId: '901', label: 'X'});
+  assert.equal(sent.length, before);
 });
 
 test('a menu button escapes an input state instead of being parsed as its value', async () => {

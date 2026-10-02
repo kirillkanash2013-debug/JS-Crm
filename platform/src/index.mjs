@@ -110,6 +110,10 @@ export async function collectorStatus(env, store, tenantId) {
   };
 }
 
+// telegram() and containerKeitaro() are reused by the BotNotify entrypoint in
+// entry.mjs (the wrangler main); exported here so that module can build a bot.
+export {telegram};
+
 export default {
   fetch(request, env) {
     const store = new D1Store(env.DB);

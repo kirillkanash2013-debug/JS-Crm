@@ -529,7 +529,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (data === 'newagent') { await store.setChat(chatId, chat.tenantId, 'newagent:'); return send(chatId, '➕ Введите имя нового агента:'); }
   }
 
-  return async function handleUpdate(update) {
+  const handleUpdate = async function handleUpdate(update) {
     if (update.pre_checkout_query) {
       const plan = String(update.pre_checkout_query.invoice_payload || '').replace(/^plan:/, '');
       return tg('answerPreCheckoutQuery', PLANS[plan] ? {pre_checkout_query_id: update.pre_checkout_query.id, ok: true}
@@ -538,4 +538,21 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (update.callback_query) return onCallback(update.callback_query);
     if (update.message) return onMessage(update.message);
   };
+
+  // Push from the collector: a social was connected in the plugin. Notifies the
+  // tenant's chat right away (not only when they next open a bot screen).
+  handleUpdate.notifySocialConnected = async (tenantId, social) => {
+    const chatId = await store.chatForTenant(tenantId);
+    if (!chatId || !social?.userId) return;
+    const existing = await store.social(tenantId, social.userId);
+    if (!existing) await store.addSocial(tenantId, social.userId, social.label || String(social.userId));
+    else if (social.label && social.label !== existing.label) await store.setSocialLabel(tenantId, social.userId, social.label);
+    const cur = await store.social(tenantId, social.userId);
+    if (cur?.agentId) {
+      const ag = (await store.listAgents(tenantId)).find(a => a.id === cur.agentId);
+      return send(chatId, '✅ Профиль «' + esc(social.label || social.userId) + '» переподключён.' + (ag ? '\nЗакреплён за агентом «' + esc(ag.name) + '».' : ''), MENU);
+    }
+    return promptAssign(chatId, tenantId, {userId: String(social.userId), label: social.label || String(social.userId), accounts: social.accounts, businesses: social.businesses, pages: social.pages, collectedAt: social.collectedAt});
+  };
+  return handleUpdate;
 }
