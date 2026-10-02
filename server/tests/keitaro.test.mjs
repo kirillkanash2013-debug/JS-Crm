@@ -35,8 +35,8 @@ test('accepts wrapped campaign list',async()=>assert.equal((await checkKeitaroNo
 import {timezoneKeitaroNode} from '../keitaro.mjs';
 import {profileTimezone} from '../keitaro-timezone.mjs';
 test('current profile timezone is read with pinned DNS without leaking profile or key', async()=>{
- const r=await timezoneKeitaroNode('http://91.223.123.254','secret-key',{resolve,request:fake(200,JSON.stringify({login:'private',preferences:{timezone:'Asia/Almaty'}}),(url,o)=>{
-  assert.equal(url.pathname,'/admin/');assert.equal(url.search,'?object=profile.show');assert.equal(o.method,'GET');
+ const r=await timezoneKeitaroNode('http://91.223.123.254','secret-key',{resolve,request:fake(200,JSON.stringify([{status:200,body:{login:'private',preferences:{timezone:'Asia/Almaty'}}}]),(url,o)=>{
+  assert.equal(url.pathname,'/admin/');assert.equal(url.search,'?batch');assert.equal(o.method,'POST');
   o.lookup('tracker',{},(_e,ip)=>assert.equal(ip,'91.223.123.254'));
  })});
  assert.deepEqual(r,{result:'ok',timezone:'Asia/Almaty'});
@@ -49,4 +49,12 @@ test('no inferred timezone from other users, server timezone or invalid profile'
 test('unavailable profile remains a recoverable error, private hosts never requested',async()=>{
  assert.equal((await timezoneKeitaroNode('http://91.223.123.254','key',{resolve,request:fake(403,'secret')})).result,'forbidden');
  assert.equal((await timezoneKeitaroNode('http://127.0.0.1','key',{resolve:async()=>[{address:'127.0.0.1'}],request:()=>assert.fail()})).reason,'private_address');
+});
+
+import {batchProfileTimezone,profileReadBatch} from '../keitaro-timezone.mjs';
+test('batch accepts only one successful profile body, rejects errors and unrelated arrays',()=>{
+ assert.deepEqual(profileReadBatch,[{method:'GET',path:'',params:{object:'profile.show'}}]);
+ const body={preferences:{timezone:'Europe/Kyiv'}};
+ assert.equal(batchProfileTimezone([{status:200,body:JSON.stringify(body)}]),'Europe/Kyiv');
+ for(const raw of [[{status:403,body}],[body],[{body},{body}],{body}])assert.equal(batchProfileTimezone(raw),null);
 });

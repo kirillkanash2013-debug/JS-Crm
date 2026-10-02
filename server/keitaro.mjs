@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import {lookup} from 'node:dns/promises';
 import {publicIPv4} from './proxy.mjs';
-import {profileTimezone} from './keitaro-timezone.mjs';
+import {batchProfileTimezone,profileReadBatch} from './keitaro-timezone.mjs';
 
 // Pin public DNS and do not follow redirects with a user's key.
 async function keitaroNodeGet(origin,key,{resolve=lookup,request}={},profile=false) {
@@ -14,8 +14,9 @@ async function keitaroNodeGet(origin,key,{resolve=lookup,request}={},profile=fal
   if(!ips.length||ips.some(a=>!publicIPv4(a.address)))return {result:'unreachable',reason:'private_address'};
   const transport=request||(u.protocol==='https:'?https.request:http.request);
   return await new Promise(done=>{
-   const req=transport(new URL(profile?'/admin/?object=profile.show':'/admin_api/v1/campaigns',u),{
-    method:'GET',headers:{'Api-Key':key,Accept:'application/json'},
+   const payload=profile?JSON.stringify(profileReadBatch):null;
+   const req=transport(new URL(profile?'/admin/?batch':'/admin_api/v1/campaigns',u),{
+    method:profile?'POST':'GET',headers:{'Api-Key':key,Accept:'application/json',...(profile?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(payload)}:{})},
     lookup:(_host,opts,cb)=>opts.all?cb(null,[ips[0]]):cb(null,ips[0].address,4)
    },res=>{
     let bytes=0,body='';
@@ -26,7 +27,7 @@ async function keitaroNodeGet(origin,key,{resolve=lookup,request}={},profile=fal
      if(status===401)return done({result:'bad_key',status});
      if(status===403)return done({result:'forbidden',status,reason:/cloudflare|error code: 1003/i.test(body)?'cloudflare':'access_denied'});
      if(status<200||status>=300)return done({result:'unreachable',status,reason:status>=300&&status<400?'redirect':'http'});
-     try{const d=JSON.parse(body);if(profile)return done({result:'ok',timezone:profileTimezone(d)});const rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
+     try{const d=JSON.parse(body);if(profile)return done({result:'ok',timezone:batchProfileTimezone(d)});const rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
       done(Array.isArray(rows)?{result:'ok',status,campaigns:rows.length}:{result:'unreachable',status,reason:'unexpected_response'});
      }catch{done({result:'unreachable',status,reason:'unexpected_response'});}
     });
@@ -35,7 +36,7 @@ async function keitaroNodeGet(origin,key,{resolve=lookup,request}={},profile=fal
    const deadline=setTimeout(()=>req.destroy(),15000);
    req.on('close',()=>clearTimeout(deadline));
    req.on('error',e=>done({result:'unreachable',reason:'network',networkCode:['ETIMEDOUT','ECONNREFUSED','ECONNRESET','ENETUNREACH','EHOSTUNREACH'].includes(e.code)?e.code:'other'}));
-   req.end();
+   req.end(payload);
   });
  }catch{return {result:'unreachable',reason:'network'};}
 }

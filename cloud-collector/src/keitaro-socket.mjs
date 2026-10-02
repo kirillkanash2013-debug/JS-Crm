@@ -1,4 +1,4 @@
-import {profileTimezone} from '../../server/keitaro-timezone.mjs';
+import {batchProfileTimezone,profileReadBatch} from '../../server/keitaro-timezone.mjs';
 import {readResponse} from './proxy-fetch.mjs';
 export function publicIP(host){
  if(!/^\d+\.\d+\.\d+\.\d+$/.test(host))return false;
@@ -16,13 +16,14 @@ async function socketGet(origin,key,connect,profile=false){
    (async()=>{
     await socket.opened;
     const w=socket.writable.getWriter();
-    try{await w.write(new TextEncoder().encode('GET '+(profile?'/admin/?object=profile.show':'/admin_api/v1/campaigns')+' HTTP/1.1\r\nHost: '+u.host+'\r\nApi-Key: '+key+'\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n'));}finally{w.releaseLock();}
+    const payload=profile?JSON.stringify(profileReadBatch):'';
+    try{await w.write(new TextEncoder().encode((profile?'POST ':'GET ')+(profile?'/admin/?batch':'/admin_api/v1/campaigns')+' HTTP/1.1\r\nHost: '+u.host+'\r\nApi-Key: '+key+'\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n'+(profile?'Content-Type: application/json\r\nContent-Length: '+new TextEncoder().encode(payload).length+'\r\n':'')+'\r\n'+payload));}finally{w.releaseLock();}
     const {status,body}=await readResponse(socket);
     if(status===401)return {result:'bad_key',status,transport:'socket'};
     if(status===403)return {result:'forbidden',status,reason:'access_denied',transport:'socket'};
     if(status<200||status>=300)return {result:'unreachable',status,reason:'http',transport:'socket'};
     const d=JSON.parse(new TextDecoder().decode(body));
-    if(profile)return {result:'ok',timezone:profileTimezone(d)};
+    if(profile)return {result:'ok',timezone:batchProfileTimezone(d)};
     const rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
     return Array.isArray(rows)?{result:'ok',status,campaigns:rows.length,transport:'socket'}:{result:'unreachable',status,reason:'unexpected_response',transport:'socket'};
    })(),

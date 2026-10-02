@@ -20,8 +20,8 @@ test('reject key header injection before socket',async()=>assert.equal((await ch
 import {timezoneKeitaroSocket} from '../src/keitaro-socket.mjs';
 test('profile timezone over IP socket closes connection and excludes credentials',async()=>{
  let closed=false,wire='';
- const body=JSON.stringify({preferences:{timezone:'Europe/Minsk'},login:'private'});
+ const body=JSON.stringify([{status:200,body:{preferences:{timezone:'Europe/Minsk'},login:'private'}}]);
  const connect=()=>({opened:Promise.resolve(),writable:new WritableStream({write:v=>wire+=new TextDecoder().decode(v)}),readable:new ReadableStream({start:s=>{s.enqueue(new TextEncoder().encode('HTTP/1.1 200 OK\r\nContent-Length: '+body.length+'\r\n\r\n'+body));s.close();}}),close:async()=>{closed=true;}});
  assert.deepEqual(await timezoneKeitaroSocket('http://91.223.123.254','secret-key',connect),{result:'ok',timezone:'Europe/Minsk'});
- assert.match(wire,/GET \/admin\/\?object=profile\.show HTTP\/1\.1/);assert.ok(closed);
+ assert.match(wire,/POST \/admin\/\?batch HTTP\/1\.1/);assert.deepEqual(JSON.parse(wire.split('\r\n\r\n')[1]),[{method:'GET',path:'',params:{object:'profile.show'}}]);assert.ok(closed);
 });

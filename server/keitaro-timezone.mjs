@@ -9,3 +9,17 @@ export function profileTimezone(raw) {
     return tz;
   } catch { return null; }
 }
+
+// Send only the observed read command, never profile.update.
+export const profileReadBatch = [{method: 'GET', path: '', params: {object: 'profile.show'}}];
+export function batchProfileTimezone(raw) {
+  if (!Array.isArray(raw) || raw.length !== 1) return null;
+  const item = raw[0];
+  const status = item?.status ?? item?.code;
+  if (status != null && Number(status) !== 200) return null;
+  let body = item?.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { return null; }
+  }
+  return profileTimezone(body);
+}

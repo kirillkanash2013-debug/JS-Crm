@@ -1,4 +1,4 @@
-import {profileTimezone} from '../../server/keitaro-timezone.mjs';
+import {profileTimezone,batchProfileTimezone,profileReadBatch} from '../../server/keitaro-timezone.mjs';
 // Keitaro checks for the onboarding wizard.
 export function keitaroOrigin(text) {
   let u;
@@ -47,8 +47,8 @@ export function keitaroTimezone(env) {
     const r=await env.KEITARO_BRIDGE.timezone(origin,key);
     return r?.result==='ok'?profileTimezone({preferences:{timezone:r.timezone}}):null;
    }
-   const r=await fetch(origin+'/admin/?object=profile.show',{headers:{'Api-Key':key,Accept:'application/json'},redirect:'manual',signal:AbortSignal.timeout(10000)});
-   return r.ok?profileTimezone(await r.json()):null;
+   const r=await fetch(origin+'/admin/?batch',{method:'POST',body:JSON.stringify(profileReadBatch),headers:{'Api-Key':key,Accept:'application/json','Content-Type':'application/json'},redirect:'manual',signal:AbortSignal.timeout(10000)});
+   return r.ok?batchProfileTimezone(await r.json()):null;
   }catch{return null;}
  };
 }
