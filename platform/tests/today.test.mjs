@@ -37,8 +37,9 @@ test('aggregateKeitaro honours a non-default sub_id index', () => {
 test('buildNow renders the «Сейчас» top block and campaign lines', () => {
   const keitaro = aggregateKeitaro({report, conversions}, {subIndex: 4, day});
   const campaigns = [{campaignId: '100', name: 'KG_A', effectiveStatus: 'ACTIVE', dailyBudget: 15400, spend: 15}];
-  const text = buildNow({day, times: {dolphin: '19:47', keitaro: '19:47'}, campaigns, keitaro, subIndex: 4});
+  const text = buildNow({day, times: {fb: '19:47', keitaro: '19:47'}, campaigns, keitaro, subIndex: 4});
   assert.match(text, /📊 Сейчас · 30\.09\.2026/);
+  assert.match(text, /JS Control 19:47 · Keitaro 19:47/);
   assert.match(text, /Spend <b>\$15\.00<\/b>/);
   assert.match(text, /Inst <b>15<\/b> · Reg <b>3<\/b>/);
   assert.match(text, /Dep <b>1<\/b> \+1 долёт/);

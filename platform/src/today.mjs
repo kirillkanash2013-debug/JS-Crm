@@ -49,7 +49,7 @@ export function aggregateKeitaro({report = [], conversions = []} = {}, {subIndex
 function topBlock({day, times, spendTotal, totals}) {
   const revAll = round2(totals.rev + totals.doletRev);
   return ['<b>📊 Сейчас · ' + esc(fmtDate(day)) + '</b>',
-    '<i>Dolphin ' + esc(times?.dolphin || '—') + ' · Keitaro ' + esc(times?.keitaro || '—') + '</i>', '',
+    '<i>JS Control ' + esc(times?.fb || '—') + ' · Keitaro ' + esc(times?.keitaro || '—') + '</i>', '',
     'Spend <b>' + money(spendTotal) + '</b>',
     'Inst <b>' + Math.round(totals.inst) + '</b> · Reg <b>' + Math.round(totals.reg) + '</b>',
     'Dep <b>' + Math.round(totals.dep) + '</b>' + (totals.doletDep ? ' +' + Math.round(totals.doletDep) + ' долёт' : ''),

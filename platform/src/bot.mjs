@@ -215,6 +215,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const tz = s.timezone || 'UTC';
     const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});                                   // YYYY-MM-DD в часовом поясе клиента
     const nowHHMM = new Date().toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'});
+    // Время последнего сбора данных с кабинетов FB (самый свежий среди соцов).
+    const fbAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
+    const fbTime = fbAt ? new Date(fbAt).toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'}) : '—';
     // FB-кампании и расход за сегодня по всем подключённым соцам.
     const campaigns = [];
     for (const c of conns) {
@@ -234,7 +237,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     } else if (!origin || !key) {
       note = '\n\n💡 Добавьте Keitaro в «⚙️ Настройки» — тогда увидите доход, прибыль и ROI.';
     }
-    const text = buildNow({day, times: {dolphin: nowHHMM, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex});
+    const text = buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex});
     await send(chatId, text + note, MENU);
   }
 
