@@ -51,7 +51,10 @@ export class CollectorControl extends DurableObject {
   ctx.blockConcurrencyWhile(async()=>{
    this.vault=new EncryptedStore(ctx.storage,env.VAULT_KEY);
    const call=async(path,body)=>{
-    const c=getContainer(env.BROWSER,'browser:'+ctx.id.toString());const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));
+    // Суффикс образа в имени контейнера: при смене версии кода контейнера меняем
+    // его, чтобы запрос гарантированно поднял СВЕЖИЙ инстанс на новом образе, а не
+    // переиспользовал старый (Cloudflare не перезапускает уже живой контейнер).
+    const c=getContainer(env.BROWSER,'browser-a3:'+ctx.id.toString());const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));
     // The container can return a non-JSON body when it is cold-starting or
     // crashed (e.g. a plain "Failed to ..." page). Surface that as a clean
     // error with a snippet, instead of leaking a raw JSON.parse SyntaxError.
