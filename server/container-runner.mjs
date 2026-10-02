@@ -41,5 +41,5 @@ http.createServer(async(req,res)=>{
   if(req.url==='/action'){validateAction(b.action);busy=true;try{return send(200,await applyCampaignAction(c,b.action));}finally{busy=false;}}
   const range=period(b.range.since,b.range.until);busy=true;
   try{return send(200,await collect(c,range,{timeoutMs:13*60000}));}finally{busy=false;}
- }catch(e){return send(400,{code:[190,102,'identity','needs_auth'].includes(e.code)?e.code:'collector_failed'});}
+ }catch(e){return send(400,{code:[190,102,'identity','needs_auth'].includes(e.code)?e.code:'collector_failed',detail:e.detail||e.message||null});}
 }).listen(8080,'0.0.0.0');
