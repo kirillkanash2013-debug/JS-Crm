@@ -188,15 +188,21 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (t && t.integrationTokenEnc && env.MASTER_KEY) { try { token = await openSecret(env.MASTER_KEY, tenantId, t.integrationTokenEnc); } catch {} }
       if (!token) token = await rotateIntegrationToken(store, tenantId, env.MASTER_KEY);
     }
-    await send(chatId, '🧩 <b>Как подключить рекламный кабинет — по шагам</b>\n\n' +
-      '1️⃣ Скачайте расширение (файл ниже) и распакуйте в отдельную папку.\n' +
+    // Read the live extension version so the message shows it and the download
+    // URL is cache-busted: Telegram caches a sent document by its URL, so a new
+    // build at the same URL would keep handing out the old file.
+    let ver = '';
+    try { const h = await collectorFetch('/health'); const j = await h.json(); ver = String(j.extensionVersion || ''); } catch {}
+    await send(chatId, '🧩 <b>Как подключить рекламный кабинет — по шагам</b>' + (ver ? ' (плагин v' + esc(ver) + ')' : '') + '\n\n' +
+      '1️⃣ Скачайте расширение (файл ниже) и распакуйте в отдельную папку. Если уже стоит старая версия — удалите её в антидетекте и поставьте этот архив.\n' +
       '2️⃣ В антидетекте (AdsPower / Dolphin): раздел «Расширения» → добавить локальное → укажите эту папку → включите для нужного профиля.\n' +
       '3️⃣ Откройте профиль и зайдите в <b>Ads Manager</b> нужного соца.\n' +
       '4️⃣ Нажмите иконку расширения <b>JS Control</b>, вставьте ключ (ниже) и нажмите «Подключить этот профиль».\n\n' +
       (token ? '🔑 <b>Ваш ключ доступа:</b>\n<code>' + token + '</code>\n\n' : '') +
       '✅ Дальше сервер собирает данные сам — браузер можно закрыть. Статистику смотрите в «📊 Статистика».\n\n' +
       'Либо подключить все профили сразу по API-токену антидетекта: ' + env.IMPORT_URL);
-    try { await tg('sendDocument', {chat_id: chatId, document: collectorUrl('/extension.zip'), caption: 'Расширение JS Control для антидетекта'}); } catch {}
+    const docUrl = collectorUrl('/extension.zip' + (ver ? '?v=' + encodeURIComponent(ver) : '?t=' + Date.now()));
+    try { await tg('sendDocument', {chat_id: chatId, document: docUrl, caption: 'Расширение JS Control' + (ver ? ' v' + ver : '') + ' для антидетекта'}); } catch {}
   }
 
   // The «Сейчас» report: FB spend ↔ Keitaro revenue/ROI, like the prod CRM.

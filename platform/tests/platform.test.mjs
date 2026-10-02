@@ -81,7 +81,7 @@ test('client journey: token → Keitaro → timezone → plugin and dashboard', 
   await h.tap('tz:Europe/Minsk');
   assert(h.sent.some(m => /Всё настроено/.test(m.text || '')), 'onboarding finished');
   assert(h.sent.some(m => /Как подключить/.test(m.text || '')), 'step-by-step instructions sent');
-  assert(h.sent.some(m => m.method === 'sendDocument' && /\/extension\.zip$/.test(m.document || '')), 'extension archive sent');
+  assert(h.sent.some(m => m.method === 'sendDocument' && /\/extension\.zip(\?|$)/.test(m.document || '')), 'extension archive sent');
 
   await h.say('/dashboard');
   const link = h.last().match(/https:\/\/p\.test\/d\/(jsd_[A-Za-z0-9_-]+)/);
