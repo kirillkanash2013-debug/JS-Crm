@@ -2,7 +2,7 @@ import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
 import {EncryptedStore} from './crypto-store.mjs';
 import {connect} from 'cloudflare:sockets';
-import {checkKeitaroSocket,publicIP} from './keitaro-socket.mjs';
+import {checkKeitaroSocket,reportKeitaroSocket,publicIP} from './keitaro-socket.mjs';
 import {Control,initialState,reply} from './control.mjs';
 import {collectViaApi} from './api-collector.mjs';
 import {graphFetcher} from './proxy-fetch.mjs';
@@ -138,6 +138,20 @@ async function keitaroContainerCheck(env,origin,key) {
    return r.ok?await r.json():{result:'unreachable',reason:'container'};
   }catch{return {result:'unreachable',reason:'container'};}
 }
+// Keitaro report over the IP-bypass transport (socket first, container fallback),
+// mirroring keitaroContainerCheck. Returns raw report+conversion rows to the platform.
+async function keitaroContainerReport(env,origin,key,opts){
+  try{if(publicIP(new URL(origin).hostname)){const r=await reportKeitaroSocket(origin,key,opts,connect);if(r.result!=='unreachable')return r;}}catch{}
+  if(!env.INTERNAL_KEY)return {result:'unreachable',reason:'setup_required'};
+  try {
+   const c=getContainer(env.BROWSER,'keitaro-api');
+   const r=await c.fetch(new Request('http://localhost/keitaro-report',{
+    method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify({origin,key,...opts})
+   }));
+   return r.ok?await r.json():{result:'unreachable',reason:'container'};
+  }catch{return {result:'unreachable',reason:'container'};}
+}
 export class KeitaroBridge extends WorkerEntrypoint {
  async check(origin,key){return keitaroContainerCheck(this.env,origin,key);}
+ async report(origin,key,opts){return keitaroContainerReport(this.env,origin,key,opts||{});}
 }

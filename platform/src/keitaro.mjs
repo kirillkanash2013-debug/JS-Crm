@@ -27,3 +27,13 @@ export function containerKeitaro(env) {
   }catch{return 'unreachable';}
  };
 }
+
+// Keitaro report rows (report/build + conversions/log) over the IP-bypass
+// transport, via the collector service binding. Returns the raw bridge result
+// {result, report, conversions} for the platform to aggregate and join.
+export function keitaroReport(env) {
+ return async(origin,key,opts)=>{
+  try { return await env.KEITARO_BRIDGE.report(origin,key,opts); }
+  catch { return {result:'unreachable'}; }
+ };
+}

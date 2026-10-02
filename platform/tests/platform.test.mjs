@@ -167,12 +167,15 @@ test('bot «Статистика» pulls socials and today spend from the collec
   globalThis.fetch = async (url, opts) => {
     assert.match(opts.headers.Authorization, /^Bearer jsi_/);
     if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}]});
-    return Response.json({totals: {USD: 82.29}, rows: []});
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '100', name: 'KG_A', effectiveStatus: 'ACTIVE', dailyBudget: 15400, spend: 82.29}]});
+    return Response.json({totals: {}, rows: []});
   };
   try { await h.say('📊 Статистика'); } finally { globalThis.fetch = realFetch; }
-  assert.match(h.last(), /Статистика за сегодня/);
-  assert.match(h.last(), /82\.29 USD/);
-  assert.match(h.last(), /Алина/);
+  // Keitaro not configured → «Сейчас» with FB spend only, plus a hint to add Keitaro.
+  assert.match(h.last(), /📊 Сейчас/);
+  assert.match(h.last(), /Spend <b>\$82\.29<\/b>/);
+  assert.match(h.last(), /KG_A/);
+  assert.match(h.last(), /Добавьте Keitaro/);
 });
 
 test('agents: a new social is detected, prompted, and assigned to a new agent', async () => {

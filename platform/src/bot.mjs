@@ -2,8 +2,9 @@
 // with Telegram Stars), fill basic settings, get the plugin and the dashboard.
 import {PLANS, applyPayment, authenticate, createInvite, isActive, redeemInvite, rotateDashboardToken, rotateIntegrationToken} from './accounts.mjs';
 import {findInviteCode} from './invites.mjs';
-import {checkKeitaro, keitaroOrigin} from './keitaro.mjs';
+import {checkKeitaro, keitaroOrigin, keitaroReport} from './keitaro.mjs';
 import {openSecret, sealSecret} from './secrets.mjs';
+import {aggregateKeitaro, buildNow} from './today.mjs';
 import {findToken} from './tokens.mjs';
 
 const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Кампании'}], [{text: '👥 Агенты'}, {text: '🧩 Подключить соц'}], [{text: '🔑 Ключ'}, {text: '💳 Подписка'}], [{text: '⚙️ Настройки'}]], resize_keyboard: true};
@@ -183,26 +184,37 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     try { await tg('sendDocument', {chat_id: chatId, document: collectorUrl('/extension.zip'), caption: 'Расширение JS Control для антидетекта'}); } catch {}
   }
 
+  // The «Сейчас» report: FB spend ↔ Keitaro revenue/ROI, like the prod CRM.
   async function showStats(chatId, tenantId) {
     await notifyNewSocials(chatId, tenantId);
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = (st && st.body && st.body.connections) || [];
     if (!conns.length) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц — кнопка «🧩 Подключить соц».', MENU);
-    const today = new Date().toISOString().slice(0, 10);
-    const rep = await collectorCall(tenantId, '/v1/report?since=' + today + '&until=' + today);
-    const rows = (rep && rep.body && rep.body.rows) || [];
-    const totals = Object.entries((rep && rep.body && rep.body.totals) || {}).map(([c, v]) => v + ' ' + c).join(' · ') || 'нет данных';
-    // Spend grouped by agent (sum over the socials assigned to each).
-    const socials = await store.listSocials(tenantId), agents = await store.listAgents(tenantId);
-    const agentOf = {}; for (const s of socials) agentOf[s.userId] = s.agentId;
-    const agentName = {}; for (const a of agents) agentName[a.id] = a.name;
-    const byAgent = {};
-    for (const r of rows) { const name = agentOf[String(r.userId)] ? (agentName[agentOf[String(r.userId)]] || 'агент') : 'без агента'; (byAgent[name] = byAgent[name] || {})[r.currency] = Math.round(((byAgent[name][r.currency] || 0) + r.spend) * 100) / 100; }
-    const agentLines = Object.entries(byAgent).map(([name, cur]) => '• ' + esc(name) + ': ' + Object.entries(cur).map(([c, v]) => v + ' ' + c).join(' · '));
-    const socLines = conns.map(c => '• ' + esc(c.label || c.userId) + ' — ' + esc(c.collectMode || 'api'));
-    await send(chatId, '📊 <b>Статистика за сегодня</b>\nСоцев: ' + conns.length + '\nРасход всего: ' + esc(totals) +
-      (agentLines.length ? '\n\n<b>По агентам:</b>\n' + agentLines.join('\n') : '') +
-      '\n\n<b>Соцы:</b>\n' + socLines.join('\n'), MENU);
+    const s = await store.settings(tenantId);
+    const tz = s.timezone || 'UTC';
+    const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});                                   // YYYY-MM-DD в часовом поясе клиента
+    const nowHHMM = new Date().toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'});
+    // FB-кампании и расход за сегодня по всем подключённым соцам.
+    const campaigns = [];
+    for (const c of conns) {
+      const r = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId));
+      for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
+    }
+    // Доход Keitaro (если настроен): ключ + индекс sub_id с id кампании FB.
+    let keitaro = null, note = '';
+    const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
+    let key = null;
+    if (s.keitaroKeyEnc && env.MASTER_KEY) { try { key = await openSecret(env.MASTER_KEY, tenantId, s.keitaroKeyEnc); } catch {} }
+    const subIndex = Number(String(s.keitaroSub || '').match(/\d+/)?.[0]) || 4;
+    if (origin && key && env.KEITARO_BRIDGE) {
+      const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex});
+      if (res && res.result === 'ok') keitaro = aggregateKeitaro(res, {subIndex, day});
+      else note = '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.';
+    } else if (!origin || !key) {
+      note = '\n\n💡 Добавьте Keitaro в «⚙️ Настройки» — тогда увидите доход, прибыль и ROI.';
+    }
+    const text = buildNow({day, times: {dolphin: nowHHMM, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex});
+    await send(chatId, text + note, MENU);
   }
 
   // --- Agents: assign each connected social to a buyer for spend accounting ---
