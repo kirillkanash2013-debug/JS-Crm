@@ -31,6 +31,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Owner commands: /invite [дней] [тариф] [для кого], /invites, /revoke <id>.
   async function adminCommand(chatId, text) {
     const [cmd, ...args] = text.split(/\s+/);
+    if (cmd === '/reset') { await store.unbindChat(chatId); return send(chatId, '♻️ Чат отвязан. Отправьте /start (увидите экран нового клиента), затем /testtoken — и пройдите путь заново.'); }
     if (cmd === '/invite') {
       let days = 30, plan = 'team';
       const note = [];
@@ -252,7 +253,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (message.successful_payment) return onPaid(chatId, message);
     const chat = await store.chat(chatId);
 
-    if (isAdmin(chatId) && /^\/(invite|invites|revoke|testtoken|teststatus|testcollect|testreport)\b/.test(text)) return adminCommand(chatId, text);
+    if (isAdmin(chatId) && /^\/(invite|invites|revoke|reset|testtoken|teststatus|testcollect|testreport)\b/.test(text)) return adminCommand(chatId, text);
 
     const code = findInviteCode(text);
     if (code) {

@@ -32,6 +32,7 @@ export class D1Store {
     await this.db.prepare('INSERT INTO chats (chat_id,tenant_id,state,updated_at) VALUES (?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET tenant_id=excluded.tenant_id, state=excluded.state, updated_at=excluded.updated_at')
       .bind(String(chatId), tenantId, state, now()).run();
   }
+  async unbindChat(chatId) { await this.db.prepare('DELETE FROM chats WHERE chat_id=?').bind(String(chatId)).run(); }
   async settings(tenantId) {
     const r = await this.db.prepare('SELECT * FROM settings WHERE tenant_id=?').bind(tenantId).first();
     return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at} : {};
@@ -86,6 +87,7 @@ export class MemoryStore {
   async revokeTokens(tenantId, kind) { for (const t of this.tokens.values()) if (t.tenantId === tenantId && t.kind === kind) t.revoked = true; }
   async chat(chatId) { const c = this.chats.get(String(chatId)); return c ? {...c} : null; }
   async setChat(chatId, tenantId, state) { this.chats.set(String(chatId), {tenantId, state}); }
+  async unbindChat(chatId) { this.chats.delete(String(chatId)); }
   async settings(tenantId) { return {...(this.prefs.get(tenantId) || {})}; }
   async saveSettings(tenantId, patch) { this.prefs.set(tenantId, {...(this.prefs.get(tenantId) || {}), ...patch}); }
   async payment(id) { return this.payments.get(id) || null; }
