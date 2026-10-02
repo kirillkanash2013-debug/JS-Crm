@@ -34,12 +34,12 @@ export class D1Store {
   }
   async settings(tenantId) {
     const r = await this.db.prepare('SELECT * FROM settings WHERE tenant_id=?').bind(tenantId).first();
-    return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at} : {};
+    return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at} : {};
   }
   async saveSettings(tenantId, patch) {
     const s = {...await this.settings(tenantId), ...patch};
-    await this.db.prepare('INSERT INTO settings (tenant_id,keitaro_url,keitaro_key_enc,timezone,currency,onboarded_at) VALUES (?,?,?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET keitaro_url=excluded.keitaro_url, keitaro_key_enc=excluded.keitaro_key_enc, timezone=excluded.timezone, currency=excluded.currency, onboarded_at=excluded.onboarded_at')
-      .bind(tenantId, s.keitaroUrl ?? null, s.keitaroKeyEnc ?? null, s.timezone ?? null, s.currency ?? null, s.onboardedAt ?? null).run();
+    await this.db.prepare('INSERT INTO settings (tenant_id,keitaro_url,keitaro_key_enc,keitaro_sub,timezone,currency,onboarded_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET keitaro_url=excluded.keitaro_url, keitaro_key_enc=excluded.keitaro_key_enc, keitaro_sub=excluded.keitaro_sub, timezone=excluded.timezone, currency=excluded.currency, onboarded_at=excluded.onboarded_at')
+      .bind(tenantId, s.keitaroUrl ?? null, s.keitaroKeyEnc ?? null, s.keitaroSub ?? null, s.timezone ?? null, s.currency ?? null, s.onboardedAt ?? null).run();
   }
   async payment(id) {
     const r = await this.db.prepare('SELECT tenant_id FROM payments WHERE id=?').bind(id).first();

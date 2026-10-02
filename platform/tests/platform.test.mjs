@@ -69,8 +69,10 @@ test('client journey: token → Keitaro → timezone → plugin and dashboard', 
   };
   try {
     await h.say('wrong-key'); assert.match(h.last(), /не принял ключ/);
-    await h.say('good-key'); assert.match(h.last(), /Шаг 3 из 3/);
+    await h.say('good-key'); assert.match(h.last(), /sub_id/);
+    await h.tap('ksub:4'); assert.match(h.last(), /Шаг 3 из 3/);
   } finally { globalThis.fetch = realFetch; }
+  assert.equal((await h.store.settings(tenantId)).keitaroSub, 'sub_id_4');
   assert(h.deleted.includes(6) && h.deleted.includes(7), 'key messages are deleted');
   const s = await h.store.settings(tenantId);
   assert.notEqual(s.keitaroKeyEnc, 'good-key');

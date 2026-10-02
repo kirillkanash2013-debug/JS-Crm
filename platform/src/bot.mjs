@@ -108,6 +108,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await send(chatId, '🕒 <b>Шаг 3 из 3 — часовой пояс</b>\n\nВ нём считаются «сегодня» и «вчера» в отчётах. Выберите или напишите свой, например <code>Asia/Dubai</code>.', {inline_keyboard: rows});
   }
 
+  // Which Keitaro sub_id carries the Facebook campaign id — the join key for
+  // matching spend (FB) to revenue (Keitaro). Asked only when Keitaro is on.
+  async function askKeitaroSub(chatId, tenantId) {
+    await store.setChat(chatId, tenantId, 'keitaro_sub');
+    const rows = [[1, 2, 3], [4, 5, 6]].map(g => g.map(n => ({text: 'sub_id_' + n, callback_data: 'ksub:' + n})));
+    await send(chatId, '🔗 <b>Keitaro: где id кампании Facebook?</b>\n\nВ каком параметре <code>sub_id</code> вашего трекера лежит ID кампании Facebook? По нему свяжем расход (FB) и доход (Keitaro). Обычно это <code>sub_id_4</code>.', {inline_keyboard: rows});
+  }
+
   async function dashboardLink(tenantId) {
     return env.PUBLIC_URL + '/d/' + await rotateDashboardToken(store, tenantId);
   }
@@ -205,6 +213,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (result === 'unreachable') return send(chatId, '❌ Не удалось связаться с ' + esc(s.keitaroUrl) + '. Проверьте адрес (/settings) или доступность трекера — или пропустите.', skipBtn);
       await store.saveSettings(tenant.id, {keitaroKeyEnc: await sealSecret(env.MASTER_KEY, tenant.id, text)});
       await send(chatId, '✅ Keitaro подключён.');
+      return askKeitaroSub(chatId, tenant.id);
+    }
+    if (chat.state === 'keitaro_sub') {
+      const m = String(text).match(/(?:sub_id_)?([1-6])\b/i);
+      if (!m) return send(chatId, 'Укажите номер саба 1–6 — например <code>sub_id_4</code> или просто <code>4</code>.');
+      await store.saveSettings(tenant.id, {keitaroSub: 'sub_id_' + m[1]});
       return askTimezone(chatId, tenant.id);
     }
     if (chat.state === 'timezone') {
@@ -235,6 +249,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const chat = await store.chat(chatId);
     if (!chat?.tenantId) return welcome(chatId);
     if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null}); return askTimezone(chatId, chat.tenantId); }
+    if (data.startsWith('ksub:') && /^[1-6]$/.test(data.slice(5)) && chat.state === 'keitaro_sub') { await store.saveSettings(chat.tenantId, {keitaroSub: 'sub_id_' + data.slice(5)}); return askTimezone(chatId, chat.tenantId); }
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
   }
 

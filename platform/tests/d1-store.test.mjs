@@ -16,7 +16,8 @@ function d1(db) {
 
 test('D1Store works with the migration schema', async () => {
   const db = new DatabaseSync(':memory:');
-  db.exec(fs.readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
+  for (const f of fs.readdirSync(new URL('../migrations/', import.meta.url)).filter(n => n.endsWith('.sql')).sort())
+    db.exec(fs.readFileSync(new URL('../migrations/' + f, import.meta.url), 'utf8'));
   const store = new D1Store(d1(db));
   const {tenant, integrationToken} = await applyPayment(store, {paymentId: 'x1', provider: 'test', plan: 'start', name: 'A'});
   assert.equal((await authenticate(store, integrationToken, 'integration')).tenant.id, tenant.id);
@@ -29,5 +30,5 @@ test('D1Store works with the migration schema', async () => {
   await store.setChat(5, tenant.id, 'keitaro_url'); await store.setChat(5, tenant.id, 'ready');
   assert.deepEqual(await store.chat(5), {tenantId: tenant.id, state: 'ready'});
   await store.saveSettings(tenant.id, {keitaroUrl: 'https://k.test'}); await store.saveSettings(tenant.id, {timezone: 'UTC'});
-  assert.deepEqual(await store.settings(tenant.id), {keitaroUrl: 'https://k.test', keitaroKeyEnc: null, timezone: 'UTC', currency: null, onboardedAt: null});
+  assert.deepEqual(await store.settings(tenant.id), {keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null});
 });
