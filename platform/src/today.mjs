@@ -5,7 +5,7 @@
 // Facebook campaign id, matched to the collector's campaignId.
 
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
+const money = n => (n < 0 ? '-$' : '$') + (Math.abs(Math.round(n * 100) / 100)).toFixed(2);
 const round2 = n => Math.round(n * 100) / 100;
 const roiPct = (rev, spend) => spend > 0 ? (rev / spend - 1) * 100 : 0;
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -87,6 +87,7 @@ function topBlock({day, times, spendTotal, totals}) {
     'Inst <b>' + Math.round(totals.inst) + '</b> · Reg <b>' + Math.round(totals.reg) + '</b>',
     'Dep <b>' + Math.round(totals.dep) + '</b>' + (totals.doletDep ? ' +' + Math.round(totals.doletDep) + ' долёт' : ''),
     'Rev <b>' + money(totals.rev) + '</b>' + (totals.doletRev ? ' → <b>' + money(revAll) + '</b>' : ''),
+    'Profit <b>' + money(round2(totals.rev - spendTotal)) + '</b>' + (totals.doletRev ? ' → <b>' + money(round2(revAll - spendTotal)) + '</b>' : ''),
     'ROI <b>' + Math.round(roiPct(totals.rev, spendTotal)) + '%</b>' + (totals.doletRev ? ' → <b>' + Math.round(roiPct(revAll, spendTotal)) + '%</b>' : '')].join('\n');
 }
 

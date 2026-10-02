@@ -44,6 +44,7 @@ test('buildNow renders the «Сейчас» top block and campaign lines', () =>
   assert.match(text, /Inst <b>15<\/b> · Reg <b>3<\/b>/);
   assert.match(text, /Dep <b>1<\/b> \+1 долёт/);
   assert.match(text, /Rev <b>\$50\.00<\/b> → <b>\$470\.00<\/b>/);
+  assert.match(text, /Profit <b>\$35\.00<\/b> → <b>\$455\.00<\/b>/); // rev-spend, прогноз revAll-spend
   assert.match(text, /Ⓜ️ <b>Кампании сейчас:<\/b>/);
   assert.match(text, /💰154\$ 💸15\$ 🤑50\$/);
 });
