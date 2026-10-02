@@ -48,6 +48,20 @@ test('buildNow renders the «Сейчас» top block and campaign lines', () =>
   assert.match(text, /💰154\$ 💸15\$ 🤑50\$/);
 });
 
+test('buildNow renders the 🎯 offers block grouped by GEO with EPC', () => {
+  const rep = [{sub_id_4: '100', campaign: 'KG_Red26', offer: 'Zazino KG', campaign_unique_clicks: 10}];
+  const conv = [
+    {sub_id_4: '100', offer: 'Zazino KG', status: 'lead', click_datetime: '2026-09-30 09:00'},
+    {sub_id_4: '100', offer: 'Zazino KG', status: 'sale', revenue: 50, click_datetime: '2026-09-30 10:00'}
+  ];
+  const keitaro = aggregateKeitaro({report: rep, conversions: conv}, {subIndex: 4, day});
+  const campaigns = [{campaignId: '100', name: 'KG_Red26', effectiveStatus: 'ACTIVE', dailyBudget: 0, spend: 10}];
+  const text = buildNow({day, campaigns, keitaro, subIndex: 4});
+  assert.match(text, /🎯 <b>KG<\/b>/);
+  // inst 10 - reg 1 - dep 1 · EPC = 50/10 = 5.00
+  assert.match(text, /Zazino KG · 10 - 1 - 1 · \$5\.00/);
+});
+
 test('buildNow without Keitaro долёт omits the arrow', () => {
   const keitaro = aggregateKeitaro({report, conversions: []}, {subIndex: 4, day});
   const text = buildNow({day, campaigns: [{campaignId: '100', spend: 5}], keitaro});

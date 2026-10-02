@@ -20,30 +20,63 @@ function fmtDate(day) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day ||
 // day than `day` is a долёт, kept apart for the bracketed → Rev/ROI.
 export function aggregateKeitaro({report = [], conversions = []} = {}, {subIndex = 4, day} = {}) {
   const sub = 'sub_id_' + subIndex;
-  const by = {};
+  const by = {};                                   // per FB campaign (sub_id)
+  const byOffer = {};                              // per (campaign, offer) — for the 🎯 block
   const get = id => (by[id] = by[id] || {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0, name: '', offer: ''});
+  const getOffer = (id, offer) => { const k = id + '\u0000' + offer; return byOffer[k] = byOffer[k] || {campaignId: id, offer, inst: 0, reg: 0, dep: 0, rev: 0}; };
   for (const r of report) {
     const id = String(r[sub] ?? '').trim(); if (!id) continue;
-    const c = get(id);
-    c.inst += num(r.campaign_unique_clicks ?? r.clicks);
+    const c = get(id), inst = num(r.campaign_unique_clicks ?? r.clicks);
+    c.inst += inst;
     if (!c.name && r.campaign) c.name = String(r.campaign);
     if (!c.offer && r.offer) c.offer = String(r.offer);
+    if (r.offer) getOffer(id, String(r.offer)).inst += inst;
   }
   for (const r of conversions) {
     const id = String(r[sub] ?? '').trim(); if (!id) continue;
-    const c = get(id);
+    const c = get(id), offer = r.offer ? String(r.offer) : null;
     const status = String(r.status ?? '').toLowerCase();
-    if (status === 'lead') c.reg += 1;
+    if (status === 'lead') { c.reg += 1; if (offer) getOffer(id, offer).reg += 1; }
     else if (status === 'sale') {
       const rev = num(r.revenue), clickDay = String(r.click_datetime ?? '').slice(0, 10);
       if (day && clickDay && clickDay !== day) { c.doletDep += 1; c.doletRev += rev; }
       else { c.dep += 1; c.rev += rev; }
+      if (offer) { const o = getOffer(id, offer); o.dep += 1; o.rev += rev; }
     }
   }
   const totals = {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0};
   for (const c of Object.values(by)) { c.rev = round2(c.rev); c.doletRev = round2(c.doletRev); for (const k of Object.keys(totals)) totals[k] += c[k]; }
   totals.rev = round2(totals.rev); totals.doletRev = round2(totals.doletRev);
-  return {byCampaign: by, totals};
+  return {byCampaign: by, totals, offers: Object.values(byOffer)};
+}
+
+// GEO = first 2-letter token in the FB campaign name (KG, UZ, KG+UZ…), как в prod.
+const GEO = /^[A-Z]{2}(?:\+[A-Z]{2})*$/;
+function parseGeo(name) { for (const t of String(name || '').toUpperCase().split(/[\s|_\-]+/)) if (t && GEO.test(t)) return t; return ''; }
+const trim40 = s => { s = String(s || ''); return s.length > 40 ? s.slice(0, 39) + '…' : s; };
+
+// 🎯 Офферы по GEO: берутся только с кампаний, которые сегодня тратили; на
+// кампанию GEO из её названия. Строка: оффер · inst-reg-dep · $EPC (rev/inst).
+function offersBlock({offers = [], campaigns = []}) {
+  const geoByCamp = {}, spends = new Set();
+  for (const c of campaigns) { const id = String(c.campaignId); if (num(c.spend) > 0) spends.add(id); geoByCamp[id] = parseGeo(c.name); }
+  const byGeoOffer = {};
+  for (const o of offers) {
+    if (!spends.has(String(o.campaignId))) continue;
+    const geo = geoByCamp[String(o.campaignId)]; if (!geo) continue;
+    const key = geo + '\u0000' + o.offer, g = byGeoOffer[key] = byGeoOffer[key] || {geo, offer: o.offer, inst: 0, reg: 0, dep: 0, rev: 0};
+    g.inst += o.inst; g.reg += o.reg; g.dep += o.dep; g.rev += o.rev;
+  }
+  const geos = {};
+  for (const g of Object.values(byGeoOffer)) if (g.inst > 1) (geos[g.geo] = geos[g.geo] || []).push(g);
+  const out = [];
+  for (const geo of Object.keys(geos).sort()) {
+    out.push('🎯 <b>' + esc(geo) + '</b>');
+    for (const o of geos[geo].sort((a, b) => b.inst - a.inst))
+      out.push(esc(trim40(o.offer)) + ' · ' + Math.round(o.inst) + ' - ' + Math.round(o.reg) + ' - ' + Math.round(o.dep) +
+        ' · $' + (o.inst > 0 ? o.rev / o.inst : 0).toFixed(2));
+  }
+  return out;
 }
 
 function topBlock({day, times, spendTotal, totals}) {
@@ -83,6 +116,8 @@ export function buildNow({day, times, campaigns = [], keitaro, subIndex = 4}) {
   const empty = {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0};
   const spendTotal = round2(campaigns.reduce((n, c) => n + num(c.spend), 0));
   const out = [topBlock({day, times, spendTotal, totals: agg.totals})];
+  const offers = offersBlock({offers: agg.offers || [], campaigns});
+  if (offers.length) out.push('', offers.join('\n'));
   const active = campaigns.filter(c => num(c.spend) > 0 || c.effectiveStatus === 'ACTIVE')
     .sort((a, b) => num(b.spend) - num(a.spend)).slice(0, 25);
   if (active.length) out.push('', 'Ⓜ️ <b>Кампании сейчас:</b>',
