@@ -142,6 +142,17 @@ export class SqlArchive {
   changes({since, objectId}) {
     return rows(this.sql, 'SELECT * FROM changes WHERE at >= ? AND (? IS NULL OR object_id=?) ORDER BY at DESC LIMIT 500', since, objectId ?? null, objectId ?? null);
   }
+
+  // Current campaigns with today's spend — for managing them from the bot.
+  campaigns({userId, date}) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Invalid date');
+    return rows(this.sql, `SELECT o.id AS campaignId, o.name, o.status, o.effective_status AS effectiveStatus, o.daily_budget AS dailyBudget,
+        o.account_id AS accountId, a.name AS accountName, a.currency, COALESCE(d.spend,0) AS spend
+      FROM objects o JOIN accounts a ON a.id=o.account_id
+      LEFT JOIN daily_spend d ON d.campaign_id=o.id AND d.date=?
+      WHERE o.level=? AND (? IS NULL OR a.user_id=?) ORDER BY a.name, o.name`,
+      date, 'campaign', userId ?? null, userId ?? null);
+  }
 }
 
 export function summarize(snapshot, mode) {

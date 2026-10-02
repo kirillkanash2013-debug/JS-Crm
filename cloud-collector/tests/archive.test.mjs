@@ -54,6 +54,16 @@ test('history: only changes are written; change log; report; structure rebuilt f
   assert.deepEqual(rep.totals, {USD: 12.5});
   assert.equal(rep.rows[0].campaignName, 'Camp'); assert.equal(rep.rows[0].accountName, 'Acc 555'); assert.equal(rep.rows[0].status, 'PAUSED');
 
+  const camps = a.campaigns({userId: '100', date: '2026-10-01'});
+  assert.equal(camps.length, 1);
+  assert.equal(camps[0].campaignId, '5551');
+  assert.equal(camps[0].name, 'Camp');
+  assert.equal(camps[0].status, 'PAUSED');
+  assert.equal(String(camps[0].dailyBudget), '2000');
+  assert.equal(camps[0].spend, 12.5);
+  assert.equal(camps[0].currency, 'USD');
+  assert.throws(() => a.campaigns({userId: '100', date: 'bad'}), /Invalid date/);
+
   const prev = a.previous('100').structures['555'];
   assert.equal(prev.observedAt, s2.observedAt);
   assert.deepEqual(prev.campaigns, s2.campaigns.map(c => ({...c, daily_budget: '2000'})));

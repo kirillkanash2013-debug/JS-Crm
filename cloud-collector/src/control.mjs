@@ -48,6 +48,7 @@ export class Control {
   if(method==='GET'&&path==='/v1/status')return reply(200,this.status());
   if(method==='GET'&&path==='/v1/report'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,this.archive.report({since:b?.since,until:b?.until,userId:b?.userId||null}));}
   if(method==='GET'&&path==='/v1/changes'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{changes:this.archive.changes({since:b?.since||'1970-01-01',objectId:b?.objectId||null})});}
+  if(method==='GET'&&path==='/v1/campaigns'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{campaigns:this.archive.campaigns({userId:b?.userId||null,date:b?.date||new Date().toISOString().slice(0,10)})});}
   if(method==='POST'&&path==='/v1/connections'){
    if(Object.keys(this.state.connections).length>=limit&&!this.state.connections[b?.userId])return reply(409,{error:'social_limit',limit});
    // Bookmark without a proxy: take proxy and name from the antidetect profile with the same User-Agent.
