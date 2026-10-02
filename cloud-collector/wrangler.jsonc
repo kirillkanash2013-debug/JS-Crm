@@ -19,7 +19,7 @@
     {
       "class_name": "BrowserContainer",
       "image": "../server/Dockerfile.cloudflare",
-      "max_instances": 3,
+      "max_instances": 10,
       "instance_type": "standard-1",
       "image_build_context": ".."
     }
