@@ -30,6 +30,16 @@ test('server queue runs after HTTP client disconnects; encrypted restart, schedu
   await request('/v1/connections','DELETE',{userId:session.userId});assert.equal((await request('/v1/status')).body.connections.length,0);
  }finally{await app.close();await rm(dir,{recursive:true,force:true});}
 });
+test('proxy with embedded credentials and no port is accepted (same as collection)',()=>{
+ // user:pass@host и отсутствие порта — сбор это принимает (publicProxy), значит
+ // и действия должны: креды выносятся в отдельные поля, порт проставляется.
+ const c=validateConnection({...session,proxy:{server:'socks5://u%40x:p%3Aw@proxy.example.com'}});
+ assert.equal(c.proxy.server,'socks5://proxy.example.com:1080');
+ assert.equal(c.proxy.username,'u@x');assert.equal(c.proxy.password,'p:w');
+ const h=validateConnection({...session,proxy:{server:'http://1.2.3.4:8080',username:'a',password:'b'}});
+ assert.equal(h.proxy.server,'http://1.2.3.4:8080');assert.equal(h.proxy.username,'a');
+ assert.throws(()=>validateConnection({...session,proxy:{server:'ftp://1.2.3.4:21'}}));
+});
 test('reject cross-account cookies, external domains; simulator cannot accept real session',async()=>{
  assert.throws(()=>validateConnection({...session,userId:'999999'}));assert.throws(()=>validateConnection({...session,cookies:[...session.cookies,{name:'x',value:'y',domain:'.example.com',path:'/'}]}));
  const dir=await mkdtemp(tmpdir()+'/js-server-'),vault=await new Vault(dir,randomBytes(32).toString('base64')).open();

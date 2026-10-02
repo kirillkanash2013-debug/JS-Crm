@@ -12,7 +12,21 @@ export function validateConnection(b){
  });
  if(!cookies.some(c=>c.name==='c_user'&&c.value===b.userId)||!cookies.some(c=>c.name==='xs'))throw new Error('Session cookies missing or another owner');
  let proxy;
- if(b.proxy?.server){const u=new URL(b.proxy.server);if(!['http:','socks5:'].includes(u.protocol)||u.username||u.password||u.pathname!=='/'||u.search||u.hash||!u.port)throw new Error('Invalid proxy');proxy={server:u.origin==='null'?u.protocol+'//'+u.host:u.origin};for(const k of ['username','password'])if(b.proxy[k]){if(typeof b.proxy[k]!=='string'||b.proxy[k].length>1024)throw new Error('Invalid proxy');proxy[k]=b.proxy[k];}}
+ if(b.proxy?.server){
+  // Терпимый разбор прокси (тот же контракт, что у сбора/publicProxy), с точным
+  // поводом в ошибке. Раньше действия падали с «Invalid proxy», хотя сбор по
+  // тому же прокси работал: отсутствие порта и логин/пароль внутри адреса
+  // (user:pass@host) здесь отклонялись, а в сборе — принимались.
+  let u;try{u=new URL(b.proxy.server);}catch{throw new Error('Invalid proxy: не разбирается адрес');}
+  if(!['http:','socks5:'].includes(u.protocol))throw new Error('Invalid proxy: нужен http или socks5');
+  if((u.pathname&&u.pathname!=='/')||u.search||u.hash)throw new Error('Invalid proxy: в адресе лишние части (путь/параметры)');
+  const port=u.port||(u.protocol==='http:'?'80':'1080');
+  proxy={server:u.protocol+'//'+u.hostname+':'+port};
+  // Креды принимаем и отдельными полями, и встроенными в адрес — кладём в поля.
+  const user=b.proxy.username||(u.username?decodeURIComponent(u.username):''),pass=b.proxy.password||(u.password?decodeURIComponent(u.password):'');
+  if(user){if(typeof user!=='string'||user.length>1024)throw new Error('Invalid proxy: некорректный логин');proxy.username=user;}
+  if(pass){if(typeof pass!=='string'||pass.length>1024)throw new Error('Invalid proxy: некорректный пароль');proxy.password=pass;}
+ }
  return {userId:b.userId,token:b.token,userAgent:b.userAgent,cookies,proxy};
 }
 export class Service{
