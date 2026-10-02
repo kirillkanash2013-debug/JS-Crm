@@ -341,6 +341,29 @@ test('bot campaigns board: active-only numbered list, budget + toggle by text, p
   } finally { globalThis.fetch = realFetch; }
 });
 
+test('toggle uses the live (overlaid) status, not the stale archive', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pc4', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  const realFetch = globalThis.fetch;
+  let posted = [];
+  // Archive still says PAUSED, but a recent successful ACTIVATE overlays to ACTIVE
+  // — the user sees 🟢 and expects the toggle to PAUSE it (not activate again).
+  const jobs = [{id: 'j1', userId: '100', action: {campaignId: '555111', status: 'ACTIVE'}, state: 'done', createdAt: '2026-10-02T10:00:00Z', finishedAt: new Date().toISOString(), observedAt: new Date().toISOString(), actionResult: {campaignId: '555111', after: {status: 'ACTIVE', daily_budget: '2000'}}}];
+  globalThis.fetch = async (url, opts) => {
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '555111', name: 'Alpha', status: 'PAUSED', effectiveStatus: 'PAUSED', dailyBudget: '2000', currency: 'USD', spend: 5}]});
+    if (url.endsWith('/v1/actions')) { posted.push(JSON.parse(opts.body)); return new Response(JSON.stringify({id: 'x', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'A'}], jobs});
+    return Response.json({});
+  };
+  try {
+    await h.say('📣 Кампании');
+    await h.tap('ctog:100'); await h.say('1');
+    assert.deepEqual(posted.at(-1), {userId: '100', campaignId: '555111', status: 'PAUSED'});
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('dashboard renders collector spend and marks the social step done', () => {
   const summary = dashboardSummary({name: 'A', plan: 'team', paidUntil: '2026-10-31'}, {onboardedAt: 'x', timezone: 'UTC'},
     {socials: 1, observedAt: '2026-10-01T10:00:00Z', connections: [{label: 'Алина', mode: 'api'}], totals: {USD: 82.29}, rows: 3});

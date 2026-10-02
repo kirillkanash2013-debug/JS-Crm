@@ -163,7 +163,10 @@ export class Control {
    // Meta asked us to slow down: skip the next hour of scheduled runs.
    if(j.state==='rate_limited'&&c.schedule)c.schedule.nextAt=Math.max(c.schedule.nextAt,Date.now()+60*60000);
   }
-  else if(j.action){const a=result?.actionResult;if(!a||a.campaignId!==j.action.campaignId){j.state='failed';j.error={code:'invalid_action_result'};}else{j.state=a.state;j.actionResult=a;j.observedAt=a.observedAt;if(result.storageState)c.storageState=result.storageState;}}
+  else if(j.action){const a=result?.actionResult;if(!a||a.campaignId!==j.action.campaignId){j.state='failed';j.error={code:'invalid_action_result'};}else{j.state=a.state;j.actionResult=a;j.observedAt=a.observedAt;if(result.storageState)c.storageState=result.storageState;
+   // Успешное действие → ставим пересбор, чтобы архив (источник статуса/бюджета)
+   // быстро подтянул новое состояние из кабинета (persist ниже назначит аларм).
+   if(a.state==='done'){try{const date=new Date().toISOString().slice(0,10);this.enqueue({userId:j.userId,since:date,until:date});}catch{}}}}
   else if(!result?.snapshot?.complete||result.snapshot.source!=='facebook-server'||result.snapshot.social?.user.id!==j.userId){j.state='failed';j.error={code:'invalid_snapshot'};}
   else{
    // History goes to the client's database; state keeps only a compact summary.

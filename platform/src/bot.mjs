@@ -397,6 +397,38 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   const num = v => Number(v) || 0;
   const isActiveCamp = c => (c.effectiveStatus || c.status) === 'ACTIVE';
+  // Накладывает на карточки «живой» статус/бюджет из последнего успешного действия
+  // по кампании (read-after-write FB), не дожидаясь следующего сбора. Берём самое
+  // новое действие на кампанию; статус — запрошенный/подтверждённый (а не
+  // effective_status, который отстаёт). ВАЖНО: используется и в борде, и при выборе
+  // направления вкл/выкл — иначе карточка показывает одно, а кнопка шлёт другое.
+  function applyActionOverlay(camps, jobs, userId) {
+    const latest = {};
+    for (const j of (jobs || []).filter(x => x.action && x.state === 'done' && String(x.userId) === String(userId)).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))) {
+      if (j.observedAt && Date.now() - Date.parse(j.observedAt) > 900000) continue;
+      latest[String(j.action.campaignId)] = j;
+    }
+    for (const c of camps) {
+      const j = latest[String(c.campaignId)]; if (!j) continue;
+      const af = j.actionResult && j.actionResult.after;
+      const status = (af && af.status) || j.action.status;
+      if (status) { c.status = status; c.effectiveStatus = status; }
+      const budget = af && af.daily_budget != null ? af.daily_budget : j.action.dailyBudget;
+      if (budget != null) c.dailyBudget = budget;
+    }
+    return camps;
+  }
+  // Fetches this social's campaigns + jobs and applies the overlay — the single
+  // «live» view both the board and the toggle/budget handlers must read from.
+  async function liveCampaigns(tenantId, userId) {
+    const [cr, sr] = await Promise.all([
+      collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId)),
+      collectorCall(tenantId, '/v1/status')
+    ]);
+    const camps = (cr && cr.body && cr.body.campaigns) || [];
+    const jobs = (sr && sr.body && sr.body.jobs) || [];
+    return {camps: applyActionOverlay(camps, jobs, userId), jobs};
+  }
   // Главный борд показывает только РАБОЧИЕ кампании (сегодня тратили или включены)
   // — как в «Сейчас». Остальные (🔴 без расхода) не засоряют список. Сортировка по
   // имени, чтобы номера, которые вводит клиент («1-234»), совпадали с показанными.
@@ -440,19 +472,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       collectorCall(tenantId, '/v1/status'),
       store.settings(tenantId)
     ]);
-    const camps = (cr && cr.body && cr.body.campaigns) || [];
     const conns = (sr && sr.body && sr.body.connections) || [];
     const jobs = (sr && sr.body && sr.body.jobs) || [];
-    // Накладываем свежие значения из read-after-write Facebook (actionResult.after)
-    // на карточки — чтобы у изменённых кампаний бюджет/статус обновились сразу, из
-    // кабинета, не дожидаясь следующего сбора. Берём только недавние (до 15 мин).
-    for (const j of jobs.filter(x => x.action && x.state === 'done' && x.actionResult && x.actionResult.after && String(x.userId) === String(userId)).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))) {
-      if (j.observedAt && Date.now() - Date.parse(j.observedAt) > 900000) continue;
-      const c = camps.find(x => String(x.campaignId) === String(j.action.campaignId)); if (!c) continue;
-      const af = j.actionResult.after;
-      if (af.status) { c.status = af.status; c.effectiveStatus = af.effective_status || af.status; }
-      if (af.daily_budget != null) c.dailyBudget = af.daily_budget;
-    }
+    // «Живые» карточки: архив + наложение последнего действия (общий источник
+    // правды для борда и для направления вкл/выкл).
+    const camps = applyActionOverlay((cr && cr.body && cr.body.campaigns) || [], jobs, userId);
     const multi = conns.length > 1;
     const label = (conns.find(c => String(c.userId) === String(userId)) || {}).label || userId;
     const head = '📣 <b>Кампании</b> · ' + esc(label);
@@ -679,10 +703,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!pairs.length) return send(chatId, 'Формат: <code>1-234 2-423</code> — номер кампании, дефис, бюджет. Можно несколько через пробел.');
       await store.setChat(chatId, tenant.id, 'ready');
       // Одна операция за раз: пока прошлая не применилась, новую не ставим в очередь.
-      const sr = await collectorCall(tenant.id, '/v1/status');
-      if (hasPending((sr && sr.body && sr.body.jobs) || [], userId)) return send(chatId, '⏳ Дождитесь применения прошлых изменений — нажмите «🔄 Обновить» на нижней карточке.', MENU);
-      const cr = await collectorCall(tenant.id, '/v1/campaigns?userId=' + encodeURIComponent(userId));
-      const ordered = boardCampaigns((cr && cr.body && cr.body.campaigns) || []);
+      // «Живые» карточки (с наложением) — те же, что видит пользователь на борде.
+      const {camps, jobs} = await liveCampaigns(tenant.id, userId);
+      if (hasPending(jobs, userId)) return send(chatId, '⏳ Дождитесь применения прошлых изменений — нажмите «🔄 Обновить» на нижней карточке.', MENU);
+      const ordered = boardCampaigns(camps);
       let ok = 0; const bad = [];
       for (const p of pairs) {
         const [nStr, vStr] = p.split('-');
@@ -702,10 +726,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const nums = (String(text).match(/\d+/g) || []).map(Number);
       if (!nums.length) return send(chatId, 'Укажите номера кампаний через пробел — например <code>1 2 3</code>.');
       await store.setChat(chatId, tenant.id, 'ready');
-      const sr = await collectorCall(tenant.id, '/v1/status');
-      if (hasPending((sr && sr.body && sr.body.jobs) || [], userId)) return send(chatId, '⏳ Дождитесь применения прошлых изменений — нажмите «🔄 Обновить» на нижней карточке.', MENU);
-      const cr = await collectorCall(tenant.id, '/v1/campaigns?userId=' + encodeURIComponent(userId));
-      const ordered = boardCampaigns((cr && cr.body && cr.body.campaigns) || []);
+      // «Живой» статус (с наложением) — чтобы направление вкл/выкл совпадало с тем,
+      // что показано на карточке (иначе включённую по факту снова «включаем»).
+      const {camps, jobs} = await liveCampaigns(tenant.id, userId);
+      if (hasPending(jobs, userId)) return send(chatId, '⏳ Дождитесь применения прошлых изменений — нажмите «🔄 Обновить» на нижней карточке.', MENU);
+      const ordered = boardCampaigns(camps);
       let ok = 0; const bad = [];
       for (const n of nums) {
         const c = ordered[n - 1];
