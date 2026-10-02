@@ -14,10 +14,11 @@ const env = {MASTER_KEY, PUBLIC_URL: 'https://p.test', PLUGIN_URL: 'https://p.te
 
 function harness(keitaro = 'ok') {
   const store = new MemoryStore(), sent = [], deleted = [];
+  let msgId = 0;
   const tg = async (method, payload) => {
     if (method === 'deleteMessage') deleted.push(payload.message_id);
     else sent.push({method, ...payload});
-    return {};
+    return method === 'sendMessage' ? {message_id: ++msgId} : {};
   };
   const call = (path, init = {}) => route(new Request('https://p.test' + path, init), env, {store, tg});
   const update = body => call('/telegram', {method: 'POST', headers: {'x-telegram-bot-api-secret-token': env.TELEGRAM_WEBHOOK_SECRET}, body: JSON.stringify(body)});
@@ -200,17 +201,24 @@ test('agents: deleting a social removes it from the bot and tells the collector'
 });
 
 test('push: collector announces a connected social to the tenant chat', async () => {
-  const store = new MemoryStore(), sent = [];
-  const tg = async (m, p) => { sent.push({method: m, ...p}); return {}; };
+  const store = new MemoryStore(), sent = []; let mid = 0;
+  const tg = async (m, p) => { sent.push({method: m, ...p}); return m === 'sendMessage' ? {message_id: ++mid} : {}; };
   const {tenant} = await applyPayment(store, {paymentId: 'pn', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
   await store.setChat(42, tenant.id, 'ready');
   const bot = createBot({store, tg, env});
   await bot.notifySocialConnected(tenant.id, {userId: '900', label: 'Профиль-900'});
-  const msg = sent.find(m => /успешно добавлен/.test(m.text || ''));
-  assert(msg, 'connected notification sent to the chat');
+  const msg = sent.find(m => /Видим профиль/.test(m.text || ''));
+  assert(msg, 'connected card sent to the chat');
   assert.match(msg.text, /Профиль-900/);
   assert.ok(msg.chat_id, 'addressed to a chat');
   assert(await store.social(tenant.id, '900'), 'social recorded in the store');
+  // After the first collection the SAME card is edited with the counts.
+  await bot.notifySocialCollected(tenant.id, {userId: '900', label: 'Профиль-900', accounts: 5, businesses: 1, pages: 2});
+  const upd = sent.find(m => m.method === 'editMessageText' && /Данные загружены/.test(m.text || ''));
+  assert(upd, 'card edited to loaded state');
+  assert.match(upd.text, /РК: <b>5<\/b>/);
+  assert.match(upd.text, /БМ: <b>1<\/b>/);
+  assert.match(upd.text, /ФП: <b>2<\/b>/);
   // Unknown tenant → no crash, no message.
   const before = sent.length;
   await bot.notifySocialConnected('nope', {userId: '901', label: 'X'});
@@ -249,9 +257,9 @@ test('agents: a new social is detected, prompted, and assigned to a new agent', 
   };
   try {
     await h.say('👥 Агенты');
-    assert(h.sent.some(m => /Профиль «Алина» успешно добавлен/.test(m.text || '')), 'new social prompted for assignment');
+    assert(h.sent.some(m => /Видим профиль «Алина»/.test(m.text || '')), 'new social card shown');
     await h.tap('assign:100:new'); assert.match(h.last(), /имя нового агента/);
-    await h.say('Иван'); assert.match(h.last(), /закреплён/i);
+    await h.say('Иван'); assert.match(h.last(), /назначен/i);
     await h.say('👥 Агенты'); assert.match(h.last(), /Иван/); assert.match(h.last(), /Без агента<\/b> — профилей: 0/);
   } finally { globalThis.fetch = realFetch; }
 });

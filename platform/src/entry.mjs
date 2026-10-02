@@ -9,11 +9,12 @@ import {D1Store} from './store.mjs';
 import worker, {telegram} from './index.mjs';
 
 export class BotNotify extends WorkerEntrypoint {
-  async socialConnected(tenantId, social) {
+  #bot() {
     const store = new D1Store(this.env.DB);
-    const bot = createBot({store, tg: telegram(this.env), env: this.env, ...(this.env.KEITARO_BRIDGE ? {keitaro: containerKeitaro(this.env)} : {})});
-    try { await bot.notifySocialConnected(String(tenantId), social || {}); } catch {}
+    return createBot({store, tg: telegram(this.env), env: this.env, ...(this.env.KEITARO_BRIDGE ? {keitaro: containerKeitaro(this.env)} : {})});
   }
+  async socialConnected(tenantId, social) { try { await this.#bot().notifySocialConnected(String(tenantId), social || {}); } catch {} }
+  async socialCollected(tenantId, social) { try { await this.#bot().notifySocialCollected(String(tenantId), social || {}); } catch {} }
 }
 
 export default worker;

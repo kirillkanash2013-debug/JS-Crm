@@ -37,8 +37,13 @@ test('D1Store works with the migration schema', async () => {
   assert.deepEqual(await store.listAgents(tenant.id), [{id: ag.id, name: 'Иван'}]);
   assert.equal(await store.social(tenant.id, '100'), null);
   await store.addSocial(tenant.id, '100', 'Алина');
-  assert.deepEqual(await store.social(tenant.id, '100'), {userId: '100', label: 'Алина', agentId: null});
+  assert.deepEqual(await store.social(tenant.id, '100'), {userId: '100', label: 'Алина', agentId: null, notifyMsgId: null, rk: null, bm: null, fp: null, collectedAt: null});
   await store.assignSocial(tenant.id, '100', ag.id);
   assert.equal((await store.social(tenant.id, '100')).agentId, ag.id);
-  assert.deepEqual(await store.listSocials(tenant.id), [{userId: '100', label: 'Алина', agentId: ag.id}]);
+  await store.setSocialNotifyMsg(tenant.id, '100', 777);
+  await store.setSocialStats(tenant.id, '100', {rk: 5, bm: 1, fp: 2, collectedAt: '2026-10-02'});
+  assert.deepEqual(await store.social(tenant.id, '100'), {userId: '100', label: 'Алина', agentId: ag.id, notifyMsgId: '777', rk: 5, bm: 1, fp: 2, collectedAt: '2026-10-02'});
+  await store.deleteAgent(tenant.id, ag.id);
+  assert.equal((await store.social(tenant.id, '100')).agentId, null);
+  assert.deepEqual(await store.listAgents(tenant.id), []);
 });

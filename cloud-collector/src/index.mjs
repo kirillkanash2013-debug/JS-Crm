@@ -94,7 +94,7 @@ export class CollectorControl extends DurableObject {
   for(const userId of [...pending]){
    try{
     const c=this.control.state.connections[userId],sum=this.control.archive?.socialSummary?.(userId)||{};
-    await this.env.PLATFORM.socialConnected(tenantId,{userId,label:c?.label||null,accounts:sum.accounts??null,businesses:sum.businesses??null,pages:sum.pages??null,collectedAt:sum.lastAt||null});
+    await this.env.PLATFORM.socialCollected(tenantId,{userId,label:c?.label||null,accounts:sum.accounts??null,businesses:sum.businesses??null,pages:sum.pages??null,collectedAt:sum.lastAt||null});
     done.push(userId);
    }catch{}
   }
@@ -150,10 +150,18 @@ export default {
   const headers=new Headers(request.headers);headers.delete('authorization');headers.set('x-control-internal',env.INTERNAL_KEY);
   headers.set('x-social-limit',String(caller.socialLimit));
   // Tell the DO which tenant it serves, so it can address the bot after the
-  // first collection (the notification is sent there, with real counts).
+  // first collection (the "loaded" card is sent there, with real counts).
   if(caller.space.startsWith('tenant:'))headers.set('x-tenant-id',caller.space.slice('tenant:'.length));
-  try{return await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));}
-  catch{return reply(503,{error:'collector_unavailable'});}
+  try{
+   const resp=await env.CONTROL.getByName(caller.space).fetch(new Request(request,{headers}));
+   // On connect: show the card immediately in "collecting" state (the DO sends
+   // the "loaded" update later, after the first collection).
+   if(env.PLATFORM&&request.method==='POST'&&url.pathname==='/v1/connections'&&resp.ok&&caller.space.startsWith('tenant:')){
+    const tenantId=caller.space.slice('tenant:'.length);
+    ctx?.waitUntil((async()=>{try{const d=await resp.clone().json();await env.PLATFORM.socialConnected(tenantId,{userId:d.userId,label:d.label??null});}catch{}})());
+   }
+   return resp;
+  }catch{return reply(503,{error:'collector_unavailable'});}
  }
 };
 

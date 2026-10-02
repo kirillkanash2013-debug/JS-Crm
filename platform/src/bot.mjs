@@ -267,16 +267,35 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     return {inline_keyboard: rows};
   }
 
-  async function promptAssign(chatId, tenantId, s) {
-    // Counts come from the first collection; if it hasn't finished yet, say so
-    // instead of showing zeros that would look wrong.
-    const haveCounts = s.collectedAt || s.accounts != null;
-    const counts = haveCounts
-      ? 'Рекламных кабинетов: <b>' + (s.accounts ?? 0) + '</b> · БМ: <b>' + (s.businesses ?? 0) + '</b> · ФП: <b>' + (s.pages ?? 0) + '</b>'
-      : '<i>Данные кабинетов ещё собираются — появятся через минуту.</i>';
-    await send(chatId, '✅ Профиль «' + esc(s.label) + '» успешно добавлен.\n' + counts +
-      '\n\nК какому агенту отнести? (для учёта спендов)', await agentButtons(tenantId, s.userId));
+  // The progressive "profile connected" card, rendered from the DB so it can be
+  // edited in place at any stage: 🔄 collecting (ask for an agent) → ✅ loaded
+  // with РК/БМ/ФП and the agent. Agent buttons stay until one is chosen.
+  async function socialCard(tenantId, userId) {
+    const s = await store.social(tenantId, userId);
+    if (!s) return {text: 'Профиль не найден.'};
+    const agentName = s.agentId ? ((await store.listAgents(tenantId)).find(a => a.id === s.agentId) || {}).name || 'агент' : null;
+    const loaded = s.collectedAt != null;
+    let text;
+    if (!loaded) {
+      text = '🔄 Видим профиль «' + esc(s.label || s.userId) + '» (как в антидетеке).\nСобираем данные по кабинетам…';
+    } else {
+      text = '✅ <b>Данные загружены</b> — профиль «' + esc(s.label || s.userId) + '»\n' +
+        'РК: <b>' + (s.rk ?? 0) + '</b>\nБМ: <b>' + (s.bm ?? 0) + '</b>\nФП: <b>' + (s.fp ?? 0) + '</b>\n' +
+        'Агент: <b>' + (agentName ? esc(agentName) : 'не назначен') + '</b>';
+    }
+    if (s.agentId && !loaded) text += '\nАгент: <b>' + esc(agentName) + '</b>';
+    if (!s.agentId) text += '\n\nУкажите агента, к кому отнести профиль:';
+    return {text, markup: s.agentId ? undefined : await agentButtons(tenantId, userId)};
   }
+
+  // Sends the card and remembers its message id, so it can be edited later.
+  async function sendSocialCard(chatId, tenantId, userId) {
+    const card = await socialCard(tenantId, userId);
+    const msg = await send(chatId, card.text, card.markup);
+    if (msg && msg.message_id) await store.setSocialNotifyMsg(tenantId, userId, msg.message_id);
+  }
+
+  async function promptAssign(chatId, tenantId, s) { await sendSocialCard(chatId, tenantId, s.userId); }
 
   // Detects newly connected socials and prompts to assign each. Works whether
   // the client added one or many — each new social is prompted once; all
@@ -517,7 +536,13 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!agent) agent = await store.createAgent(tenant.id, name);
       await store.setChat(chatId, tenant.id, 'ready');
       const userId = chat.state.split(':')[1];
-      if (userId) { await store.assignSocial(tenant.id, userId, agent.id); return send(chatId, '✅ Соц закреплён за агентом «' + esc(agent.name) + '».', MENU); }
+      if (userId) {
+        await store.assignSocial(tenant.id, userId, agent.id);
+        // Update the profile card in place (it lives in an earlier message).
+        const s = await store.social(tenant.id, userId);
+        if (s && s.notifyMsgId) { const card = await socialCard(tenant.id, userId); await edit(chatId, s.notifyMsgId, card.text, card.markup); }
+        return send(chatId, '✅ Готово: агент «' + esc(agent.name) + '» назначен.', MENU);
+      }
       await send(chatId, '✅ Агент «' + esc(agent.name) + '» добавлен.');
       return showAgents(chatId, tenant.id);
     }
@@ -563,9 +588,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const [, userId, agentId] = data.split(':');
       if (agentId === 'new') { await store.setChat(chatId, chat.tenantId, 'newagent:' + userId); return send(chatId, '➕ Введите имя нового агента:'); }
       const a = (await store.listAgents(chat.tenantId)).find(x => x.id === agentId);
-      if (!a) return send(chatId, 'Агент не найден.', MENU);
+      if (!a) { const card = await socialCard(chat.tenantId, userId); return edit(chatId, q.message.message_id, card.text, card.markup); }
       await store.assignSocial(chat.tenantId, userId, agentId);
-      return send(chatId, '✅ Соц закреплён за агентом «' + esc(a.name) + '».', MENU);
+      // Edit the same card in place — no extra "assigned" message.
+      const card = await socialCard(chat.tenantId, userId);
+      return edit(chatId, q.message.message_id, card.text, card.markup);
     }
     if (data.startsWith('pick:')) { const userId = data.slice(5); const s = await store.social(chat.tenantId, userId); return send(chatId, '📌 Закрепить соц «' + esc((s && s.label) || userId) + '» за агентом:', await agentButtons(chat.tenantId, userId)); }
     // «Агенты» screen — one evolving message, edited in place for every action.
@@ -606,18 +633,33 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   // Push from the collector: a social was connected in the plugin. Notifies the
   // tenant's chat right away (not only when they next open a bot screen).
-  handleUpdate.notifySocialConnected = async (tenantId, social) => {
+  // Ensures the social exists in the store with the latest label; returns chatId.
+  async function upsertSocial(tenantId, social) {
     const chatId = await store.chatForTenant(tenantId);
-    if (!chatId || !social?.userId) return;
+    if (!chatId || !social?.userId) return null;
     const existing = await store.social(tenantId, social.userId);
     if (!existing) await store.addSocial(tenantId, social.userId, social.label || String(social.userId));
     else if (social.label && social.label !== existing.label) await store.setSocialLabel(tenantId, social.userId, social.label);
-    const cur = await store.social(tenantId, social.userId);
-    if (cur?.agentId) {
-      const ag = (await store.listAgents(tenantId)).find(a => a.id === cur.agentId);
-      return send(chatId, '✅ Профиль «' + esc(social.label || social.userId) + '» переподключён.' + (ag ? '\nЗакреплён за агентом «' + esc(ag.name) + '».' : ''), MENU);
-    }
-    return promptAssign(chatId, tenantId, {userId: String(social.userId), label: social.label || String(social.userId), accounts: social.accounts, businesses: social.businesses, pages: social.pages, collectedAt: social.collectedAt});
+    return chatId;
+  }
+
+  // Push 1 (on connect): show the card immediately in "🔄 collecting" state so
+  // the client can assign an agent right away instead of waiting.
+  handleUpdate.notifySocialConnected = async (tenantId, social) => {
+    const chatId = await upsertSocial(tenantId, social);
+    if (!chatId) return;
+    await sendSocialCard(chatId, tenantId, social.userId);
+  };
+
+  // Push 2 (after first collection): store the counts and rewrite the SAME card
+  // in place to "✅ loaded" with РК/БМ/ФП and the agent.
+  handleUpdate.notifySocialCollected = async (tenantId, social) => {
+    const chatId = await upsertSocial(tenantId, social);
+    if (!chatId) return;
+    await store.setSocialStats(tenantId, social.userId, {rk: social.accounts ?? null, bm: social.businesses ?? null, fp: social.pages ?? null, collectedAt: social.collectedAt || new Date().toISOString()});
+    const s = await store.social(tenantId, social.userId), card = await socialCard(tenantId, social.userId);
+    if (s?.notifyMsgId) await edit(chatId, s.notifyMsgId, card.text, card.markup);
+    else await sendSocialCard(chatId, tenantId, social.userId);
   };
   return handleUpdate;
 }
