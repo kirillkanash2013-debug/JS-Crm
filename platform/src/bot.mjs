@@ -387,13 +387,20 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   const num = v => Number(v) || 0;
   const shortName = s => { s = String(s || ''); return s.length > 18 ? s.slice(0, 17) + '…' : s; };
-  // Stable number↔campaign order for the board: sorted by name so the numbers a
-  // client types ("1-234 2-423") map to the same campaigns they saw. Capped so
-  // the message stays within Telegram limits; the same slice is used everywhere
-  // the numbering is read back.
+  const isActiveCamp = c => (c.effectiveStatus || c.status) === 'ACTIVE';
+  // Главный борд показывает только РАБОЧИЕ кампании (сегодня тратили или включены)
+  // — как в «Сейчас». Остальные (🔴 без расхода) не засоряют список. Сортировка по
+  // имени, чтобы номера, которые вводит клиент («1-234»), совпадали с показанными.
   function boardCampaigns(camps) {
-    return camps.slice().sort((a, b) => String(a.name || a.campaignId).localeCompare(String(b.name || b.campaignId), 'ru')).slice(0, 30);
+    return camps.filter(c => num(c.spend) > 0 || isActiveCamp(c))
+      .sort((a, b) => String(a.name || a.campaignId).localeCompare(String(b.name || b.campaignId), 'ru')).slice(0, 30);
   }
+  // Вкл/Выкл работает со ВСЕМИ кампаниями (чтобы можно было включить выключенную).
+  function allCampaigns(camps) {
+    return camps.slice().sort((a, b) => String(a.name || a.campaignId).localeCompare(String(b.name || b.campaignId), 'ru')).slice(0, 60);
+  }
+  // Есть ли незавершённая операция этого соца (очередь занята — новую не шлём).
+  const hasPending = (jobs, userId) => (jobs || []).some(j => j.action && String(j.userId) === String(userId) && ['queued', 'running'].includes(j.state));
 
   // Результат последней завершённой операции над кампанией соца (строка над бордом).
   function boardJobLine(jobs, userId, campsById) {
@@ -401,18 +408,18 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const j = mine[0]; if (!j) return '';
     const name = esc((campsById[String(j.action.campaignId)] || {}).name || j.action.campaignId);
     if (j.state === 'needs_auth') return '❌ <b>' + name + '</b>: Facebook требует повторный вход — переподключите соц.';
-    if (!['done', 'queued', 'running'].includes(j.state)) return '❌ <b>' + name + '</b>: не удалось применить (' + esc((j.error && j.error.code) || j.state) + ').';
+    if (!['done', 'queued', 'running'].includes(j.state)) return '❌ <b>' + name + '</b>: не удалось применить (' + esc((j.error && (j.error.message || j.error.code)) || j.state) + ').';
     if (j.state !== 'done') return '';
     const after = (j.actionResult && j.actionResult.after) || {};
     const bud = after.daily_budget ? ', бюджет ' + (Number(after.daily_budget) / 100).toFixed(2) : '';
     return '✅ <b>' + name + '</b>: ' + (after.status === 'ACTIVE' ? 'включена' : after.status === 'PAUSED' ? 'на паузе' : esc(after.status || 'готово')) + bud;
   }
 
-  // Борд кампаний: нумерованный список кампаний в формате «Сейчас» (через пустую
-  // строку) и под ним 3 кнопки — Бюджет · Вкл/Выкл · Смотреть. После отправки
-  // изменений борд переходит в режим ожидания (шапка «ждём подтверждения» и одна
-  // кнопка «Обновить»); как только Facebook применит, цифры обновляются и кнопки
-  // возвращаются. Всё правит одно и то же сообщение — без спама.
+  // Борд кампаний: нумерованный список рабочих кампаний в формате «Сейчас» (через
+  // пустую строку) и под ним 3 кнопки — Бюджет · Вкл/Выкл · Смотреть. Пока ждём
+  // подтверждения Facebook, борд в режиме ожидания (шапка «ждём…» и только кнопка
+  // «🔄 Обновить» — часики остаются, пока не придёт зелёная галочка или ошибка).
+  // Возвращает {text, markup, pending}.
   async function campaignsBoard(tenantId, userId, opts = {}) {
     const cr = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId));
     const sr = await collectorCall(tenantId, '/v1/status');
@@ -423,7 +430,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const label = (conns.find(c => String(c.userId) === String(userId)) || {}).label || userId;
     const head = '📣 <b>Кампании</b> · ' + esc(label);
     const footMulti = multi ? [[{text: '⬅️ Другой соц', callback_data: 'csoc'}]] : [];
-    if (!camps.length) return {text: head + '\n\nКампаний пока нет (ещё не собрались). Загляните позже.', markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}};
+    if (!camps.length) return {text: head + '\n\nКампаний пока нет (ещё не собрались). Загляните позже.', markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}, pending: false};
 
     const s = await store.settings(tenantId);
     const tz = s.timezone || 'UTC';
@@ -432,12 +439,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const byCampaign = (keitaro && keitaro.byCampaign) || {};
     const empty = {inst: 0, reg: 0, dep: 0, rev: 0};
     const ordered = boardCampaigns(camps);
-    const cards = ordered.map((c, i) => campaignCard(i + 1, c, byCampaign[String(c.campaignId)] || empty)).join('\n\n');
+    const cards = ordered.length ? ordered.map((c, i) => campaignCard(i + 1, c, byCampaign[String(c.campaignId)] || empty)).join('\n\n')
+      : '<i>Сейчас нет работающих кампаний.</i>';
 
-    // В ожидании, если есть незавершённые операции этого соца.
-    const pending = jobs.some(j => j.action && String(j.userId) === String(userId) && ['queued', 'running'].includes(j.state));
+    const pending = hasPending(jobs, userId);
     if (pending) return {text: '⏳ <b>Отправили изменения — ждём подтверждения Facebook…</b>\n' + head + '\n\n' + cards,
-      markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}};
+      markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}, pending: true};
 
     const campsById = {}; for (const c of camps) campsById[String(c.campaignId)] = c;
     const result = opts.override || boardJobLine(jobs, userId, campsById);
@@ -445,19 +452,26 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       markup: {inline_keyboard: [
         [{text: '💰 Бюджет', callback_data: 'cbud:' + userId}, {text: '⏯ Вкл/Выкл', callback_data: 'ctog:' + userId}, {text: '👁 Смотреть', callback_data: 'cview:' + userId}],
         ...footMulti
-      ]}};
+      ]}, pending: false};
   }
 
-  // Picker for the ⏯ Вкл/Выкл flow: numbered buttons, one per campaign; tapping
-  // toggles that campaign (on→off, off→on) immediately and returns to the board.
-  async function toggleView(tenantId, userId) {
+  // Deactivate the old board (remove its buttons so taps there do nothing) and
+  // post a FRESH board message at the bottom — so the latest state is always the
+  // last message and the client never scrolls up to find «🔄 Обновить».
+  async function postFreshBoard(chatId, tenantId, userId, oldMsgId, override) {
+    if (oldMsgId) await tg('editMessageReplyMarkup', {chat_id: chatId, message_id: oldMsgId, reply_markup: {inline_keyboard: []}}).catch(() => {});
+    const v = await campaignsBoard(tenantId, userId, {override});
+    const msg = await send(chatId, v.text, v.markup);
+    return msg && msg.message_id;
+  }
+
+  // Полный нумерованный список ВСЕХ кампаний (для Вкл/Выкл) с текущим состоянием.
+  async function toggleListText(tenantId, userId) {
     const cr = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId));
-    const rows = boardCampaigns((cr && cr.body && cr.body.campaigns) || []).map((c, i) => {
-      const active = (c.effectiveStatus || c.status) === 'ACTIVE';
-      return [{text: (i + 1) + '. ' + (active ? '🟢→🔴' : '🔴→🟢') + ' ' + shortName(c.name || c.campaignId), callback_data: 'ctg:' + userId + ':' + c.campaignId}];
-    });
-    rows.push([{text: '↩️ Назад', callback_data: 'cref:' + userId}]);
-    return {text: '⏯ <b>Вкл/Выкл кампании</b>\nНажмите кампанию — включённую выключим, выключенную включим:', markup: {inline_keyboard: rows}};
+    const ordered = allCampaigns((cr && cr.body && cr.body.campaigns) || []);
+    const lines = ordered.map((c, i) => (i + 1) + '. ' + (isActiveCamp(c) ? '🟢' : '🔴') + ' ' + esc(shortName(c.name || c.campaignId)));
+    return {ordered, text: '⏯ <b>Вкл/Выкл кампании</b>\n' + (lines.join('\n') || '<i>Кампаний нет.</i>') +
+      '\n\nВведите номера через запятую — включённые выключим, выключенные включим:\n<code>1,3,5</code>'};
   }
 
   async function campaignsEntry(chatId, tenantId) {
@@ -467,16 +481,6 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (!conns.length) return send(chatId, '📣 Нет подключённых соцов. Подключите соц — «🧩 Подключить соц».', MENU);
     if (conns.length === 1) { const v = await campaignsBoard(tenantId, conns[0].userId); return send(chatId, v.text, v.markup); }
     return send(chatId, '📣 <b>Кампании</b>\nВыберите соц:', {inline_keyboard: conns.map(c => [{text: c.label || c.userId, callback_data: 'soc:' + c.userId}])});
-  }
-
-  // Применяет действие над кампанией и показывает борд в режиме ожидания.
-  async function boardAction(chatId, tenantId, mid, userId, body) {
-    const r = await collectorCall(tenantId, '/v1/actions', body);
-    let override;
-    if (r && r.status === 409) override = '⏳ Занято другими операциями — повторите через минуту.';
-    else if (!r || !r.ok) override = '❌ Не удалось отправить: ' + esc((r && r.body && (r.body.error || r.body.detail)) || (r && r.status) || 'нет связи');
-    const v = await campaignsBoard(tenantId, userId, {override});
-    return edit(chatId, mid, v.text, v.markup);
   }
 
   async function socPicker(chatId, tenantId, mid) {
@@ -655,6 +659,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const pairs = String(text).match(/\d+\s*-\s*\d+(?:[.,]\d+)?/g) || [];
       if (!pairs.length) return send(chatId, 'Формат: <code>1-234 2-423</code> — номер кампании, дефис, бюджет. Можно несколько через пробел.');
       await store.setChat(chatId, tenant.id, 'ready');
+      // Одна операция за раз: пока прошлая не применилась, новую не ставим в очередь.
+      const sr = await collectorCall(tenant.id, '/v1/status');
+      if (hasPending((sr && sr.body && sr.body.jobs) || [], userId)) return send(chatId, '⏳ Дождитесь применения прошлых изменений — нажмите «🔄 Обновить» на нижней карточке.', MENU);
       const cr = await collectorCall(tenant.id, '/v1/campaigns?userId=' + encodeURIComponent(userId));
       const ordered = boardCampaigns((cr && cr.body && cr.body.campaigns) || []);
       let ok = 0; const bad = [];
@@ -667,8 +674,28 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
         if (r && r.ok) ok++; else bad.push(p.replace(/\s+/g, ''));
       }
       const override = (ok ? '⏳ Отправлено бюджетов: ' + ok + '.' : '') + (bad.length ? (ok ? ' ' : '') + '⚠️ Не распознал: ' + esc(bad.join(' ')) : '');
-      const v = await campaignsBoard(tenant.id, userId, {override});
-      if (boardMsgId) await edit(chatId, boardMsgId, v.text, v.markup); else await send(chatId, v.text, v.markup);
+      await postFreshBoard(chatId, tenant.id, userId, Number(boardMsgId) || null, override);
+      return;
+    }
+    if (!menuHit && chat.state && chat.state.startsWith('ctoggle:')) {
+      const [, userId, boardMsgId] = chat.state.split(':');
+      // «1,3,5»: номера кампаний из полного списка — переключаем вкл↔выкл.
+      const nums = (String(text).match(/\d+/g) || []).map(Number);
+      if (!nums.length) return send(chatId, 'Укажите номера кампаний через запятую — например <code>1,3,5</code>.');
+      await store.setChat(chatId, tenant.id, 'ready');
+      const sr = await collectorCall(tenant.id, '/v1/status');
+      if (hasPending((sr && sr.body && sr.body.jobs) || [], userId)) return send(chatId, '⏳ Дождитесь применения прошлых изменений — нажмите «🔄 Обновить» на нижней карточке.', MENU);
+      const cr = await collectorCall(tenant.id, '/v1/campaigns?userId=' + encodeURIComponent(userId));
+      const ordered = allCampaigns((cr && cr.body && cr.body.campaigns) || []);
+      let ok = 0; const bad = [];
+      for (const n of nums) {
+        const c = ordered[n - 1];
+        if (!c) { bad.push(String(n)); continue; }
+        const r = await collectorCall(tenant.id, '/v1/actions', {userId, campaignId: c.campaignId, status: isActiveCamp(c) ? 'PAUSED' : 'ACTIVE'});
+        if (r && r.ok) ok++; else bad.push(String(n));
+      }
+      const override = (ok ? '⏳ Переключаю кампаний: ' + ok + '.' : '') + (bad.length ? (ok ? ' ' : '') + '⚠️ Не распознал: ' + esc(bad.join(',')) : '');
+      await postFreshBoard(chatId, tenant.id, userId, Number(boardMsgId) || null, override);
       return;
     }
     if (!menuHit && chat.state && chat.state.startsWith('newagent')) {
@@ -740,16 +767,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     // Борд кампаний.
     if (data.startsWith('soc:')) { const v = await campaignsBoard(chat.tenantId, data.slice(4)); return edit(chatId, mid, v.text, v.markup); }
     if (data === 'csoc') return socPicker(chatId, chat.tenantId, mid);
+    // «🔄 Обновить» правит СВОЁ сообщение (нижнюю карточку): пока Facebook не
+    // ответил — остаётся режим ожидания с часиками; как применится — цифры
+    // обновятся и вернутся 3 кнопки (или строка с ошибкой).
     if (data.startsWith('cref:')) { const v = await campaignsBoard(chat.tenantId, data.slice(5)); return edit(chatId, mid, v.text, v.markup); }
     if (data.startsWith('cbud:')) { const userId = data.slice(5); await store.setChat(chatId, chat.tenantId, 'cbudget:' + userId + ':' + mid); return send(chatId, '💰 Введите номер кампании и дневной бюджет через дефис — можно несколько:\n<code>1-234 2-423</code>\n(номер — как в списке, бюджет в валюте кабинета)'); }
-    if (data.startsWith('ctog:')) { const userId = data.slice(5); const v = await toggleView(chat.tenantId, userId); return edit(chatId, mid, v.text, v.markup); }
-    if (data.startsWith('ctg:')) {
-      const [, userId, cid] = data.split(':');
-      const cr = await collectorCall(chat.tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId));
-      const c = ((cr && cr.body && cr.body.campaigns) || []).find(x => String(x.campaignId) === String(cid));
-      const active = c && (c.effectiveStatus || c.status) === 'ACTIVE';
-      return boardAction(chatId, chat.tenantId, mid, userId, {userId, campaignId: cid, status: active ? 'PAUSED' : 'ACTIVE'});
-    }
+    if (data.startsWith('ctog:')) { const userId = data.slice(5); const v = await toggleListText(chat.tenantId, userId); await store.setChat(chatId, chat.tenantId, 'ctoggle:' + userId + ':' + mid); return send(chatId, v.text); }
     if (data.startsWith('cview:')) { const userId = data.slice(6); return edit(chatId, mid, '👁 <b>Детали кампаний</b>\n\nПросмотр адсетов и объявлений — <b>в разработке</b>. Скоро можно будет провалиться в кампанию → адсеты → объявления.', {inline_keyboard: [[{text: '↩️ Назад', callback_data: 'cref:' + userId}]]}); }
     if (data.startsWith('assign:')) {
       const [, userId, agentId] = data.split(':');

@@ -290,7 +290,7 @@ test('«🔑 Ключ» shows the current token without rotating it', async () =
   assert(h.last().includes(token), 'shows the same key, not a new one');
 });
 
-test('bot campaigns board: numbered list, toggle + budget, pending then result on refresh', async () => {
+test('bot campaigns board: active-only numbered list, budget + toggle by text, pending→result', async () => {
   const h = harness();
   const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pc3', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
   await h.say('/start ' + token);
@@ -300,32 +300,36 @@ test('bot campaigns board: numbered list, toggle + budget, pending then result o
   globalThis.fetch = async (url, opts) => {
     if (url.includes('/v1/campaigns')) return Response.json({campaigns: [
       {campaignId: '555111', name: 'Alpha', status: 'ACTIVE', effectiveStatus: 'ACTIVE', dailyBudget: '2000', currency: 'USD', spend: 12.5},
-      {campaignId: '555222', name: 'Bravo', status: 'PAUSED', effectiveStatus: 'PAUSED', dailyBudget: '1000', currency: 'USD', spend: 0}]});
+      {campaignId: '555222', name: 'Bravo', status: 'ACTIVE', effectiveStatus: 'ACTIVE', dailyBudget: '1000', currency: 'USD', spend: 3},
+      {campaignId: '555333', name: 'Charlie', status: 'PAUSED', effectiveStatus: 'PAUSED', dailyBudget: '1000', currency: 'USD', spend: 0}]});
     if (url.endsWith('/v1/actions')) { posted.push(JSON.parse(opts.body)); return new Response(JSON.stringify({id: 'job-1', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
     if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина'}], jobs});
     return Response.json({});
   };
   try {
     await h.say('📣 Кампании');
-    assert.match(h.last(), /📣 <b>Кампании<\/b>/);
-    assert.match(h.last(), /<b>1\.<\/b>/); assert.match(h.last(), /<b>2\.<\/b>/); // numbered, name-sorted (Alpha, Bravo)
-    assert.match(h.last(), /Alpha/); assert.match(h.last(), /💰20\$ 💸13\$/);
-    // Toggle picker → tap campaign 1 (ACTIVE → PAUSED).
-    await h.tap('ctog:100'); assert.match(h.last(), /Вкл\/Выкл/);
-    await h.tap('ctg:100:555111');
-    assert.deepEqual(posted.at(-1), {userId: '100', campaignId: '555111', status: 'PAUSED'});
-    // Pending: queued job → "ждём подтверждения" + only Обновить.
-    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', status: 'PAUSED'}, state: 'queued', createdAt: '2026-10-02T00:00:00Z'}];
-    await h.tap('cref:100'); assert.match(h.last(), /ждём подтверждения/);
-    // Job done → refresh shows outcome + buttons return.
-    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', status: 'PAUSED'}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {status: 'PAUSED', daily_budget: '2000'}}}];
-    await h.tap('cref:100'); assert.match(h.last(), /на паузе/);
-    // Budget flow: multiple pairs "1-50 2-30" → two /v1/actions with dailyBudget.
-    jobs = [];
-    posted = [];
+    // Only working campaigns on the board (Alpha, Bravo); the paused/0-spend Charlie is hidden.
+    assert.match(h.last(), /<b>1\.<\/b>/); assert.match(h.last(), /Alpha/); assert.match(h.last(), /Bravo/);
+    assert.doesNotMatch(h.last(), /Charlie/);
+    assert.match(h.last(), /💰20\$ 💸13\$/);
+    // Budget flow: multiple pairs "1-50 2-30" → two /v1/actions (board numbering).
     await h.tap('cbud:100'); assert.match(h.last(), /1-234 2-423/);
     await h.say('1-50 2-30');
     assert.deepEqual(posted.map(p => [p.campaignId, p.dailyBudget]), [['555111', 5000], ['555222', 3000]]);
+    assert.match(h.last(), /Отправлено бюджетов: 2/);
+    // Toggle flow: Вкл/Выкл lists ALL campaigns; "3" turns Charlie (paused) ON.
+    posted = [];
+    await h.tap('ctog:100'); assert.match(h.last(), /Charlie/); assert.match(h.last(), /1,3,5/);
+    await h.say('3');
+    assert.deepEqual(posted.at(-1), {userId: '100', campaignId: '555333', status: 'ACTIVE'});
+    // Pending: queued job → "ждём подтверждения" + only Обновить; stays until terminal.
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555333', status: 'ACTIVE'}, state: 'queued', createdAt: '2026-10-02T00:00:00Z'}];
+    await h.tap('cref:100'); assert.match(h.last(), /ждём подтверждения/);
+    // One-at-a-time: a new submit while pending is refused.
+    await h.tap('cbud:100'); await h.say('1-99'); assert.match(h.last(), /Дождитесь/);
+    // Job done → refresh shows the green outcome + buttons return.
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555333', status: 'ACTIVE'}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {status: 'ACTIVE'}}}];
+    await h.tap('cref:100'); assert.match(h.last(), /✅/); assert.match(h.last(), /включена/);
   } finally { globalThis.fetch = realFetch; }
 });
 
