@@ -119,7 +119,7 @@ export class Control {
  async execute(work){
   const {job,connection,previous}=work;
   if(job.kind==='import'){try{return {result:await this.runner.importProfiles(work.antidetect)};}catch(e){return {error:{code:e.code||'import_failed'}};}}
-  if(job.action){try{return {result:await this.runner.action(connection,job.action)};}catch(e){return {error:{code:e.code}};}}
+  if(job.action){try{return {result:await this.runner.action(connection,job.action)};}catch(e){return {error:{code:e.code,message:e.message}};}}
   let apiError=null;
   if(connection.token&&connection.mode!=='browser'&&this.runner.collectApi){
    try{return {result:await this.runner.collectApi(connection,job.range,previous)};}
@@ -158,7 +158,7 @@ export class Control {
   if(!c||c.revision!==work.connection.revision)j.state='cancelled';
   else if(error){
    j.state=NEEDS_AUTH.includes(error.code)?'needs_auth':RATE_LIMIT.includes(error.code)?'rate_limited':'failed';
-   j.error={code:typeof error.code==='number'?error.code:error.code==='proxy'?'proxy':j.state};
+   j.error={code:typeof error.code==='number'?error.code:error.code==='proxy'?'proxy':j.state,message:error.message?String(error.message).slice(0,180):null};
    if(j.state==='needs_auth')c.schedule=null;
    // Meta asked us to slow down: skip the next hour of scheduled runs.
    if(j.state==='rate_limited'&&c.schedule)c.schedule.nextAt=Math.max(c.schedule.nextAt,Date.now()+60*60000);

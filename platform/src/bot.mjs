@@ -414,6 +414,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const mine = (jobs || []).filter(j => j.action && String(j.userId) === String(userId)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const j = mine[0]; if (!j) return '';
     if (['queued', 'running'].includes(j.state)) return '';
+    // Не показываем результат старой операции — только свежей (последние 5 минут).
+    if (!j.finishedAt || Date.now() - Date.parse(j.finishedAt) > 300000) return '';
     const name = esc((campsById[String(j.action.campaignId)] || {}).name || j.action.campaignId);
     if (j.state === 'done') return '✅ <b>Всё прошло успешно.</b>';
     if (j.state === 'needs_auth') return '❌ <b>' + name + '</b>: Facebook требует повторный вход — переподключите соц.';
@@ -471,7 +473,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       markup: {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'cref:' + userId}], ...footMulti]}, pending: true};
 
     const campsById = {}; for (const c of camps) campsById[String(c.campaignId)] = c;
-    const status = opts.override || boardJobLine(jobs, userId, campsById);
+    // Строку статуса операции показываем только при явном обновлении/после действия
+    // (showStatus), а не при обычном открытии «Кампании» — чтобы не всплывал старый результат.
+    const status = opts.override || (opts.showStatus ? boardJobLine(jobs, userId, campsById) : '');
     return {text: head + '\n\n' + cards + (status ? '\n\n' + status : ''),
       markup: {inline_keyboard: [
         [{text: '💰 Бюджет', callback_data: 'cbud:' + userId}, {text: '⏯ Вкл/Выкл', callback_data: 'ctog:' + userId}, {text: '👁 Смотреть', callback_data: 'cview:' + userId}],
@@ -484,7 +488,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // last message and the client never scrolls up to find «🔄 Обновить».
   async function postFreshBoard(chatId, tenantId, userId, oldMsgId, override) {
     if (oldMsgId) await tg('editMessageReplyMarkup', {chat_id: chatId, message_id: oldMsgId, reply_markup: {inline_keyboard: []}}).catch(() => {});
-    const v = await campaignsBoard(tenantId, userId, {override});
+    const v = await campaignsBoard(tenantId, userId, {override, showStatus: true});
     const msg = await send(chatId, v.text, v.markup);
     return msg && msg.message_id;
   }
@@ -785,7 +789,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     // «🔄 Обновить» правит СВОЁ сообщение (нижнюю карточку): пока Facebook не
     // ответил — остаётся режим ожидания с часиками; как применится — цифры
     // обновятся и вернутся 3 кнопки (или строка с ошибкой).
-    if (data.startsWith('cref:')) { const v = await campaignsBoard(chat.tenantId, data.slice(5)); return edit(chatId, mid, v.text, v.markup); }
+    if (data.startsWith('cref:')) { const v = await campaignsBoard(chat.tenantId, data.slice(5), {showStatus: true}); return edit(chatId, mid, v.text, v.markup); }
     if (data.startsWith('cbud:')) { const userId = data.slice(5); await store.setChat(chatId, chat.tenantId, 'cbudget:' + userId + ':' + mid); return send(chatId, '💰 Введите номер кампании и дневной бюджет через дефис — можно несколько:\n<code>1-234 2-423</code>\n(номер — как в списке, бюджет в валюте кабинета)'); }
     if (data.startsWith('ctog:')) { const userId = data.slice(5); await store.setChat(chatId, chat.tenantId, 'ctoggle:' + userId + ':' + mid); return send(chatId, '⏯ Введите номер кампании через пробел — можно несколько:\n<code>1 2 3</code>\n(номер — как в списке; включённую выключим, выключенную включим)'); }
     if (data.startsWith('cview:')) { const userId = data.slice(6); return edit(chatId, mid, '👁 <b>Детали кампаний</b>\n\nПросмотр адсетов и объявлений — <b>в разработке</b>. Скоро можно будет провалиться в кампанию → адсеты → объявления.', {inline_keyboard: [[{text: '↩️ Назад', callback_data: 'cref:' + userId}]]}); }
