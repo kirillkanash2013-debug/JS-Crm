@@ -12,7 +12,7 @@ name: Provision & deploy JS Control platform (bot + D1)
 #      TELEGRAM_BOT_TOKEN = <token>. (CLOUDFLARE_API_TOKEN / _ACCOUNT_ID exist.)
 on:
   push:
-    branches: [claude/saas-access]
+    branches: [claude-code, claude/saas-access]
     paths:
       - 'platform/**'
       - '.github/workflows/platform-deploy.yml'
