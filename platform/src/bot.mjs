@@ -112,8 +112,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // matching spend (FB) to revenue (Keitaro). Asked only when Keitaro is on.
   async function askKeitaroSub(chatId, tenantId) {
     await store.setChat(chatId, tenantId, 'keitaro_sub');
-    const rows = [[1, 2, 3], [4, 5, 6]].map(g => g.map(n => ({text: 'sub_id_' + n, callback_data: 'ksub:' + n})));
-    await send(chatId, '🔗 <b>Keitaro: где id кампании Facebook?</b>\n\nВ каком параметре <code>sub_id</code> вашего трекера лежит ID кампании Facebook? По нему свяжем расход (FB) и доход (Keitaro). Обычно это <code>sub_id_4</code>.', {inline_keyboard: rows});
+    await send(chatId, '🔗 <b>Keitaro: где id кампании Facebook?</b>\n\nВ каком <code>sub_id</code> вашего трекера лежит ID кампании Facebook? Напишите просто номер — например <code>4</code> (это <code>sub_id_4</code>, чаще всего так). По нему свяжем расход (FB) и доход (Keitaro).');
   }
 
   async function dashboardLink(tenantId) {
@@ -426,7 +425,6 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const chat = await store.chat(chatId);
     if (!chat?.tenantId) return welcome(chatId);
     if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null}); return askTimezone(chatId, chat.tenantId); }
-    if (data.startsWith('ksub:') && /^[1-6]$/.test(data.slice(5)) && chat.state === 'keitaro_sub') { await store.saveSettings(chat.tenantId, {keitaroSub: 'sub_id_' + data.slice(5)}); return askTimezone(chatId, chat.tenantId); }
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
     if (data.startsWith('soc:')) return showCampaigns(chatId, chat.tenantId, data.slice(4));
     if (data.startsWith('cmp:')) { const [, userId, cid] = data.split(':'); return showCampaign(chatId, chat.tenantId, userId, cid); }
