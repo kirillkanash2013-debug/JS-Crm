@@ -1,4 +1,4 @@
-import {activateCampaign,validateAction} from './campaign-action.mjs';
+import {applyCampaignAction,validateAction} from './campaign-action.mjs';
 import http from 'node:http';
 import {checkKeitaroNode} from './keitaro.mjs';
 import {timingSafeEqual} from 'node:crypto';
@@ -37,7 +37,7 @@ http.createServer(async(req,res)=>{
   if(req.url==='/validate'){const c=validateConnection(b);c.proxy=await publicProxy(c.proxy);return send(200,c);}
   const c=validateConnection(b.connection);c.proxy=await publicProxy(c.proxy);
   if(b.connection.storageState)c.storageState=b.connection.storageState;
-  if(req.url==='/action'){validateAction(b.action);busy=true;try{return send(200,await activateCampaign(c,b.action));}finally{busy=false;}}
+  if(req.url==='/action'){validateAction(b.action);busy=true;try{return send(200,await applyCampaignAction(c,b.action));}finally{busy=false;}}
   const range=period(b.range.since,b.range.until);busy=true;
   try{return send(200,await collect(c,range,{timeoutMs:13*60000}));}finally{busy=false;}
  }catch(e){return send(400,{code:[190,102,'identity','needs_auth'].includes(e.code)?e.code:'collector_failed'});}

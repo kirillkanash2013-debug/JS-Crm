@@ -10,7 +10,14 @@ const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
 const BROWSER_FALLBACK=[1,190,102];
 const CONNECT_ERRORS={proxy:'proxy_failed',190:'token_invalid',102:'token_invalid',identity:'wrong_user',cookies_owner:'cookies_owner',cookies:'validation_failed',invalid:'validation_failed'};
-const validateAction=a=>{if(a?.campaignId!=='120250610273720552'||a?.status!=='ACTIVE')throw new Error('Unsupported action');return {campaignId:a.campaignId,status:a.status};};
+const validateAction=a=>{
+ const campaignId=String(a?.campaignId||'');
+ if(!/^\d{5,20}$/.test(campaignId))throw new Error('Unsupported action');
+ const out={campaignId};
+ if(a?.status!==undefined){if(!['ACTIVE','PAUSED'].includes(a.status))throw new Error('Unsupported action');out.status=a.status;}
+ if(a?.dailyBudget!==undefined&&a?.dailyBudget!==null){const b=Number(a.dailyBudget);if(!Number.isInteger(b)||b<100||b>100000000)throw new Error('Unsupported action');out.dailyBudget=b;}
+ if(out.status===undefined&&out.dailyBudget===undefined)throw new Error('Unsupported action');
+ return out;};
 import {period} from '../../extension/core.mjs';
 export const reply=(status,body)=>Response.json(body,{status,headers:{'cache-control':'no-store','x-content-type-options':'nosniff'}});
 export function initialState(){return {connections:{},jobs:[],results:{}};}
