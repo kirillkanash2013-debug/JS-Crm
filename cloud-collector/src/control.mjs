@@ -65,6 +65,9 @@ export class Control {
    // server (not the client) and an immediate first collection. The plugin only
    // forwards credentials — it never sends a schedule or a collection job.
    const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()+DEFAULT_SCHEDULE_MINUTES*60000},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
+   // Re-arm the one-time "collected" notification for this (re)connection, so the
+   // fresh card gets its "✅ loaded" update even if the social was announced before.
+   if(this.state.announced)delete this.state.announced[c.userId];
    const date=new Date().toISOString().slice(0,10);this.enqueue({userId:c.userId,since:date,until:date});
    await this.persist();return reply(201,{userId:c.userId,label:conn.label,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
