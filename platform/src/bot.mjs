@@ -25,6 +25,7 @@ const INVITE_ERRORS = {
   expired: '❌ Срок действия кода истёк. Попросите новый.'
 };
 const TIMEZONES = ['Europe/Minsk', 'Europe/Moscow', 'Europe/Kyiv', 'Asia/Almaty', 'Asia/Tbilisi', 'UTC'];
+const KEITARO_TIMEZONE_HELP = 'Откройте Keitaro → меню пользователя в правом верхнем углу → «Профиль» → поле «Часовой пояс».\n\nОтправьте сюда название пояса из этого поля, например <code>Europe/Kyiv</code>, без части <code>(GMT+03:00)</code>.';
 const planName = id => PLANS[id]?.name || id;
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const validTimezone = tz => { try { new Intl.DateTimeFormat('ru', {timeZone: tz}); return true; } catch { return false; } };
@@ -162,7 +163,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await store.setChat(chatId, tenantId, 'timezone');
     const rows = [];
     for (let i = 0; i < TIMEZONES.length; i += 2) rows.push(TIMEZONES.slice(i, i + 2).map(tz => ({text: tz, callback_data: 'tz:' + tz})));
-    await send(chatId, '🕒 <b>Шаг 3 из 3 — часовой пояс</b>\n\nВ нём считаются «сегодня» и «вчера»; сутки меняются в 00:00. ' + (s.keitaroKeyEnc ? 'Keitaro не отдал пояс профиля через API. Откройте Keitaro → Профиль → часовой пояс и укажите здесь тот же пояс. ' : '') + 'Выберите или напишите, например <code>Asia/Dubai</code>.', {inline_keyboard: rows});
+    await send(chatId, '🕒 <b>Шаг 3 из 3 — часовой пояс</b>\n\nВ нём считаются «сегодня» и «вчера»; сутки меняются в 00:00. ' + (s.keitaroKeyEnc ? KEITARO_TIMEZONE_HELP + '\n\n' : '') + 'Выберите или напишите, например <code>Asia/Dubai</code>.', {inline_keyboard: rows});
   }
 
   // Which Keitaro sub_id carries the Facebook campaign id — the join key for
@@ -737,7 +738,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       return showProfile(chatId, tenant.id);
     }
     if (!menuHit && chat.state === 'profile_timezone') {
-      if (!validTimezone(text)) return send(chatId, 'Укажите часовой пояс из профиля Keitaro, например <code>Europe/Minsk</code>.');
+      if (!validTimezone(text)) return send(chatId, 'Не удалось распознать часовой пояс.\n\n' + KEITARO_TIMEZONE_HELP);
       await store.saveSettings(tenant.id, {timezone: text});
       await store.setChat(chatId, tenant.id, 'ready');
       return showProfile(chatId, tenant.id);
@@ -862,11 +863,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
         return edit(chatId, mid, '✅ Часовой пояс Keitaro: <b>' + esc(tz) + '</b>. Смена отчётных суток — 00:00.', {inline_keyboard: [[{text: 'Указать другой пояс', callback_data: 'pr:tz:manual'}], [{text: '↩️ Назад', callback_data: 'pr:main'}]]});
       }
       await store.setChat(chatId, chat.tenantId, 'profile_timezone');
-      return send(chatId, 'Keitaro не отдал пояс профиля через API. Укажите часовой пояс из Keitaro → Профиль, например <code>Europe/Minsk</code>. Текущий пояс сохраняется, пока вы не введёте новый.');
+      return send(chatId, '🕒 <b>Часовой пояс Keitaro</b>\n\n' + KEITARO_TIMEZONE_HELP);
     }
     if (data === 'pr:tz:manual') {
       await store.setChat(chatId, chat.tenantId, 'profile_timezone');
-      return send(chatId, 'Введите часовой пояс из профиля Keitaro, например <code>Europe/Minsk</code>.');
+      return send(chatId, KEITARO_TIMEZONE_HELP);
     }
     if (data === 'pr:sub') { await store.setChat(chatId, chat.tenantId, 'profile_sub'); return send(chatId, '🔗 Введите номер <b>sub_id</b> (1–6), в котором лежит ID кампании Facebook — например <code>4</code>:'); }
     if (data === 'pr:freq') { const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }

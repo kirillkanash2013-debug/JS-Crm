@@ -28,7 +28,7 @@ test('unavailable or invalid profile asks for same timezone as Keitaro without a
   const h=await setup(r);await h.say('4');
   assert.equal((await h.store.settings(h.tenant.id)).timezone,undefined);
   assert.equal((await h.store.chat(1)).state,'timezone');
-  assert.match(h.sent.at(-1).text,/Keitaro.*не отдал/);
+  assert.match(h.sent.at(-1).text,/Keitaro → меню пользователя.*«Профиль»/);
   await h.say('Europe/Warsaw');
   assert.equal((await h.store.settings(h.tenant.id)).timezone,'Europe/Warsaw');
  }
