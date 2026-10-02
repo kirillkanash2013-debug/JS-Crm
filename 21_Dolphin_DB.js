@@ -4,8 +4,9 @@
 
 function writeCurrentDolphinDatabases_(context) {
   writeSocialsDb_(context.socials, context.updatedAt);
-  writeBmsDb_(context.businesses, context.socials, context.updatedAt);
-  writeCabsDb_(context.cabs, context.socials, context.updatedAt);
+  const bmStatuses = deriveBmStatusesFromCabs_(context.cabs);
+  writeBmsDb_(context.businesses, context.socials, context.updatedAt, bmStatuses);
+  writeCabsDb_(context.cabs, context.socials, context.updatedAt, bmStatuses);
   ensureAgentsFromSocials_(context.socials);
   updateStructureHistoryFromCurrentDb_();
 }
@@ -54,7 +55,43 @@ function writeSocialsDb_(socials, updatedAt) {
   });
 }
 
-function writeBmsDb_(businesses, socials, updatedAt) {
+/**
+ * Dolphin's business records carry no status field, so a BM's status is
+ * derived from its current ad accounts: any ACTIVE account wins, then POLICY,
+ * then DISABLED when every account is closed or disabled.
+ */
+function deriveBmStatusesFromCabs_(cabs) {
+  const byBm = {};
+  (cabs || []).forEach(function (cab) {
+    const bmId = String(cab._resolved_bm_id || '');
+    if (!bmId) return;
+    (byBm[bmId] = byBm[bmId] || []).push(getCabStatus_(cab));
+  });
+  const result = {};
+  Object.keys(byBm).forEach(function (bmId) {
+    result[bmId] = summarizeBmStatus_(byBm[bmId]);
+  });
+  return result;
+}
+
+function summarizeBmStatus_(cabStatuses) {
+  const statuses = cabStatuses || [];
+  if (statuses.indexOf('ACTIVE') >= 0) return 'ACTIVE';
+  if (statuses.indexOf('POLICY') >= 0) return 'POLICY';
+  const closed = ['DISABLED', 'CLOSED', 'PENDING_CLOSURE'];
+  if (statuses.length && statuses.every(function (s) { return closed.indexOf(s) >= 0; })) {
+    return 'DISABLED';
+  }
+  return 'UNKNOWN';
+}
+
+function resolveBmStatus_(bmId, sourceStatus, derivedStatuses) {
+  const status = String(sourceStatus || '');
+  if (status && status !== 'UNKNOWN') return status;
+  return (derivedStatuses || {})[String(bmId || '')] || 'UNKNOWN';
+}
+
+function writeBmsDb_(businesses, socials, updatedAt, bmStatuses) {
   const headers = [
     'BM ID',
     'BM Name',
@@ -71,7 +108,7 @@ function writeBmsDb_(businesses, socials, updatedAt) {
       getBusinessId_(bm),
       getBusinessName_(bm),
       socialId,
-      getBusinessStatus_(bm),
+      resolveBmStatus_(getBusinessId_(bm), getBusinessStatus_(bm), bmStatuses),
       updatedAt
     ];
   });
@@ -81,7 +118,7 @@ function writeBmsDb_(businesses, socials, updatedAt) {
   });
 }
 
-function writeCabsDb_(cabs, socials, updatedAt) {
+function writeCabsDb_(cabs, socials, updatedAt, bmStatuses) {
   const headers = [
     'Account ID',
     'Cabinet',
@@ -140,7 +177,7 @@ function writeCabsDb_(cabs, socials, updatedAt) {
       social.status,
       String(cab._resolved_bm_id || ''),
       String(cab._resolved_bm_name || ''),
-      String(cab._resolved_bm_status || 'UNKNOWN'),
+      resolveBmStatus_(cab._resolved_bm_id, cab._resolved_bm_status, bmStatuses),
       cabStatus,
       sixMonthSpend,
       frozen,
@@ -304,7 +341,12 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
     'Campaign',
     'Spend',
     'Campaign Status Raw',
-    'Campaign Status'
+    'Campaign Status',
+    'Daily Budget',
+    'Budget Remaining',
+    'Active Ads',
+    'Error Ads',
+    'Warning Ads'
   ];
 
   const cabMap = buildCabMap_(context.cabs);
@@ -316,6 +358,7 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
     const accountId = getCampaignAccountId_(campaign);
     const cab = cabMap[accountId] || campaign.cab || {};
     const social = getSocialMetaFromCab_(cab, context.socials);
+    const ads = getCampaignAdCounts_(campaign);
 
     rows.push([
       getToday_(),
@@ -327,13 +370,19 @@ function writeFbCampaignsTodayDb_(campaigns, context) {
       String(campaign.name || ''),
       spend,
       getCampaignRawStatus_(campaign),
-      getCampaignStatus_(campaign)
+      getCampaignStatus_(campaign),
+      getCampaignDailyBudget_(campaign),
+      getCampaignBudgetRemaining_(campaign),
+      ads.active,
+      ads.error,
+      ads.warning
     ]);
   });
 
   writeDbSheet_(SHEETS.DB_CAMPAIGNS_TODAY, headers, rows, {
     textColumns: [3, 5, 6, 9, 10],
-    numberColumns: [8]
+    numberColumns: [8, 11, 12],
+    integerColumns: [13, 14, 15]
   });
 }
 

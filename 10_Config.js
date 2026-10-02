@@ -15,11 +15,6 @@ const CONFIG = Object.freeze({
   DOLPHIN_SYNC_MAX_ATTEMPTS: 20,
   PAGE_SIZE: 100,
 
-  // Stable Apps Script web-app deployment used by the Telegram webhook.
-  // Future releases update this deployment instead of creating a new URL.
-  TELEGRAM_WEBAPP_DEPLOYMENT_ID: 'AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA',
-  TELEGRAM_WORKER_URL: 'https://js-crm-telegram.kirill-kanash2013.workers.dev',
-
   STRUCTURE_AGENTS: ['Farm', 'Fun', '2B'],
   GEO_TOKEN_PATTERN: '^[A-Z]{2}(?:\\+[A-Z]{2})*$'
 });
@@ -74,3 +69,48 @@ const STORAGE_SPREADSHEET_IDS = Object.freeze({
   ACCOUNTS: '17UCocPcoStjoPDxDQJiDyc2lHZG5FCIcwr6SjYeJYKA',
   LOGS: '1j1-f_kB8gTBkd3DKgDhY3EHVsdJ1ZhL0Tk1IxaRRa7M'
 });
+
+/**
+ * Deployment environments. One codebase is pushed to two Apps Script
+ * projects; the running script ID selects its spreadsheet and Telegram setup.
+ * - prod:   the working CRM (deployed from main).
+ * - claude: the sandbox copy in the "Claude" Drive folder (deployed from
+ *           claude-code).
+ */
+const CRM_ENVIRONMENTS = Object.freeze({
+  '1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd': Object.freeze({
+    name: 'prod',
+    storage: STORAGE_SPREADSHEET_IDS,
+    // Stable Apps Script web-app deployment used by the Telegram webhook.
+    // Future releases update this deployment instead of creating a new URL.
+    telegramWebappDeploymentId: 'AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA',
+    telegramWorkerUrl: 'https://js-crm-telegram.kirill-kanash2013.workers.dev',
+    devEndpoint: false
+  }),
+  '1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP': Object.freeze({
+    name: 'claude',
+    // Same split as prod: dashboard spreadsheet plus separate source databases.
+    storage: Object.freeze({
+      CRM: '1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs',
+      FB: '1r0z6Ptgvtki2rl3YDRiMUuyZe0IUTnMb3mGuQcv3dYg',
+      KEITARO: '1OYHFRkGhICso_wxRIPhkoZoZ_V3DiWvw569lhEQwSpM',
+      ACCOUNTS: '1vvIUEF3lCCGDrnipsJxE_JSCkzfBDpvxFHuvQeGPZDw',
+      LOGS: '1mFvZ7NDxg7iIBaE6y3HkssMDnTYv-HtOR7EgaP7P-s8'
+    }),
+    // Instant delivery via the sandbox's own Cloudflare Worker; Apps Script
+    // deployment id lets the webhook fall back to /exec if the worker is down.
+    telegramWebappDeploymentId: 'AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ',
+    telegramWorkerUrl: 'https://js-crm-telegram-claude.kirill-kanash2013.workers.dev',
+    devEndpoint: true
+  })
+});
+
+function getCrmEnv_() {
+  const env = CRM_ENVIRONMENTS[ScriptApp.getScriptId()];
+  if (!env) throw new Error('Unknown CRM environment for this Apps Script project');
+  return env;
+}
+
+function getStorageIds_() {
+  return getCrmEnv_().storage;
+}

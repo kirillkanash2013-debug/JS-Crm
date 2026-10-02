@@ -2,6 +2,11 @@
  * Telegram operational panel. Secrets are stored only in Script Properties.
  */
 
+// Section icons in one place. Keitaro and Meta have no Unicode brand emoji, so
+// these are stand-ins; swap for custom emoji later if needed.
+const TELEGRAM_ICON_KEITARO = '🎯';
+const TELEGRAM_ICON_META = 'Ⓜ️';
+
 function isTelegramConfigured_() {
   const p = PropertiesService.getScriptProperties();
   return Boolean(p.getProperty(SCRIPT_PROPERTIES.TELEGRAM_BOT_TOKEN) &&
@@ -21,8 +26,9 @@ function telegramApi_(method, payload) {
 
 function telegramMenu_() {
   return {keyboard: [
-    [{text: '📊 Сегодня'}, {text: '🎯 Офферы'}],
-    [{text: '📣 Кампании'}, {text: '🔀 Потоки'}],
+    [{text: '📊 Сейчас'}, {text: '🎯 Офферы'}],
+    [{text: TELEGRAM_ICON_META + ' Компании'}, {text: TELEGRAM_ICON_KEITARO + ' Кейтаро'}],
+    [{text: '🔀 Потоки'}],
     [{text: '🔄 Обновить'}, {text: '❌ Отмена'}],
     [{text: '❓ Помощь'}]
   ], resize_keyboard: true, is_persistent: true};
@@ -61,7 +67,7 @@ function processTelegramUpdates_() {
   if (!isTelegramConfigured_()) return;
   const p = PropertiesService.getScriptProperties();
   if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING' &&
-      String(CONFIG.TELEGRAM_WORKER_URL || '').trim()) {
+      String(getCrmEnv_().telegramWorkerUrl || '').trim()) {
     try {
       if (ensureTelegramWebhook_()) return;
     } catch (error) {
@@ -86,7 +92,8 @@ function processTelegramUpdates_() {
     try {
       if (update.callback_query) {
         telegramAnswerCallbackSafe_(update.callback_query.id);
-        telegramCommand_(chatId, String(update.callback_query.data || ''));
+        telegramCommand_(chatId, String(update.callback_query.data || ''),
+          {messageId: update.callback_query.message && update.callback_query.message.message_id});
       } else {
         telegramCommand_(chatId, String(update.message && update.message.text || ''));
       }
@@ -98,6 +105,7 @@ function processTelegramUpdates_() {
 }
 
 function doPost(e) {
+  if (e && e.parameter && e.parameter.dev) return handleDevRequest_(e);
   const p = PropertiesService.getScriptProperties();
   const secret = String(p.getProperty('TELEGRAM_WEBHOOK_SECRET') || '');
   if (!secret || !e || !e.parameter || String(e.parameter.secret || '') !== secret) {
@@ -119,7 +127,10 @@ function doPost(e) {
       }
       telegramCommand_(chatId, String(update.callback_query
         ? update.callback_query.data || ''
-        : update.message && update.message.text || ''));
+        : update.message && update.message.text || ''),
+        update.callback_query
+          ? {messageId: update.callback_query.message && update.callback_query.message.message_id}
+          : null);
     }
   } catch (error) {
     logError_('Telegram webhook', error);
@@ -189,7 +200,9 @@ function processTelegramWebhookQueue_() {
 function ensureTelegramWebhook_() {
   if (!isTelegramConfigured_()) return false;
   const p = PropertiesService.getScriptProperties();
-  const workerUrl = String(CONFIG.TELEGRAM_WORKER_URL || '').replace(/\/$/, '');
+  const workerUrl = String(getCrmEnv_().telegramWorkerUrl || '').replace(/\/$/, '');
+  // An environment without a webhook endpoint (the Claude sandbox) always polls.
+  if (!workerUrl && !getCrmEnv_().telegramWebappDeploymentId) return false;
   if (p.getProperty('TELEGRAM_DELIVERY_MODE') === 'POLLING' && !workerUrl) return false;
   const currentInfoResponse = telegramApi_('getWebhookInfo', {});
   const currentInfo = currentInfoResponse && currentInfoResponse.result || {};
@@ -206,7 +219,7 @@ function ensureTelegramWebhook_() {
     secret = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
     p.setProperty('TELEGRAM_WEBHOOK_SECRET', secret);
   }
-  const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
+  const deploymentId = String(getCrmEnv_().telegramWebappDeploymentId || '').trim();
   const baseUrl = deploymentId
     ? 'https://script.google.com/macros/s/' + deploymentId + '/exec'
     : ScriptApp.getService().getUrl();
@@ -263,8 +276,8 @@ function testTelegramWebhookRoundTrip() {
   const p = PropertiesService.getScriptProperties();
   const secret = getRequiredScriptProperty_('TELEGRAM_WEBHOOK_SECRET');
   const chatId = getRequiredScriptProperty_(SCRIPT_PROPERTIES.TELEGRAM_CHAT_ID);
-  const workerUrl = String(CONFIG.TELEGRAM_WORKER_URL || '').replace(/\/$/, '');
-  const deploymentId = String(CONFIG.TELEGRAM_WEBAPP_DEPLOYMENT_ID || '').trim();
+  const workerUrl = String(getCrmEnv_().telegramWorkerUrl || '').replace(/\/$/, '');
+  const deploymentId = String(getCrmEnv_().telegramWebappDeploymentId || '').trim();
   if (!workerUrl && !deploymentId) throw new Error('Telegram webhook endpoint is not configured');
   const testUrl = workerUrl
     ? workerUrl + '/' + encodeURIComponent(secret)
@@ -286,6 +299,7 @@ function testTelegramWebhookRoundTrip() {
 
 function runTelegramWorkerSmokeTestOnce_() {
   const p = PropertiesService.getScriptProperties();
+  if (!getCrmEnv_().telegramWorkerUrl) return true;
   const version = 'cloudflare-v1';
   if (p.getProperty('TELEGRAM_WORKER_SMOKE_TESTED') === version) return true;
   const result = testTelegramWebhookRoundTrip();
@@ -302,8 +316,22 @@ function telegramUpdateChatId_(update) {
   return '';
 }
 
-function telegramCommand_(chatId, command) {
+function telegramCommand_(chatId, command, context) {
   const value = String(command || '').trim();
+  // Management drill-down (campaigns → adsets → ads) owns its own callbacks,
+  // and while it waits for a typed number/value it intercepts plain text.
+  if (value.indexOf('mng:') === 0) {
+    manageCallback_(chatId, value.substring(4), context || {});
+    return;
+  }
+  if (value.indexOf('kt:') === 0) {
+    keitaroCallback_(chatId, value.substring(3), context || {});
+    return;
+  }
+  if (!/^[\/📊🎯🔀🔄❌❓Ⓜ️♾️📘]/.test(value) &&
+      (manageHandlePendingInput_(chatId, value) || keitaroHandlePendingInput_(chatId, value))) {
+    return;
+  }
   if (value === '/health') {
     telegramSend_(chatId, '✅ Бот подключён. Команды принимаются мгновенно.', telegramMenu_());
     return;
@@ -316,16 +344,24 @@ function telegramCommand_(chatId, command) {
       telegramMenu_());
     return;
   }
-  if (value === '/today' || value === '📊 Сегодня') {
+  if (value === '/today' || value === '/now' || value === '📊 Сейчас' || value === '📊 Сегодня') {
     telegramSend_(chatId, telegramToday_(), telegramMenu_());
+    return;
+  }
+  if (value === '/keitaro' || value === TELEGRAM_ICON_KEITARO + ' Кейтаро') {
+    keitaroOpen_(chatId);
     return;
   }
   if (value === '/offers' || value === '🎯 Офферы') {
     telegramSend_(chatId, telegramOffers_(), telegramMenu_());
     return;
   }
-  if (value === '/campaigns' || value === '/flows' ||
-      value === '📣 Кампании' || value === '🔀 Потоки') {
+  if (value === '/campaigns' || value === TELEGRAM_ICON_META + ' Компании' ||
+      value === '📣 Кампании') {
+    manageOpenCampaigns_(chatId);
+    return;
+  }
+  if (value === '/flows' || value === '🔀 Потоки') {
     telegramCampaignButtons_(chatId);
     return;
   }
@@ -432,55 +468,270 @@ function runQueuedTelegramRefresh_() {
   }
 }
 
+/**
+ * "Сейчас" — the operational snapshot.
+ *
+ * A deposit is counted as today's when its click happened today; a sale whose
+ * click was on an earlier day is a "долёт" (delayed conversion), even if its
+ * campaign also spends today. долёты are folded into the bracketed Rev/ROI so
+ * both the fresh-traffic picture and the whole-day picture are visible.
+ */
 function telegramToday_() {
-  const sheet = getOrCreateSheet_(SHEETS.ALL_TODAY);
-  const headers = sheet.getLastRow() >= 1
-    ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : [];
-  const allRows = sheet.getLastRow() >= 2
-    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues() : [];
-  const h = headers.map(function (x) { return String(x || '').trim().toLowerCase(); });
-  function col(name) { return h.indexOf(name); }
-  const c = {spend: col('spend'), inst: col('inst'), reg: col('reg'),
-    dep: col('ftd'), revenue: col('revenue'), time: col('время'), date: col('дата')};
-  const today = getToday_();
-  const todayRows = allRows.filter(function (row) {
-    return c.date >= 0 && normalizeDateKey_(row[c.date]) === today;
-  });
-  const rows = filterLatestTodaySnapshotRows_(headers, todayRows);
-  const t = rows.reduce(function (a, row) {
-    ['spend', 'inst', 'reg', 'dep', 'revenue'].forEach(function (key) {
-      if (c[key] >= 0) a[key] += num_(row[c[key]]);
-    });
-    return a;
-  }, {spend: 0, inst: 0, reg: 0, dep: 0, revenue: 0});
+  const campaigns = readTodayCampaignState_();
+  const keitaro = readTodayKeitaroByCampaign_();
+  if (!campaigns.list.length && !keitaro.any) {
+    return '<b>📊 Сейчас</b>\nДанных за текущие сутки пока нет.';
+  }
 
-  // Spend belongs to Meta/FB, but the conversion funnel belongs to Keitaro.
-  // ALL Today intentionally contains only rows joined to an FB campaign. Using
-  // it for Revenue loses delayed conversions and legacy traffic whose sub4 is
-  // blank or still contains an unexpanded macro such as {sub_id_4}.
-  const keitaroTotals = getTelegramKeitaroTodayTotals_();
-  if (keitaroTotals.hasData) {
-    t.inst = keitaroTotals.inst;
-    t.reg = keitaroTotals.reg;
-    t.dep = keitaroTotals.dep;
-    t.revenue = keitaroTotals.revenue;
+  const spendIds = campaigns.spendIds;
+  const base = {spend: 0, inst: 0, reg: 0, dep: 0, rev: 0};
+  const dolet = {dep: 0, rev: 0};
+  campaigns.list.forEach(function (c) { base.spend += c.spend; });
+  // Clicks/registrations come from the campaign report (spend campaigns).
+  Object.keys(keitaro.byId).forEach(function (id) {
+    if (!spendIds[id]) return;
+    const m = keitaro.byId[id];
+    base.inst += m.inst; base.reg += m.reg;
+  });
+  // A fresh deposit = clicked today AND on a campaign that spends today.
+  // Everything else (click on an earlier day, or a campaign with no spend) is долёт.
+  const deposits = readTodayDepositsByClick_(spendIds);
+  base.dep = deposits.today.dep; base.rev = deposits.today.rev;
+  dolet.dep = deposits.dolet.dep; dolet.rev = deposits.dolet.rev;
+
+  const roiBase = base.spend > 0 ? (base.rev - base.spend) / base.spend * 100 : 0;
+  const revAll = base.rev + dolet.rev;
+  const roiAll = base.spend > 0 ? (revAll - base.spend) / base.spend * 100 : 0;
+
+  const out = ['<b>📊 Сейчас · ' + escapeHtml_(formatTelegramDate_(getToday_())) + '</b>',
+    '<i>Dolphin ' + escapeHtml_(campaigns.time || '—') +
+      ' · Keitaro ' + escapeHtml_(keitaro.time || '—') + '</i>', '',
+    'Spend <b>$' + base.spend.toFixed(2) + '</b>',
+    'Inst <b>' + Math.round(base.inst) + '</b> · Reg <b>' + Math.round(base.reg) + '</b>',
+    'Dep <b>' + Math.round(base.dep) + '</b>' + (dolet.dep ? ' +' + Math.round(dolet.dep) + ' долёт' : ''),
+    'Rev <b>$' + base.rev.toFixed(2) + '</b>' + (dolet.rev ? ' → <b>$' + revAll.toFixed(2) + '</b>' : ''),
+    'ROI <b>' + Math.round(roiBase) + '%</b>' + (dolet.rev ? ' → <b>' + Math.round(roiAll) + '%</b>' : '')];
+
+  const geoBlock = telegramNowGeoBlock_(campaigns.spendIds, campaigns.geoById);
+  if (geoBlock.length) out.push('', geoBlock.join('\n'));
+
+  const cardMetrics = getTodayCampaignCardMetrics_(spendIds);
+  const campBlock = telegramNowCampaignsBlock_(campaigns.list, cardMetrics);
+  if (campBlock.length) out.push('', TELEGRAM_ICON_META + ' <b>Кампании сейчас:</b>', campBlock.join('\n\n'));
+
+  return out.join('\n');
+}
+
+/** Per-campaign spend, status and budget from today's FB DB. */
+function readTodayCampaignState_() {
+  const sheet = getOrCreateSheet_(SHEETS.DB_CAMPAIGNS_TODAY);
+  const result = {list: [], spendIds: {}, geoById: {}, time: ''};
+  if (sheet.getLastRow() < 2) return result;
+  const width = Math.max(sheet.getLastColumn(), 15);
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  values.forEach(function (row) {
+    const id = String(row[5] || '');
+    const name = String(row[6] || '');
+    const spend = num_(row[7]);
+    const status = String(row[9] || 'UNKNOWN');
+    const item = {id: id, name: name, spend: spend,
+      statusRaw: String(row[8] || ''), status: status,
+      budget: num_(row[10]), remaining: row[11], geo: parseGeoFromCampaign_(name),
+      activeAds: num_(row[12]), errorAds: num_(row[13]), warningAds: num_(row[14])};
+    const updated = String(row[1] || '');
+    if (updated > result.time) result.time = updated;
+    if (spend > 0) {
+      result.list.push(item);
+      if (id) {
+        result.spendIds[id] = true;
+        if (item.geo) result.geoById[id] = item.geo;
+      }
+    } else if (status === 'ACTIVE') {
+      // Freshly launched, still waiting for spend.
+      result.list.push(item);
+    }
+  });
+  result.time = formatTelegramTime_(result.time);
+  return result;
+}
+
+/**
+ * Splits today's sale conversions into fresh (click today) and долёт (click on
+ * an earlier day) using the conversion log's Click At column.
+ */
+function readTodayDepositsByClick_(spendIds) {
+  const result = {today: {dep: 0, rev: 0}, dolet: {dep: 0, rev: 0}, byCampaign: {}};
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_CONVERSIONS_TODAY);
+  if (sheet.getLastRow() < 2) return result;
+  const headers = getKeitaroConversionHeaders_();
+  const statusIdx = headers.indexOf('Status');
+  const revIdx = headers.indexOf('Revenue');
+  const clickIdx = headers.indexOf('Click At');
+  const campaignIdx = headers.indexOf('FB Campaign ID');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  const today = getToday_();
+  const seen = {};
+  rows.forEach(function (row) {
+    if (String(row[statusIdx] || '').toLowerCase() !== 'sale') return;
+    const key = String(row[2] || '');
+    if (key && seen[key]) return;
+    if (key) seen[key] = true;
+    const id = String(row[campaignIdx] || '');
+    const clickedToday = normalizeDateKey_(row[clickIdx]) === today;
+    const fresh = clickedToday && Boolean(spendIds && spendIds[id]);
+    const bucket = fresh ? result.today : result.dolet;
+    bucket.dep += 1;
+    bucket.rev += num_(row[revIdx]);
+    const c = result.byCampaign[id] || (result.byCampaign[id] = {today: 0, dolet: 0, todayRev: 0, doletRev: 0});
+    const rev = num_(row[revIdx]);
+    if (fresh) { c.today += 1; c.todayRev += rev; } else { c.dolet += 1; c.doletRev += rev; }
+  });
+  return result;
+}
+
+/**
+ * Per-campaign card metrics: clicks/regs from the report, but deposits and
+ * revenue counted as TODAY's (click today on a spend campaign), matching the
+ * top block. долёт is kept separately for callers that want to show it.
+ */
+function getTodayCampaignCardMetrics_(spendIds) {
+  const rep = readTodayKeitaroByCampaign_().byId;
+  const dep = readTodayDepositsByClick_(spendIds).byCampaign;
+  const out = {};
+  Object.keys(rep).forEach(function (id) {
+    out[id] = {inst: rep[id].inst, reg: rep[id].reg, dep: 0, rev: 0, dolet: 0, doletRev: 0};
+  });
+  Object.keys(dep).forEach(function (id) {
+    const o = out[id] || (out[id] = {inst: 0, reg: 0, dep: 0, rev: 0, dolet: 0, doletRev: 0});
+    o.dep = dep[id].today; o.rev = dep[id].todayRev;
+    o.dolet = dep[id].dolet; o.doletRev = dep[id].doletRev;
+  });
+  return out;
+}
+
+/** Keitaro today metrics aggregated per FB campaign id. */
+function readTodayKeitaroByCampaign_() {
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  const result = {byId: {}, any: false};
+  if (sheet.getLastRow() < 2) return result;
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+  let time = '';
+  rows.forEach(function (row) {
+    result.any = true;
+    if (String(row[1] || '') > time) time = String(row[1] || '');
+    const id = String(row[4] || '');
+    const m = result.byId[id] || (result.byId[id] = {inst: 0, reg: 0, dep: 0, rev: 0});
+    m.inst += num_(row[6]);
+    m.reg += num_(row[7]);
+    m.dep += num_(row[8]);
+    m.rev += num_(row[9]);
+  });
+  result.time = formatTelegramTime_(time);
+  return result;
+}
+
+/**
+ * Offers per GEO, built only from Keitaro traffic on campaigns that spent
+ * today, so an offer that only received долёт traffic never appears here.
+ * GEO comes from the FB campaign (its spend), not from the Keitaro row.
+ */
+function telegramNowGeoBlock_(spendIds, geoById) {
+  const geos = {};
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  if (sheet.getLastRow() >= 2) {
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+    rows.forEach(function (row) {
+      const id = String(row[4] || '');
+      if (!spendIds[id]) return;
+      const geo = geoById[id];
+      if (!geo) return;
+      const offer = String(row[12] || '').trim();
+      if (!offer) return;
+      const offerId = String(row[11] || '').trim();
+      const key = offerId || offer;
+      const bucket = geos[geo] || (geos[geo] = {});
+      const o = bucket[key] || (bucket[key] = {offerId: offerId, offer: offer, inst: 0, reg: 0, dep: 0, rev: 0});
+      o.inst += num_(row[6]); o.reg += num_(row[7]); o.dep += num_(row[8]); o.rev += num_(row[9]);
+    });
   }
-  const hasFbData = rows.length > 0;
-  if (!hasFbData && !keitaroTotals.hasData) {
-    return '<b>📊 Сегодня</b>\nДанных за текущие сутки пока нет.';
+  const out = [];
+  Object.keys(geos).sort().forEach(function (geo) {
+    const offers = Object.keys(geos[geo]).map(function (k) { return geos[geo][k]; })
+      // Same threshold as the offers dashboard: a single install is долёт noise.
+      .filter(function (o) { return o.inst > 1; })
+      .sort(function (a, b) { return b.inst - a.inst; });
+    if (!offers.length) return;
+    out.push(TELEGRAM_ICON_KEITARO + ' <b>' + escapeHtml_(geo) + '</b>');
+    offers.forEach(function (o) {
+      out.push((o.offerId ? '<code>' + escapeHtml_(o.offerId) + '</code> ' : '') +
+        escapeHtml_(telegramOfferName_(o.offer)) +
+        ' · ' + Math.round(o.inst) + ' - ' + Math.round(o.reg) + ' - ' + Math.round(o.dep) +
+        ' · $' + safeDiv_(o.rev, o.inst).toFixed(2));
+    });
+  });
+  return out;
+}
+
+/**
+ * Offer label for one-line display. Offer naming differs per team, so the full
+ * name is kept as-is and only shortened to fit one line.
+ */
+function telegramOfferName_(offer) {
+  return telegramTrim_(offer, 40);
+}
+
+/** One systematic place to shorten long offer / campaign names for chat. */
+function telegramTrim_(text, max) {
+  const value = String(text || '').trim();
+  const limit = max || 32;
+  return value.length > limit ? value.slice(0, limit - 1).trim() + '…' : value;
+}
+
+/** Full "Компании" screen: every today campaign as a card, highest spend first. */
+function telegramCampaignsScreen_() {
+  const campaigns = readTodayCampaignState_();
+  const keitaro = readTodayKeitaroByCampaign_();
+  if (!campaigns.list.length) {
+    return TELEGRAM_ICON_META + ' <b>Компании</b>\nЗапущенных кампаний сейчас нет.';
   }
-  const roi = t.spend > 0 ? (t.revenue - t.spend) / t.spend * 100 : 0;
-  const time = rows.length && c.time >= 0
-    ? formatTelegramTime_(rows[0][c.time])
-    : formatTelegramTime_(keitaroTotals.updatedAt || '');
-  return ['<b>📊 Сегодня' + (time ? ' · ' + escapeHtml_(time) : '') + '</b>', '',
-    hasFbData ? 'Spend: <b>$' + t.spend.toFixed(2) + '</b>' :
-      'Spend: <b>нет данных Dolphin за сегодня</b>',
-    'Inst: <b>' + Math.round(t.inst) + '</b>',
-    'Reg: <b>' + Math.round(t.reg) + '</b>',
-    'Dep: <b>' + Math.round(t.dep) + '</b>',
-    'Revenue: <b>$' + t.revenue.toFixed(2) + '</b>',
-    hasFbData ? 'ROI: <b>' + Math.round(roi) + '%</b>' : 'ROI: <b>—</b>'].join('\n');
+  const deposits = readTodayDepositsByClick_(campaigns.spendIds);
+  const sorted = campaigns.list.slice().sort(function (a, b) { return b.spend - a.spend; });
+  const cards = telegramNowCampaignsBlock_(sorted, keitaro.byId, deposits.byCampaign);
+  const header = TELEGRAM_ICON_META + ' <b>Компании · ' +
+    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>' +
+    (campaigns.time ? '\n<i>Dolphin ' + escapeHtml_(campaigns.time) + '</i>' : '');
+  return [header, '', cards.join('\n\n')].join('\n');
+}
+
+function telegramNowCampaignsBlock_(campaignList, metricsById) {
+  const lines = [];
+  campaignList.forEach(function (c) {
+    const on = c.status === 'ACTIVE';
+    // Show what we run and watch: anything active (working or waiting for
+    // spend) is green; a campaign that spent but is now off (killed) is red.
+    // Off campaigns with no spend are old junk and skipped.
+    if (!on && c.spend <= 0) return;
+    // Deposits/revenue are today's (fresh); долёты live in the top block.
+    const m = metricsById[c.id] || {inst: 0, reg: 0, dep: 0, rev: 0};
+    const roi = c.spend > 0 ? Math.round((m.rev - c.spend) / c.spend * 100) + '%' : '—';
+    // count / cost-per-unit for each funnel step.
+    function unit(count, spend) {
+      const per = count > 0 && spend > 0 ? '/' + safeDiv_(spend, count).toFixed(2) + '$' : '';
+      return Math.round(count) + per;
+    }
+    const mark = adHealthMark_(c.activeAds, c.errorAds, c.warningAds);
+    lines.push((on ? '🟢' : '🔴') + mark + ' ' + escapeHtml_(telegramTrim_(c.name || c.id, 40)) +
+      '\n💰' + num_(c.budget).toFixed(0) + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(m.rev) + '$' +
+      '\n' + unit(m.inst, c.spend) + ' - ' + unit(m.reg, c.spend) + ' - ' + unit(m.dep, c.spend) +
+      ' (' + roi + ')');
+  });
+  return lines.slice(0, 40);
+}
+
+function formatTelegramDate_(value) {
+  const key = normalizeDateKey_(value);
+  const parts = key.split('-');
+  return parts.length === 3 ? parts[2] + '.' + parts[1] + '.' + parts[0] : key;
 }
 
 function formatTelegramTime_(value) {
@@ -544,6 +795,32 @@ function aggregateTelegramKeitaroTotals_(headers, rows) {
     totals.revenue += num_(row[columns.revenue]);
     return totals;
   }, {hasData: true, inst: 0, reg: 0, dep: 0, revenue: 0});
+}
+
+/** Keitaro campaigns with their I - R - D for today. */
+function telegramKeitaroScreen_() {
+  const sheet = getOrCreateSheet_(SHEETS.DB_KEITARO_TODAY);
+  if (sheet.getLastRow() < 2) return TELEGRAM_ICON_KEITARO + ' <b>Кейтаро</b>\nДанных пока нет.';
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, getKeitaroHeaders_().length).getValues();
+  const byCampaign = {};
+  rows.forEach(function (row) {
+    const id = String(row[16] || '');
+    const name = String(row[17] || id);
+    const key = id || name;
+    const c = byCampaign[key] || (byCampaign[key] = {name: name, inst: 0, reg: 0, dep: 0});
+    c.inst += num_(row[6]); c.reg += num_(row[7]); c.dep += num_(row[8]);
+  });
+  const list = Object.keys(byCampaign).map(function (k) { return byCampaign[k]; })
+    .filter(function (c) { return c.inst > 0 || c.reg > 0 || c.dep > 0; })
+    .sort(function (a, b) { return b.inst - a.inst; });
+  const lines = [TELEGRAM_ICON_KEITARO + ' <b>Кейтаро · ' +
+    escapeHtml_(formatTelegramDate_(getToday_())) + '</b>', ''];
+  list.forEach(function (c) {
+    lines.push(escapeHtml_(telegramTrim_(c.name, 34)) +
+      '\n' + Math.round(c.inst) + ' - ' + Math.round(c.reg) + ' - ' + Math.round(c.dep));
+  });
+  if (!list.length) lines.push('Кампаний с трафиком сегодня нет.');
+  return lines.join('\n\n');
 }
 
 function telegramOffers_() {

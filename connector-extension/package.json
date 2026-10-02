@@ -1,0 +1,12 @@
+{
+  "name": "js-control-connector-extension",
+  "version": "0.8.8",
+  "private": true,
+  "description": "Build tooling for the JS Control connector extension. Ships a minified, comment-free bundle so the distributed code reveals nothing; all logic stays server-side.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "terser": "^5.36.0"
+  }
+}

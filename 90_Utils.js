@@ -57,22 +57,23 @@ function getOrCreateSheet_(name) {
 
 function getStorageSpreadsheetForSheet_(name) {
   const sheetName = String(name || '');
-  let id = STORAGE_SPREADSHEET_IDS.CRM;
+  const storage = getStorageIds_();
+  let id = storage.CRM;
 
   if (sheetName === SHEETS.DB_CAMPAIGNS_TODAY || sheetName === SHEETS.FB_HISTORY ||
       /^\[FB_History_/.test(sheetName)) {
-    id = STORAGE_SPREADSHEET_IDS.FB;
+    id = storage.FB;
   } else if (sheetName === SHEETS.DB_KEITARO_TODAY || sheetName === SHEETS.KEITARO_HISTORY ||
       sheetName === SHEETS.DB_KEITARO_CONVERSIONS_TODAY ||
       sheetName === SHEETS.KEITARO_CONVERSIONS_HISTORY ||
       /^\[Keitaro_History_/.test(sheetName)) {
-    id = STORAGE_SPREADSHEET_IDS.KEITARO;
+    id = storage.KEITARO;
   } else if ([SHEETS.DB_SOCIALS, SHEETS.DB_BMS, SHEETS.DB_CABS,
       SHEETS.DB_STRUCTURE_HISTORY, SHEETS.AGENTS].includes(sheetName) ||
       /^\[(ACCOUNT_EVENTS|ACCOUNTS_HISTORY)_/.test(sheetName)) {
-    id = STORAGE_SPREADSHEET_IDS.ACCOUNTS;
+    id = storage.ACCOUNTS;
   } else if (sheetName === SHEETS.LOG) {
-    id = STORAGE_SPREADSHEET_IDS.LOGS;
+    id = storage.LOGS;
   }
 
   return SpreadsheetApp.openById(id);
@@ -484,6 +485,44 @@ function getCampaignSpend_(campaign) {
     if (Number.isFinite(value)) return value;
   }
   return 0;
+}
+
+// Dolphin returns budgets in whole account-currency units (same scale as spend):
+// daily_budget - spend today == budget_remaining. lifetime_budget is 0 when a
+// daily budget is used.
+function getCampaignDailyBudget_(campaign) {
+  const daily = num_(campaign && campaign.daily_budget);
+  if (daily > 0) return daily;
+  return num_(campaign && campaign.lifetime_budget);
+}
+
+function getCampaignBudgetRemaining_(campaign) {
+  const remaining = campaign && campaign.budget_remaining;
+  if (remaining === undefined || remaining === null || remaining === '') return '';
+  return num_(remaining);
+}
+
+// Ad-status counts on a campaign or adset object; used to flag "!" when a unit
+// looks on but nothing is actually delivering (rejects / errors).
+function getCampaignAdCounts_(entity) {
+  return {
+    active: num_(entity && entity.active_status_ads_count),
+    error: num_(entity && entity.error_status_ads_count),
+    warning: num_(entity && entity.warning_status_ads_count)
+  };
+}
+
+/**
+ * Health of a unit that owns ads (campaign / adset):
+ *   ❗ — part rejected but ads still deliver (some active remain);
+ *   ⚠️ — everything is down (no active ads while some are rejected).
+ */
+function adHealthMark_(activeCount, errorCount, warningCount) {
+  const active = num_(activeCount);
+  const error = num_(errorCount);
+  if (error > 0 && active > 0) return '❗';
+  if (error > 0 && active === 0) return '⚠️';
+  return '';
 }
 
 function getCampaignAccountId_(campaign) {

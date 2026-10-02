@@ -1,0 +1,25 @@
+name: JS Control server checks
+on:
+  push:
+    branches: [claude-code]
+    paths: ['server/**', 'extension/**', '.github/workflows/server.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix server
+      - run: cd server && npx playwright install --with-deps chromium --only-shell
+      - run: node --test server/tests/*.test.mjs extension/tests/*.test.mjs
+        env:
+          REQUIRE_BROWSER: "1"
+      - run: docker build -f server/Dockerfile -t js-control-server:test .

@@ -1,0 +1,24 @@
+{
+  // Not deployed yet: create the D1 database and secrets first (see docs/SAAS-ACCESS.md).
+  "name": "js-control-platform",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "services": [{"binding":"KEITARO_BRIDGE","service":"js-control-collector-claude","entrypoint":"KeitaroBridge"}],
+  "d1_databases": [
+    {"binding": "DB", "database_name": "js-control-platform", "database_id": "2ea0f7c2-48b6-4f7e-892f-89eb637abf90", "migrations_dir": "migrations"}
+  ],
+  "vars": {
+    "PUBLIC_URL": "https://js-control-platform.kirill-kanash2013.workers.dev",
+    "PLUGIN_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev/extension",
+    "IMPORT_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev/import",
+    "COLLECTOR_URL": "https://js-control-collector-claude.kirill-kanash2013.workers.dev",
+    "BOT_USERNAME": "TestBossTrafBot",
+    "ADMIN_CHAT_IDS": "481573572",
+    "STARS_PRICE_START": "0",
+    "STARS_PRICE_TEAM": "0",
+    "STARS_PRICE_AGENCY": "0"
+  }
+  // Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET,
+  // BILLING_WEBHOOK_SECRET, MASTER_KEY (32 random bytes, base64).
+}

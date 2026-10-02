@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "JS Control — FB Connector",
+  "version": "0.7.0",
+  "minimum_chrome_version": "120",
+  "description": "Подключение Facebook к JS Control: локальная проверка и передача сессии серверному сборщику.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "alarms",
+    "webRequest"
+  ],
+  "optional_host_permissions": [
+    "https://graph.facebook.com/*",
+    "https://adsmanager.facebook.com/*",
+    "https://business.facebook.com/*",
+    "https://www.facebook.com/*",
+    "https://*.facebook.com/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "worker.mjs",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "JS Control",
+    "default_popup": "panel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
+  "optional_permissions": [
+    "cookies"
+  ]
+}

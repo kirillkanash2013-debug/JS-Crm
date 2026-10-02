@@ -1,0 +1,25 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>JS Control</title>
+<style>
+body{width:320px;margin:0;background:#0c111b;color:#edf2fa;font:14px system-ui}
+header{padding:14px 16px;border-bottom:1px solid #29364b;font-weight:800;color:#8fff8a;letter-spacing:1px}
+main{padding:16px}
+label{display:block;font-size:12px;color:#aab8cc;margin:10px 0 4px}
+input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #394c67;border-radius:8px;background:#0d1523;color:#fff;font:inherit}
+button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:8px;background:#8fff8a;color:#0c111b;font:700 14px system-ui;cursor:pointer}
+button:disabled{opacity:.5}
+.hint{font-size:11px;color:#8fa3bf;margin:8px 0 0}
+#status{margin-top:12px;font-size:13px;white-space:pre-wrap}
+.ok{color:#8fff8a}.err{color:#ff8b86}
+.ver{color:#55657a;font-size:10px;text-align:center;padding:6px}
+</style></head><body>
+<header>JS CONTROL</header>
+<main>
+<label for="key">Ключ доступа (из бота)</label>
+<input id="key" type="password" autocomplete="off" placeholder="jsi_… или js_srv_…">
+<button id="go">Подключить этот профиль</button>
+<label style="display:flex;gap:6px;align-items:center;margin-top:10px;color:#8fa3bf;font-size:12px"><input id="noproxy" type="checkbox" style="width:auto">Тест без прокси (разово, для диагностики)</label>
+<p class="hint">Откройте в этом профиле Ads Manager нужного соца и нажмите кнопку. Расширение само возьмёт токен, cookies и прокси и запустит сбор на сервере.</p>
+<div id="status" role="status"></div>
+</main>
+<div class="ver">v0.8.8</div>
+<script src="popup.js"></script></body></html>

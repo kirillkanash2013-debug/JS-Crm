@@ -1,9 +1,12 @@
-const GAS_WEBHOOK_URL =
+// Default (prod) Apps Script web-app; a per-worker GAS_WEBHOOK_URL var overrides
+// it so the same code serves both the prod and the Claude-sandbox worker.
+const DEFAULT_GAS_WEBHOOK_URL =
   'https://script.google.com/macros/s/AKfycbxHwc-vrZjEkD-7V0ud6RNA4132Xma_9VyS3TvjP-I1WfyWqMpU8paTkWPHhHRuB2OycA/exec';
 
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
+    const GAS_WEBHOOK_URL = (env && env.GAS_WEBHOOK_URL) || DEFAULT_GAS_WEBHOOK_URL;
 
     if (request.method === 'GET' && url.pathname === '/health') {
       return Response.json({ok: true, service: 'js-crm-telegram'});
