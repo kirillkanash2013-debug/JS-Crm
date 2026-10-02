@@ -15,6 +15,7 @@ export class BotNotify extends WorkerEntrypoint {
   }
   async socialConnected(tenantId, social) { try { await this.#bot().notifySocialConnected(String(tenantId), social || {}); } catch {} }
   async socialCollected(tenantId, social) { try { await this.#bot().notifySocialCollected(String(tenantId), social || {}); } catch {} }
+  async statsRefreshed(tenantId) { try { await this.#bot().notifyStatsRefresh(String(tenantId)); } catch {} }
 }
 
 export default worker;

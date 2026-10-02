@@ -36,12 +36,12 @@ export class D1Store {
   async chatForTenant(tenantId) { const r = await this.db.prepare('SELECT chat_id FROM chats WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 1').bind(tenantId).first(); return r ? r.chat_id : null; }
   async settings(tenantId) {
     const r = await this.db.prepare('SELECT * FROM settings WHERE tenant_id=?').bind(tenantId).first();
-    return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at} : {};
+    return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at, notifyOnUpdate: r.notify_on_update ? 1 : 0, refreshMinutes: r.refresh_minutes ?? null} : {};
   }
   async saveSettings(tenantId, patch) {
     const s = {...await this.settings(tenantId), ...patch};
-    await this.db.prepare('INSERT INTO settings (tenant_id,keitaro_url,keitaro_key_enc,keitaro_sub,timezone,currency,onboarded_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET keitaro_url=excluded.keitaro_url, keitaro_key_enc=excluded.keitaro_key_enc, keitaro_sub=excluded.keitaro_sub, timezone=excluded.timezone, currency=excluded.currency, onboarded_at=excluded.onboarded_at')
-      .bind(tenantId, s.keitaroUrl ?? null, s.keitaroKeyEnc ?? null, s.keitaroSub ?? null, s.timezone ?? null, s.currency ?? null, s.onboardedAt ?? null).run();
+    await this.db.prepare('INSERT INTO settings (tenant_id,keitaro_url,keitaro_key_enc,keitaro_sub,timezone,currency,onboarded_at,notify_on_update,refresh_minutes) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET keitaro_url=excluded.keitaro_url, keitaro_key_enc=excluded.keitaro_key_enc, keitaro_sub=excluded.keitaro_sub, timezone=excluded.timezone, currency=excluded.currency, onboarded_at=excluded.onboarded_at, notify_on_update=excluded.notify_on_update, refresh_minutes=excluded.refresh_minutes')
+      .bind(tenantId, s.keitaroUrl ?? null, s.keitaroKeyEnc ?? null, s.keitaroSub ?? null, s.timezone ?? null, s.currency ?? null, s.onboardedAt ?? null, s.notifyOnUpdate ? 1 : 0, s.refreshMinutes ?? null).run();
   }
   async payment(id) {
     const r = await this.db.prepare('SELECT tenant_id FROM payments WHERE id=?').bind(id).first();

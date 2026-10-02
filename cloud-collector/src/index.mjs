@@ -105,8 +105,12 @@ export class CollectorControl extends DurableObject {
  async alarm(){
   const works=[];
   for(let work;(work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare()));)works.push(work);
+  const collected=works.some(w=>!w.job?.action&&w.job?.kind!=='import');
   await Promise.all(works.map(async work=>{const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));}));
   await this.announcePending();
+  // Once per refresh cycle, let the bot send the fresh report (if the client
+  // turned that on). Fire-and-forget; the platform checks the setting.
+  if(collected&&this.env.PLATFORM&&this.control.state.tenantId){try{await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId);}catch{}}
  }
 }
 export default {

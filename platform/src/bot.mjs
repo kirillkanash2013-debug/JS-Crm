@@ -7,7 +7,17 @@ import {openSecret, sealSecret} from './secrets.mjs';
 import {aggregateKeitaro, buildNow} from './today.mjs';
 import {findToken} from './tokens.mjs';
 
-const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Кампании'}], [{text: '👥 Агенты'}, {text: '🧩 Подключить соц'}], [{text: '🔑 Ключ'}, {text: '💳 Подписка'}], [{text: '⚙️ Настройки'}]], resize_keyboard: true};
+const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Кампании'}], [{text: '👥 Агенты'}, {text: '🧩 Подключить соц'}], [{text: '👤 Профиль'}]], resize_keyboard: true};
+
+// Emoji legend — shown in «Профиль → Инструкции» and once after onboarding.
+const LEGEND = '🔣 <b>Обозначения в статистике</b>\n\n' +
+  '🟢 кампания в плюсе · 🔴 в минусе · ⏸ на паузе · ⚪ без расхода сегодня\n' +
+  '⚠️ есть ошибки в объявлениях\n\n' +
+  '💰 дневной бюджет · 💸 расход · 🤑 доход\n' +
+  'Строка кампании: <code>inst/CPI − reg/CPR − dep/CPA (ROI%)</code>\n\n' +
+  'Dep «+N долёт» — продажи сегодня по клику за прошлый день; учтены в прогнозе Rev/ROI (стрелка →)\n\n' +
+  '🎯 Офферы по GEO: <code>оффер · inst − reg − dep · $EPC</code>; EPC — доход на уник. клик\n\n' +
+  'В карточке соца: РК — кабинеты в БМ · БМ — бизнес-менеджеры · ФП — фан-пейджи';
 const INVITE_ERRORS = {
   invalid: '❌ Код не найден. Проверьте, что скопировали его полностью.',
   used: '❌ Этот код уже использован. Каждый код работает только один раз.',
@@ -211,26 +221,24 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     try { await tg('sendDocument', {chat_id: chatId, document: docUrl, caption: 'Расширение JS Control' + (ver ? ' v' + ver : '') + ' для антидетекта'}); } catch {}
   }
 
-  // The «Сейчас» report: FB spend ↔ Keitaro revenue/ROI, like the prod CRM.
-  async function showStats(chatId, tenantId) {
-    await notifyNewSocials(chatId, tenantId);
+  // Builds the «Сейчас» report text (FB spend ↔ Keitaro revenue/ROI). Returns
+  // null if no socials are connected. Shared by «📊 Статистика» and the optional
+  // push-on-update notification.
+  async function statsReportText(tenantId) {
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = (st && st.body && st.body.connections) || [];
-    if (!conns.length) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц — кнопка «🧩 Подключить соц».', MENU);
+    if (!conns.length) return null;
     const s = await store.settings(tenantId);
     const tz = s.timezone || 'UTC';
-    const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});                                   // YYYY-MM-DD в часовом поясе клиента
+    const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});
     const nowHHMM = new Date().toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'});
-    // Время последнего сбора данных с кабинетов FB (самый свежий среди соцов).
     const fbAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
     const fbTime = fbAt ? new Date(fbAt).toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'}) : '—';
-    // FB-кампании и расход за сегодня по всем подключённым соцам.
     const campaigns = [];
     for (const c of conns) {
       const r = await collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId));
       for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
     }
-    // Доход Keitaro (если настроен): ключ + индекс sub_id с id кампании FB.
     let keitaro = null, note = '';
     const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
     let key = null;
@@ -241,10 +249,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (res && res.result === 'ok') keitaro = aggregateKeitaro(res, {subIndex, day});
       else note = '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.';
     } else if (!origin || !key) {
-      note = '\n\n💡 Добавьте Keitaro в «⚙️ Настройки» — тогда увидите доход, прибыль и ROI.';
+      note = '\n\n💡 Подключите Keitaro в «👤 Профиль → Инструкции» — тогда увидите доход, прибыль и ROI.';
     }
-    const text = buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex});
-    await send(chatId, text + note, MENU);
+    return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note;
+  }
+
+  async function showStats(chatId, tenantId) {
+    await notifyNewSocials(chatId, tenantId);
+    const text = await statsReportText(tenantId);
+    if (!text) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц — кнопка «🧩 Подключить соц».', MENU);
+    await send(chatId, text, MENU);
   }
 
   // --- Agents: assign each connected social to a buyer for spend accounting ---
@@ -419,6 +433,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await store.setChat(chatId, tenantId, 'ready');
     await send(chatId, '✅ <b>Всё настроено!</b> Осталось подключить Facebook — инструкция ниже. После первого сбора данные появятся в «📊 Статистика».', MENU);
     await sendPluginKit(chatId, tenantId);
+    // First-run: show the legend and nudge to open today's report.
+    await send(chatId, LEGEND + '\n\nКак подключите хотя бы один соц — жмите «📊 Статистика», чтобы увидеть отчёт за сегодня.', MENU);
   }
 
   function pluginText() {
@@ -431,6 +447,47 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const status = isActive(tenant) ? '🟢 активна до ' + tenant.paidUntil : '🔴 истекла ' + tenant.paidUntil;
     await send(chatId, '💳 <b>Подписка ' + esc(planName(tenant.plan)) + '</b>\n' + status + '\nСоцов в тарифе: ' + tenant.socialLimit,
       starsEnabled() ? {inline_keyboard: [[{text: 'Продлить на 30 дней', callback_data: 'buy:' + tenant.plan}]]} : undefined);
+  }
+
+  // --- «👤 Профиль»: единый экран (подписка/ключ/инструкции/настройки) ---
+  const back = cb => ({inline_keyboard: [[{text: '↩️ Назад', callback_data: cb}]]});
+  const daysLeft = until => { if (!until) return 0; return Math.max(0, Math.ceil((Date.parse(until) - Date.now()) / 86400000)); };
+  async function currentKey(tenantId) {
+    const t = await store.tenant(tenantId);
+    if (t && t.integrationTokenEnc && env.MASTER_KEY) { try { return await openSecret(env.MASTER_KEY, tenantId, t.integrationTokenEnc); } catch {} }
+    return rotateIntegrationToken(store, tenantId, env.MASTER_KEY);
+  }
+  async function profileView(tenant) {
+    const text = '👤 <b>Профиль</b>\nПользователь: <b>' + esc(tenant.name || '—') + '</b>\n\n' +
+      '💳 Подписка: <b>Стандарт</b>\nДействует до: <b>' + esc(tenant.paidUntil || '—') + '</b>\nОсталось дней: <b>' + daysLeft(tenant.paidUntil) + '</b>';
+    return {text, markup: {inline_keyboard: [
+      [{text: '🔑 Ключ интеграции', callback_data: 'pr:key'}],
+      [{text: '📘 Инструкции', callback_data: 'pr:instr'}],
+      [{text: '🔀 Сменить тариф', callback_data: 'pr:plan'}],
+      [{text: '🔔 Уведомления', callback_data: 'pr:notify'}],
+      [{text: '🔗 sub_id кампании Keitaro', callback_data: 'pr:sub'}],
+      [{text: '⏱ Частота обновления', callback_data: 'pr:freq'}]
+    ]}};
+  }
+  async function showProfile(chatId, tenantId) {
+    const v = await profileView(await store.tenant(tenantId));
+    await send(chatId, v.text, v.markup);
+  }
+  async function notifyView(tenantId) {
+    const s = await store.settings(tenantId), on = !!s.notifyOnUpdate;
+    return {text: '🔔 <b>Уведомления</b>\n\nПрисылать свежий отчёт «Сейчас» в бот при каждом обновлении данных: <b>' + (on ? 'включено' : 'выключено') + '</b>.',
+      markup: {inline_keyboard: [[{text: on ? '🔕 Выключить' : '🔔 Включить', callback_data: 'pr:notify:' + (on ? 'off' : 'on')}], [{text: '↩️ Назад', callback_data: 'pr:main'}]]}};
+  }
+  async function freqView(tenantId) {
+    const s = await store.settings(tenantId), cur = s.refreshMinutes || 60;
+    const b = m => ({text: (cur === m ? '✅ ' : '') + m + ' мин', callback_data: 'pr:freq:' + m});
+    return {text: '⏱ <b>Частота обновления</b>\n\nКак часто тянуть данные из Keitaro и рекламных кабинетов. Сейчас: <b>' + cur + ' мин</b>.',
+      markup: {inline_keyboard: [[b(30), b(60), b(120)], [{text: '↩️ Назад', callback_data: 'pr:main'}]]}};
+  }
+  // Apply the chosen refresh frequency to every connected social on the collector.
+  async function applyFrequency(tenantId, minutes) {
+    const st = await collectorCall(tenantId, '/v1/status');
+    for (const c of (st && st.body && st.body.connections) || []) await collectorCall(tenantId, '/v1/schedule', {userId: c.userId, minutes});
   }
 
   async function bind(chatId, tenant) {
@@ -492,8 +549,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     // A main-menu button or command always works, even mid-input: it leaves the
     // half-finished step (settings/budget/new agent) instead of the button text
     // being parsed as that step's value. Without this the user gets stuck.
-    const menuHit = ['📊 Статистика', '📣 Кампании', '👥 Агенты', '🧩 Подключить соц', '💳 Подписка', '⚙️ Настройки'].includes(text)
-      || /^\/(start|stats|campaigns|agents|plugin|connect|subscription|settings|dashboard|token)\b/.test(text);
+    const menuHit = ['📊 Статистика', '📣 Кампании', '👥 Агенты', '🧩 Подключить соц', '👤 Профиль', '💳 Подписка', '⚙️ Настройки', '🔑 Ключ'].includes(text)
+      || /^\/(start|stats|campaigns|agents|plugin|connect|subscription|settings|profile|key|dashboard|token)\b/.test(text);
     if (menuHit && chat.state && chat.state !== 'ready') await store.setChat(chatId, tenant.id, 'ready');
 
     if (!menuHit && chat.state === 'keitaro_url') {
@@ -521,6 +578,15 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!m) return send(chatId, 'Укажите номер саба 1–6 — например <code>sub_id_4</code> или просто <code>4</code>.');
       await store.saveSettings(tenant.id, {keitaroSub: 'sub_id_' + m[1]});
       return askTimezone(chatId, tenant.id);
+    }
+    // Changing sub_id from «Профиль» (not onboarding): save and return to profile.
+    if (!menuHit && chat.state === 'profile_sub') {
+      const m = String(text).match(/(?:sub_id_)?([1-6])\b/i);
+      if (!m) return send(chatId, 'Укажите номер саба 1–6 — например <code>4</code>.');
+      await store.saveSettings(tenant.id, {keitaroSub: 'sub_id_' + m[1]});
+      await store.setChat(chatId, tenant.id, 'ready');
+      await send(chatId, '✅ sub_id кампании Keitaro: <b>sub_id_' + m[1] + '</b>.');
+      return showProfile(chatId, tenant.id);
     }
     if (!menuHit && chat.state === 'timezone') {
       if (!validTimezone(text)) return send(chatId, 'Не знаю такой пояс. Пример: <code>Europe/Minsk</code>');
@@ -558,8 +624,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (text === '👥 Агенты' || text === '/agents') return showAgents(chatId, tenant.id);
     if (text === '/dashboard') return send(chatId, '📊 Веб-ссылка (необязательно, всё есть в «📊 Статистика»):\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
     if (text === '🧩 Подключить соц' || text === '/plugin') return sendPluginKit(chatId, tenant.id);
-    if (text === '⚙️ Настройки' || text === '/settings') return showSettings(chatId, tenant.id);
-    if (text === '💳 Подписка' || text === '/subscription') return subscription(chatId, tenant);
+    // Профиль объединяет подписку, ключ, инструкции и настройки.
+    if (text === '👤 Профиль' || text === '/profile' || text === '⚙️ Настройки' || text === '/settings' || text === '💳 Подписка' || text === '/subscription') return showProfile(chatId, tenant.id);
     if (text === '/token') {
       const fresh = await rotateIntegrationToken(store, tenant.id, env.MASTER_KEY);
       return send(chatId, '🔁 Новый токен интеграции:\n<code>' + fresh + '</code>\n\nСтарый больше не действует — войдите в плагин заново.', MENU);
@@ -579,10 +645,25 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const chat = await store.chat(chatId);
     if (!chat?.tenantId) return welcome(chatId);
     if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null}); return askTimezone(chatId, chat.tenantId); }
-    // Settings menu: open one specific step. Any menu button later leaves it.
-    if (data === 'set:keitaro') return askKeitaroUrl(chatId);
-    if (data === 'set:sub') return askKeitaroSub(chatId, chat.tenantId);
-    if (data === 'set:tz') return askTimezone(chatId, chat.tenantId);
+    // «Профиль» — всё в одном сообщении, переходы редактируют его.
+    const mid = q.message.message_id;
+    if (data === 'pr:main') { const v = await profileView(await store.tenant(chat.tenantId)); return edit(chatId, mid, v.text, v.markup); }
+    if (data === 'pr:key') { const k = await currentKey(chat.tenantId); return edit(chatId, mid, '🔑 <b>Ключ интеграции</b>\nВставьте в расширение JS Control:\n<code>' + k + '</code>\n\nНикому не передавайте. Перевыпуск: /token.', back('pr:main')); }
+    if (data === 'pr:instr') return edit(chatId, mid, '📘 <b>Инструкции</b>\nВыберите раздел:', {inline_keyboard: [
+      [{text: '⚙️ Подключение Keitaro', callback_data: 'pr:i:keitaro'}],
+      [{text: '🧩 Подключение FB-аккаунтов', callback_data: 'pr:i:fb'}],
+      [{text: '🔣 Обозначения в статистике', callback_data: 'pr:i:legend'}],
+      [{text: '↩️ Назад', callback_data: 'pr:main'}]]});
+    if (data === 'pr:i:keitaro') return edit(chatId, mid, '⚙️ <b>Подключение Keitaro</b>\n\n1. В Keitaro создайте API-ключ: Профиль → API.\n2. В онбординге бот спрашивает адрес трекера, API-ключ и номер <b>sub_id</b>, в котором лежит ID кампании Facebook (связка расхода и дохода).\n3. Поменять sub_id позже можно здесь же в «Профиле».\n\nБез Keitaro бот покажет только расход FB, без дохода и ROI.', back('pr:instr'));
+    if (data === 'pr:i:fb') return edit(chatId, mid, '🧩 <b>Подключение FB-аккаунтов</b>\n\n1. Скачайте расширение JS Control (кнопка ниже) и добавьте в антидетект (AdsPower/Dolphin).\n2. Откройте профиль → Ads Manager нужного соца.\n3. В расширении вставьте ключ интеграции и нажмите «Подключить этот профиль».\n4. Через ~минуту соц появится с карточкой РК/БМ/ФП — закрепите за агентом.', {inline_keyboard: [[{text: '📥 Скачать плагин и ключ', callback_data: 'pr:plugin'}], [{text: '↩️ Назад', callback_data: 'pr:instr'}]]});
+    if (data === 'pr:i:legend') return edit(chatId, mid, LEGEND, back('pr:instr'));
+    if (data === 'pr:plugin') return sendPluginKit(chatId, chat.tenantId);
+    if (data === 'pr:plan') return edit(chatId, mid, '🔀 <b>Смена тарифа</b>\n\nВ разработке. Сейчас доступен тариф <b>Стандарт</b>.', back('pr:main'));
+    if (data === 'pr:notify') { const v = await notifyView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
+    if (data === 'pr:notify:on' || data === 'pr:notify:off') { await store.saveSettings(chat.tenantId, {notifyOnUpdate: data.endsWith(':on') ? 1 : 0}); const v = await notifyView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
+    if (data === 'pr:sub') { await store.setChat(chatId, chat.tenantId, 'profile_sub'); return send(chatId, '🔗 Введите номер <b>sub_id</b> (1–6), в котором лежит ID кампании Facebook — например <code>4</code>:'); }
+    if (data === 'pr:freq') { const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
+    if (data.startsWith('pr:freq:')) { const m = Number(data.slice(8)); if ([30, 60, 120].includes(m)) { await store.saveSettings(chat.tenantId, {refreshMinutes: m}); try { await applyFrequency(chat.tenantId, m); } catch {} } const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
     if (data.startsWith('soc:')) return showCampaigns(chatId, chat.tenantId, data.slice(4));
     if (data.startsWith('cmp:')) { const [, userId, cid] = data.split(':'); return showCampaign(chatId, chat.tenantId, userId, cid); }
@@ -665,6 +746,17 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const s = await store.social(tenantId, social.userId), card = await socialCard(tenantId, social.userId);
     if (s?.notifyMsgId) await edit(chatId, s.notifyMsgId, card.text, card.markup);
     else await sendSocialCard(chatId, tenantId, social.userId);
+  };
+
+  // Push 3 (optional, per «Профиль → Уведомления»): send the fresh «Сейчас»
+  // report after a data refresh. Called by the collector once per refresh cycle.
+  handleUpdate.notifyStatsRefresh = async (tenantId) => {
+    const s = await store.settings(tenantId);
+    if (!s.notifyOnUpdate) return;
+    const chatId = await store.chatForTenant(tenantId);
+    if (!chatId) return;
+    const text = await statsReportText(tenantId);
+    if (text) await send(chatId, '🔄 <b>Данные обновлены</b>\n\n' + text, MENU);
   };
   return handleUpdate;
 }

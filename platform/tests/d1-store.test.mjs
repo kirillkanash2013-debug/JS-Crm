@@ -30,7 +30,7 @@ test('D1Store works with the migration schema', async () => {
   await store.setChat(5, tenant.id, 'keitaro_url'); await store.setChat(5, tenant.id, 'ready');
   assert.deepEqual(await store.chat(5), {tenantId: tenant.id, state: 'ready'});
   await store.saveSettings(tenant.id, {keitaroUrl: 'https://k.test'}); await store.saveSettings(tenant.id, {timezone: 'UTC'});
-  assert.deepEqual(await store.settings(tenant.id), {keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null});
+  assert.deepEqual(await store.settings(tenant.id), {keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null, notifyOnUpdate: 0, refreshMinutes: null});
 
   // Agents and socials.
   const ag = await store.createAgent(tenant.id, 'Иван');

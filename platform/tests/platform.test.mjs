@@ -177,7 +177,7 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /📊 Сейчас/);
   assert.match(h.last(), /Spend <b>\$82\.29<\/b>/);
   assert.match(h.last(), /KG_A/);
-  assert.match(h.last(), /Добавьте Keitaro/);
+  assert.match(h.last(), /Подключите Keitaro/);
 });
 
 test('agents: deleting a social removes it from the bot and tells the collector', async () => {
@@ -263,6 +263,22 @@ test('agents: a new social is detected, prompted, and assigned to a new agent', 
     await h.say('Иван'); assert.match(h.last(), /назначен/i);
     await h.say('👥 Агенты'); assert.match(h.last(), /Иван/); assert.match(h.last(), /Без агента<\/b> — профилей: 0/);
   } finally { globalThis.fetch = realFetch; }
+});
+
+test('«👤 Профиль» hub: subscription + sub-screens edited in place', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pp', provider: 'test', plan: 'team', name: 'Кирилл', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  await h.say('👤 Профиль');
+  assert.match(h.last(), /👤 <b>Профиль<\/b>/);
+  assert.match(h.last(), /Кирилл/);
+  assert.match(h.last(), /Осталось дней:/);
+  await h.tap('pr:key'); assert.match(h.last(), /Ключ интеграции/);
+  await h.tap('pr:notify'); assert.match(h.last(), /Уведомления/);
+  await h.tap('pr:notify:on'); assert.equal((await h.store.settings((await h.store.chat(1)).tenantId)).notifyOnUpdate, 1);
+  await h.tap('pr:freq'); assert.match(h.last(), /Частота обновления/);
+  await h.tap('pr:freq:30'); assert.equal((await h.store.settings((await h.store.chat(1)).tenantId)).refreshMinutes, 30);
 });
 
 test('«🔑 Ключ» shows the current token without rotating it', async () => {
