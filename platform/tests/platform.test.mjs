@@ -213,10 +213,11 @@ test('push: collector announces a connected social to the tenant chat', async ()
   assert.ok(msg.chat_id, 'addressed to a chat');
   assert(await store.social(tenant.id, '900'), 'social recorded in the store');
   // After the first collection the SAME card is edited with the counts.
-  await bot.notifySocialCollected(tenant.id, {userId: '900', label: 'Профиль-900', accounts: 5, businesses: 1, pages: 2});
-  const upd = sent.find(m => m.method === 'editMessageText' && /Данные загружены/.test(m.text || ''));
+  await bot.notifySocialCollected(tenant.id, {userId: '900', label: 'Профиль-900', fbName: 'Алина Гущина', rk: 3, rkPersonal: 2, bm: 1, fp: 2});
+  const upd = sent.find(m => m.method === 'editMessageText' && /Соц: <b>Алина Гущина<\/b>/.test(m.text || ''));
   assert(upd, 'card edited to loaded state');
-  assert.match(upd.text, /РК: <b>5<\/b>/);
+  assert.match(upd.text, /ID соц: <code>900<\/code>/);
+  assert.match(upd.text, /РК: <b>3<\/b> <i>\(\+2 личных\)<\/i>/);
   assert.match(upd.text, /БМ: <b>1<\/b>/);
   assert.match(upd.text, /ФП: <b>2<\/b>/);
   // Unknown tenant → no crash, no message.

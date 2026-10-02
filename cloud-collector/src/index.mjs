@@ -94,7 +94,7 @@ export class CollectorControl extends DurableObject {
   for(const userId of [...pending]){
    try{
     const c=this.control.state.connections[userId],sum=this.control.archive?.socialSummary?.(userId)||{};
-    await this.env.PLATFORM.socialCollected(tenantId,{userId,label:c?.label||null,accounts:sum.accounts??null,businesses:sum.businesses??null,pages:sum.pages??null,collectedAt:sum.lastAt||null});
+    await this.env.PLATFORM.socialCollected(tenantId,{userId,label:c?.label||null,fbName:sum.fbName??null,rk:sum.rkBm??sum.accounts??null,rkPersonal:sum.rkPersonal??null,bm:sum.businesses??null,fp:sum.pages??null,collectedAt:sum.lastAt||null});
     done.push(userId);
    }catch{}
   }

@@ -279,8 +279,13 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (!loaded) {
       text = '🔄 Видим профиль «' + esc(s.label || s.userId) + '» (как в антидетеке).\nСобираем данные по кабинетам…';
     } else {
-      text = '✅ <b>Данные загружены</b> — профиль «' + esc(s.label || s.userId) + '»\n' +
-        'РК: <b>' + (s.rk ?? 0) + '</b>\nБМ: <b>' + (s.bm ?? 0) + '</b>\nФП: <b>' + (s.fp ?? 0) + '</b>\n' +
+      // «РК» = кабинеты в БМ (с них запускают); личные РК соца не в счёте.
+      text = '✅ <b>«' + esc(s.label || s.userId) + '»</b>\n' +
+        'Соц: <b>' + esc(s.fbName || '—') + '</b>\n' +
+        'ID соц: <code>' + esc(s.userId) + '</code>\n' +
+        'РК: <b>' + (s.rk ?? 0) + '</b>' + (s.rkPersonal ? ' <i>(+' + s.rkPersonal + ' личных)</i>' : '') + '\n' +
+        'БМ: <b>' + (s.bm ?? 0) + '</b>\n' +
+        'ФП: <b>' + (s.fp ?? 0) + '</b>\n' +
         'Агент: <b>' + (agentName ? esc(agentName) : 'не назначен') + '</b>';
     }
     if (s.agentId && !loaded) text += '\nАгент: <b>' + esc(agentName) + '</b>';
@@ -656,7 +661,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   handleUpdate.notifySocialCollected = async (tenantId, social) => {
     const chatId = await upsertSocial(tenantId, social);
     if (!chatId) return;
-    await store.setSocialStats(tenantId, social.userId, {rk: social.accounts ?? null, bm: social.businesses ?? null, fp: social.pages ?? null, collectedAt: social.collectedAt || new Date().toISOString()});
+    await store.setSocialStats(tenantId, social.userId, {rk: social.rk ?? null, rkPersonal: social.rkPersonal ?? null, bm: social.bm ?? null, fp: social.fp ?? null, fbName: social.fbName ?? null, collectedAt: social.collectedAt || new Date().toISOString()});
     const s = await store.social(tenantId, social.userId), card = await socialCard(tenantId, social.userId);
     if (s?.notifyMsgId) await edit(chatId, s.notifyMsgId, card.text, card.markup);
     else await sendSocialCard(chatId, tenantId, social.userId);

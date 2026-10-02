@@ -170,7 +170,13 @@ export function summarize(snapshot, mode) {
     const cur = r?.account?.currency;
     if (cur) spendByCurrency[cur] = Math.round(((spendByCurrency[cur] || 0) + (r.metrics || []).reduce((n, m) => n + (Number(m.spend) || 0), 0)) * 100) / 100;
   }
+  // Split ad accounts into BM-owned (what buyers actually launch from) and the
+  // social's own personal ones (rarely used). «РК» in the bot means the BM ones.
+  const accounts = snapshot.social?.accounts || [];
+  const rkBm = accounts.filter(a => a.business).length;
   return {source: snapshot.source, complete: snapshot.complete, observedAt: snapshot.observedAt, mode,
-    accounts: snapshot.social?.accounts?.length || 0, businesses: snapshot.social?.businesses?.length || 0, pages: snapshot.social?.fanPages?.length || 0,
+    accounts: accounts.length, rkBm, rkPersonal: accounts.length - rkBm,
+    businesses: snapshot.social?.businesses?.length || 0, pages: snapshot.social?.fanPages?.length || 0,
+    fbName: snapshot.social?.user?.name || null,
     campaigns: count('campaigns'), adsets: count('adsets'), ads: count('ads'), spendByCurrency};
 }

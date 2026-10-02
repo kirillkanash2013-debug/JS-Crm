@@ -87,7 +87,7 @@ test('collector keeps only compact summaries in state; report via API; history s
   }
   assert.equal(previousSeen.structures['555'].observedAt, s.observedAt, 'second run gets the cached structure from SQL');
   const status = c.status();
-  assert.deepEqual(Object.keys(status.results['100']).sort(), ['accounts', 'ads', 'adsets', 'businesses', 'campaigns', 'complete', 'mode', 'observedAt', 'pages', 'source', 'spendByCurrency']);
+  assert.deepEqual(Object.keys(status.results['100']).sort(), ['accounts', 'ads', 'adsets', 'businesses', 'campaigns', 'complete', 'fbName', 'mode', 'observedAt', 'pages', 'rkBm', 'rkPersonal', 'source', 'spendByCurrency']);
   assert(JSON.stringify(c.state).length < 3000, 'state blob stays small');
   const rep = await (await c.request('/v1/report', 'GET', {since: '2026-10-01', until: '2026-10-01'})).json();
   assert.deepEqual(rep.totals, {USD: 7});
