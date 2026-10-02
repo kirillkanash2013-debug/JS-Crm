@@ -2,7 +2,7 @@ import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
 import {EncryptedStore} from './crypto-store.mjs';
 import {connect} from 'cloudflare:sockets';
-import {checkKeitaroSocket,reportKeitaroSocket,publicIP} from './keitaro-socket.mjs';
+import {checkKeitaroSocket,reportKeitaroSocket,timezoneKeitaroSocket,publicIP} from './keitaro-socket.mjs';
 import {Control,initialState,reply} from './control.mjs';
 import {collectViaApi} from './api-collector.mjs';
 import {graphFetcher} from './proxy-fetch.mjs';
@@ -172,12 +172,12 @@ export default {
  }
 };
 
-async function keitaroContainerCheck(env,origin,key) {
-  try{if(publicIP(new URL(origin).hostname)){const r=await checkKeitaroSocket(origin,key,connect);if(r.result!=='unreachable')return r;}}catch{}
+async function keitaroContainerCheck(env,origin,key,profile=false) {
+  try{if(publicIP(new URL(origin).hostname)){const r=await (profile?timezoneKeitaroSocket:checkKeitaroSocket)(origin,key,connect);if(r.result!=='unreachable')return r;}}catch{}
   if(!env.INTERNAL_KEY)return {result:'unreachable',reason:'setup_required'};
   try {
    const c=getContainer(env.BROWSER,'keitaro-api');
-   const r=await c.fetch(new Request('http://localhost/keitaro-check',{
+   const r=await c.fetch(new Request('http://localhost/'+(profile?'keitaro-timezone':'keitaro-check'),{
     method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify({origin,key})
    }));
    return r.ok?await r.json():{result:'unreachable',reason:'container'};
@@ -198,5 +198,6 @@ async function keitaroContainerReport(env,origin,key,opts){
 }
 export class KeitaroBridge extends WorkerEntrypoint {
  async check(origin,key){return keitaroContainerCheck(this.env,origin,key);}
+ async timezone(origin,key){return keitaroContainerCheck(this.env,origin,key,true);}
  async report(origin,key,opts){return keitaroContainerReport(this.env,origin,key,opts||{});}
 }

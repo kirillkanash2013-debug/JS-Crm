@@ -2,9 +2,10 @@ import http from 'node:http';
 import https from 'node:https';
 import {lookup} from 'node:dns/promises';
 import {publicIPv4} from './proxy.mjs';
+import {profileTimezone} from './keitaro-timezone.mjs';
 
 // Pin public DNS and do not follow redirects with a user's key.
-export async function checkKeitaroNode(origin,key,{resolve=lookup,request}={}) {
+async function keitaroNodeGet(origin,key,{resolve=lookup,request}={},profile=false) {
  try {
   const u=new URL(origin);
   if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.pathname!=='/'||u.search||u.hash)return {result:'unreachable',reason:'invalid_address'};
@@ -13,7 +14,7 @@ export async function checkKeitaroNode(origin,key,{resolve=lookup,request}={}) {
   if(!ips.length||ips.some(a=>!publicIPv4(a.address)))return {result:'unreachable',reason:'private_address'};
   const transport=request||(u.protocol==='https:'?https.request:http.request);
   return await new Promise(done=>{
-   const req=transport(new URL('/admin_api/v1/campaigns',u),{
+   const req=transport(new URL(profile?'/admin_api/v1/profile':'/admin_api/v1/campaigns',u),{
     method:'GET',headers:{'Api-Key':key,Accept:'application/json'},
     lookup:(_host,opts,cb)=>opts.all?cb(null,[ips[0]]):cb(null,ips[0].address,4)
    },res=>{
@@ -25,7 +26,7 @@ export async function checkKeitaroNode(origin,key,{resolve=lookup,request}={}) {
      if(status===401)return done({result:'bad_key',status});
      if(status===403)return done({result:'forbidden',status,reason:/cloudflare|error code: 1003/i.test(body)?'cloudflare':'access_denied'});
      if(status<200||status>=300)return done({result:'unreachable',status,reason:status>=300&&status<400?'redirect':'http'});
-     try{const d=JSON.parse(body);const rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
+     try{const d=JSON.parse(body);if(profile)return done({result:'ok',timezone:profileTimezone(d)});const rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
       done(Array.isArray(rows)?{result:'ok',status,campaigns:rows.length}:{result:'unreachable',status,reason:'unexpected_response'});
      }catch{done({result:'unreachable',status,reason:'unexpected_response'});}
     });
@@ -94,3 +95,8 @@ export async function reportKeitaroNode(origin,key,{from,to,timezone,subIndex}={
   return {result:'ok',report:normalizeRows(build.json),conversions:normalizeRows(log.json)};
  }catch{return {result:'unreachable',reason:'network'};}
 }
+
+export const checkKeitaroNode = (origin,key,options) => keitaroNodeGet(origin,key,options);
+// /profile is a version-dependent UI API endpoint, not guaranteed by the public
+// Admin API spec. An unavailable profile must fall back to explicit user input.
+export const timezoneKeitaroNode = (origin,key,options) => keitaroNodeGet(origin,key,options,true);

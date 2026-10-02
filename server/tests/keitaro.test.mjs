@@ -31,3 +31,22 @@ test('rejects private DNS and URL credentials before transport',async()=>{
  assert.equal((await checkKeitaroNode('http://127.0.0.1','key',{resolve:async()=>[{address:'127.0.0.1',family:4}],request:()=>assert.fail()})).reason,'private_address');
 });
 test('accepts wrapped campaign list',async()=>assert.equal((await checkKeitaroNode('http://91.223.123.254','key',{resolve,request:fake(200,'{"data":[]}')})).result,'ok'));
+
+import {timezoneKeitaroNode} from '../keitaro.mjs';
+import {profileTimezone} from '../keitaro-timezone.mjs';
+test('current profile timezone is read with pinned DNS without leaking profile or key', async()=>{
+ const r=await timezoneKeitaroNode('http://91.223.123.254','secret-key',{resolve,request:fake(200,JSON.stringify({login:'private',preferences:{timezone:'Asia/Almaty'}}),(url,o)=>{
+  assert.equal(url.pathname,'/admin_api/v1/profile');assert.equal(o.method,'GET');
+  o.lookup('tracker',{},(_e,ip)=>assert.equal(ip,'91.223.123.254'));
+ })});
+ assert.deepEqual(r,{result:'ok',timezone:'Asia/Almaty'});
+ assert.ok(!JSON.stringify(r).includes('private'));
+});
+test('no inferred timezone from other users, server timezone or invalid profile',()=>{
+ for(const raw of [[{preferences:{timezone:'UTC'}}],{timezone:'UTC'},{preferences:{timezone:''}},{preferences:{timezone:'bad/zone'}}])assert.equal(profileTimezone(raw),null);
+ assert.equal(profileTimezone({data:{preferences:{timezone:'Europe/Warsaw'}}}),'Europe/Warsaw');
+});
+test('unavailable profile remains a recoverable error, private hosts never requested',async()=>{
+ assert.equal((await timezoneKeitaroNode('http://91.223.123.254','key',{resolve,request:fake(403,'secret')})).result,'forbidden');
+ assert.equal((await timezoneKeitaroNode('http://127.0.0.1','key',{resolve:async()=>[{address:'127.0.0.1'}],request:()=>assert.fail()})).reason,'private_address');
+});

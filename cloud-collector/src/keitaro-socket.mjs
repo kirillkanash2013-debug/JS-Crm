@@ -1,10 +1,11 @@
+import {profileTimezone} from '../../server/keitaro-timezone.mjs';
 import {readResponse} from './proxy-fetch.mjs';
 export function publicIP(host){
  if(!/^\d+\.\d+\.\d+\.\d+$/.test(host))return false;
  const [a,b,...rest]=host.split('.').map(Number);
  return [a,b,...rest].every(n=>n>=0&&n<=255)&&!(a===0||a===10||a===127||a>=224||a===169&&b===254||a===172&&b>=16&&b<=31||a===192&&(b===168||b===0)||a===100&&b>=64&&b<=127||a===198&&(b===18||b===19));
 }
-export async function checkKeitaroSocket(origin,key,connect){
+async function socketGet(origin,key,connect,profile=false){
  let socket,timer;
  try {
   const u=new URL(origin);
@@ -15,12 +16,14 @@ export async function checkKeitaroSocket(origin,key,connect){
    (async()=>{
     await socket.opened;
     const w=socket.writable.getWriter();
-    try{await w.write(new TextEncoder().encode('GET /admin_api/v1/campaigns HTTP/1.1\r\nHost: '+u.host+'\r\nApi-Key: '+key+'\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n'));}finally{w.releaseLock();}
+    try{await w.write(new TextEncoder().encode('GET '+(profile?'/admin_api/v1/profile':'/admin_api/v1/campaigns')+' HTTP/1.1\r\nHost: '+u.host+'\r\nApi-Key: '+key+'\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n'));}finally{w.releaseLock();}
     const {status,body}=await readResponse(socket);
     if(status===401)return {result:'bad_key',status,transport:'socket'};
     if(status===403)return {result:'forbidden',status,reason:'access_denied',transport:'socket'};
     if(status<200||status>=300)return {result:'unreachable',status,reason:'http',transport:'socket'};
-    const d=JSON.parse(new TextDecoder().decode(body)),rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
+    const d=JSON.parse(new TextDecoder().decode(body));
+    if(profile)return {result:'ok',timezone:profileTimezone(d)};
+    const rows=Array.isArray(d)?d:Array.isArray(d?.data)?d.data:d?.campaigns;
     return Array.isArray(rows)?{result:'ok',status,campaigns:rows.length,transport:'socket'}:{result:'unreachable',status,reason:'unexpected_response',transport:'socket'};
    })(),
    new Promise(resolve=>{timer=setTimeout(()=>resolve({result:'unreachable',reason:'timeout',transport:'socket'}),12000);})
@@ -87,3 +90,6 @@ export async function reportKeitaroSocket(origin,key,{from,to,timezone,subIndex}
  if(log.result!=='ok')return log;
  return {result:'ok',report:normalizeRows(build.json),conversions:normalizeRows(log.json)};
 }
+
+export const checkKeitaroSocket = (origin,key,connect) => socketGet(origin,key,connect);
+export const timezoneKeitaroSocket = (origin,key,connect) => socketGet(origin,key,connect,true);

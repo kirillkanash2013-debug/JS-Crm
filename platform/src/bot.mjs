@@ -2,7 +2,7 @@
 // with Telegram Stars), fill basic settings, get the plugin and the dashboard.
 import {PLANS, applyPayment, authenticate, createInvite, isActive, redeemInvite, rotateDashboardToken, rotateIntegrationToken} from './accounts.mjs';
 import {findInviteCode} from './invites.mjs';
-import {checkKeitaro, keitaroOrigin, keitaroReport} from './keitaro.mjs';
+import {checkKeitaro, keitaroOrigin, keitaroReport, keitaroTimezone} from './keitaro.mjs';
 import {openSecret, sealSecret} from './secrets.mjs';
 import {aggregateKeitaro, buildNow, campaignCard} from './today.mjs';
 import {findToken} from './tokens.mjs';
@@ -143,11 +143,26 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       {inline_keyboard: [[{text: 'У меня нет Keitaro', callback_data: 'skip:keitaro'}]]});
   }
 
+  async function detectTimezone(tenantId) {
+    const s = await store.settings(tenantId);
+    if (!s.keitaroUrl || !s.keitaroKeyEnc) return null;
+    try {
+      const key = await openSecret(env.MASTER_KEY, tenantId, s.keitaroKeyEnc);
+      return await keitaroTimezone(env)(s.keitaroUrl, key);
+    } catch { return null; }
+  }
+
   async function askTimezone(chatId, tenantId) {
+    const s = await store.settings(tenantId);
+    const tz = await detectTimezone(tenantId);
+    if (tz) {
+      await send(chatId, '🕒 Часовой пояс профиля Keitaro: <b>' + esc(tz) + '</b>. Отчётные сутки меняются в 00:00 по этому поясу.');
+      return finish(chatId, tenantId, tz);
+    }
     await store.setChat(chatId, tenantId, 'timezone');
     const rows = [];
     for (let i = 0; i < TIMEZONES.length; i += 2) rows.push(TIMEZONES.slice(i, i + 2).map(tz => ({text: tz, callback_data: 'tz:' + tz})));
-    await send(chatId, '🕒 <b>Шаг 3 из 3 — часовой пояс</b>\n\nВ нём считаются «сегодня» и «вчера» в отчётах. Выберите или напишите свой, например <code>Asia/Dubai</code>.', {inline_keyboard: rows});
+    await send(chatId, '🕒 <b>Шаг 3 из 3 — часовой пояс</b>\n\nВ нём считаются «сегодня» и «вчера»; сутки меняются в 00:00. ' + (s.keitaroKeyEnc ? 'Keitaro не отдал пояс профиля через API. Откройте Keitaro → Профиль → часовой пояс и укажите здесь тот же пояс. ' : '') + 'Выберите или напишите, например <code>Asia/Dubai</code>.', {inline_keyboard: rows});
   }
 
   // Which Keitaro sub_id carries the Facebook campaign id — the join key for
@@ -233,7 +248,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // and the campaigns board). Returns {keitaro, subIndex, note}; keitaro is null
   // when Keitaro isn't set up or is unreachable, and note explains why.
   async function loadKeitaro(tenantId, day, tz, {force} = {}) {
-    const ck = tenantId + '|' + day;
+    const ck = tenantId + '|' + day + '|' + tz;
     const hit = keitaroCache.get(ck);
     if (!force && hit && Date.now() - hit.at < 60000) return {keitaro: hit.keitaro, subIndex: hit.subIndex, note: ''};
     const s = await store.settings(tenantId);
@@ -588,13 +603,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     return rotateIntegrationToken(store, tenantId, env.MASTER_KEY);
   }
   async function profileView(tenant) {
+    const s = await store.settings(tenant.id);
     const text = '👤 <b>Профиль</b>\nПользователь: <b>' + esc(tenant.name || '—') + '</b>\n\n' +
-      '💳 Подписка: <b>Стандарт</b>\nДействует до: <b>' + esc(tenant.paidUntil || '—') + '</b>\nОсталось дней: <b>' + daysLeft(tenant.paidUntil) + '</b>';
+      '💳 Подписка: <b>Стандарт</b>\nДействует до: <b>' + esc(tenant.paidUntil || '—') + '</b>\nОсталось дней: <b>' + daysLeft(tenant.paidUntil) + '</b>' + '\n🕒 Отчётные сутки: 00:00 · ' + esc(s.timezone || 'пояс не задан');
     return {text, markup: {inline_keyboard: [
       [{text: '🔑 Ключ интеграции', callback_data: 'pr:key'}],
       [{text: '📘 Инструкции', callback_data: 'pr:instr'}],
       [{text: '🔀 Сменить тариф', callback_data: 'pr:plan'}],
       [{text: '🔔 Уведомления', callback_data: 'pr:notify'}],
+      [{text: '⚙️ Подключение Keitaro', callback_data: 'pr:keitaro'}],
+      [{text: '🕒 Часовой пояс Keitaro', callback_data: 'pr:tz'}],
       [{text: '🔗 sub_id кампании Keitaro', callback_data: 'pr:sub'}],
       [{text: '⏱ Частота обновления', callback_data: 'pr:freq'}]
     ]}};
@@ -686,7 +704,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (!menuHit && chat.state === 'keitaro_url') {
       const origin = keitaroOrigin(text);
       if (!origin) return send(chatId, 'Не похоже на адрес. Пример: <code>https://tracker.example.com</code>');
-      await store.saveSettings(tenant.id, {keitaroUrl: origin});
+      await store.saveSettings(tenant.id, {keitaroUrl: origin, keitaroKeyEnc: null, timezone: null});
       await store.setChat(chatId, tenant.id, 'keitaro_key');
       return send(chatId, '🔑 <b>Шаг 2 из 3 — API-ключ Keitaro</b>\n\nKeitaro → Профиль → API-ключи → создайте ключ и отправьте его сюда. Сообщение с ключом будет сразу удалено из чата.',
         {inline_keyboard: [[{text: 'Пропустить Keitaro', callback_data: 'skip:keitaro'}]]});
@@ -716,6 +734,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       await store.saveSettings(tenant.id, {keitaroSub: 'sub_id_' + m[1]});
       await store.setChat(chatId, tenant.id, 'ready');
       await send(chatId, '✅ sub_id кампании Keitaro: <b>sub_id_' + m[1] + '</b>.');
+      return showProfile(chatId, tenant.id);
+    }
+    if (!menuHit && chat.state === 'profile_timezone') {
+      if (!validTimezone(text)) return send(chatId, 'Укажите часовой пояс из профиля Keitaro, например <code>Europe/Minsk</code>.');
+      await store.saveSettings(tenant.id, {timezone: text});
+      await store.setChat(chatId, tenant.id, 'ready');
       return showProfile(chatId, tenant.id);
     }
     if (!menuHit && chat.state === 'timezone') {
@@ -813,7 +837,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     }
     const chat = await store.chat(chatId);
     if (!chat?.tenantId) return welcome(chatId);
-    if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null}); return askTimezone(chatId, chat.tenantId); }
+    if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null, timezone: null}); return askTimezone(chatId, chat.tenantId); }
     // «Профиль» — всё в одном сообщении, переходы редактируют его.
     const mid = q.message.message_id;
     if (data === 'pr:main') { const v = await profileView(await store.tenant(chat.tenantId)); return edit(chatId, mid, v.text, v.markup); }
@@ -830,6 +854,20 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (data === 'pr:plan') return edit(chatId, mid, '🔀 <b>Смена тарифа</b>\n\nВ разработке. Сейчас доступен тариф <b>Стандарт</b>.', back('pr:main'));
     if (data === 'pr:notify') { const v = await notifyView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
     if (data === 'pr:notify:on' || data === 'pr:notify:off') { await store.saveSettings(chat.tenantId, {notifyOnUpdate: data.endsWith(':on') ? 1 : 0}); const v = await notifyView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
+    if (data === 'pr:keitaro') return askKeitaroUrl(chatId);
+    if (data === 'pr:tz') {
+      const tz = await detectTimezone(chat.tenantId);
+      if (tz) {
+        await store.saveSettings(chat.tenantId, {timezone: tz});
+        return edit(chatId, mid, '✅ Часовой пояс Keitaro: <b>' + esc(tz) + '</b>. Смена отчётных суток — 00:00.', {inline_keyboard: [[{text: 'Указать другой пояс', callback_data: 'pr:tz:manual'}], [{text: '↩️ Назад', callback_data: 'pr:main'}]]});
+      }
+      await store.setChat(chatId, chat.tenantId, 'profile_timezone');
+      return send(chatId, 'Keitaro не отдал пояс профиля через API. Укажите часовой пояс из Keitaro → Профиль, например <code>Europe/Minsk</code>. Текущий пояс сохраняется, пока вы не введёте новый.');
+    }
+    if (data === 'pr:tz:manual') {
+      await store.setChat(chatId, chat.tenantId, 'profile_timezone');
+      return send(chatId, 'Введите часовой пояс из профиля Keitaro, например <code>Europe/Minsk</code>.');
+    }
     if (data === 'pr:sub') { await store.setChat(chatId, chat.tenantId, 'profile_sub'); return send(chatId, '🔗 Введите номер <b>sub_id</b> (1–6), в котором лежит ID кампании Facebook — например <code>4</code>:'); }
     if (data === 'pr:freq') { const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
     if (data.startsWith('pr:freq:')) { const m = Number(data.slice(8)); if ([30, 60, 120].includes(m)) { await store.saveSettings(chat.tenantId, {refreshMinutes: m}); try { await applyFrequency(chat.tenantId, m); } catch {} } const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
