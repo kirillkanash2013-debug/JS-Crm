@@ -138,6 +138,21 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await send(chatId, '🔗 <b>Keitaro: где id кампании Facebook?</b>\n\nВ каком <code>sub_id</code> вашего трекера лежит ID кампании Facebook? Напишите просто номер — например <code>4</code> (это <code>sub_id_4</code>, чаще всего так). По нему свяжем расход (FB) и доход (Keitaro).');
   }
 
+  // Settings overview with inline actions — never traps the user in a text-input
+  // step; each button opens one specific step, and any menu button leaves it.
+  async function showSettings(chatId, tenantId) {
+    const s = await store.settings(tenantId);
+    await send(chatId, '⚙️ <b>Настройки</b>\n\n' +
+      'Keitaro: ' + (s.keitaroUrl ? esc(s.keitaroUrl) : '<i>не подключён</i>') + '\n' +
+      'sub_id с id кампании FB: ' + (s.keitaroSub ? '<code>' + esc(s.keitaroSub) + '</code>' : '<i>не задан</i>') + '\n' +
+      'Часовой пояс: ' + (s.timezone ? '<code>' + esc(s.timezone) + '</code>' : '<i>не задан</i>'),
+      {inline_keyboard: [
+        [{text: s.keitaroUrl ? '🔄 Изменить Keitaro' : '➕ Подключить Keitaro', callback_data: 'set:keitaro'}],
+        [{text: '🔗 sub_id кампании FB', callback_data: 'set:sub'}],
+        [{text: '🕒 Часовой пояс', callback_data: 'set:tz'}]
+      ]});
+  }
+
   async function dashboardLink(tenantId) {
     return env.PUBLIC_URL + '/d/' + await rotateDashboardToken(store, tenantId);
   }
@@ -395,7 +410,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     // Key is retrievable at any point, even mid-onboarding.
     if (text === '🔑 Ключ' || text === '/key') return showKey(chatId, tenant.id);
 
-    if (chat.state === 'keitaro_url') {
+    // A main-menu button or command always works, even mid-input: it leaves the
+    // half-finished step (settings/budget/new agent) instead of the button text
+    // being parsed as that step's value. Without this the user gets stuck.
+    const menuHit = ['📊 Статистика', '📣 Кампании', '👥 Агенты', '🧩 Подключить соц', '💳 Подписка', '⚙️ Настройки'].includes(text)
+      || /^\/(start|stats|campaigns|agents|plugin|connect|subscription|settings|dashboard|token)\b/.test(text);
+    if (menuHit && chat.state && chat.state !== 'ready') await store.setChat(chatId, tenant.id, 'ready');
+
+    if (!menuHit && chat.state === 'keitaro_url') {
       const origin = keitaroOrigin(text);
       if (!origin) return send(chatId, 'Не похоже на адрес. Пример: <code>https://tracker.example.com</code>');
       await store.saveSettings(tenant.id, {keitaroUrl: origin});
@@ -403,7 +425,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       return send(chatId, '🔑 <b>Шаг 2 из 3 — API-ключ Keitaro</b>\n\nKeitaro → Профиль → API-ключи → создайте ключ и отправьте его сюда. Сообщение с ключом будет сразу удалено из чата.',
         {inline_keyboard: [[{text: 'Пропустить Keitaro', callback_data: 'skip:keitaro'}]]});
     }
-    if (chat.state === 'keitaro_key') {
+    if (!menuHit && chat.state === 'keitaro_key') {
       await forget(chatId, message.message_id);
       const s = await store.settings(tenant.id);
       const result = await keitaro(s.keitaroUrl, text);
@@ -415,24 +437,24 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       await send(chatId, '✅ Keitaro подключён.');
       return askKeitaroSub(chatId, tenant.id);
     }
-    if (chat.state === 'keitaro_sub') {
+    if (!menuHit && chat.state === 'keitaro_sub') {
       const m = String(text).match(/(?:sub_id_)?([1-6])\b/i);
       if (!m) return send(chatId, 'Укажите номер саба 1–6 — например <code>sub_id_4</code> или просто <code>4</code>.');
       await store.saveSettings(tenant.id, {keitaroSub: 'sub_id_' + m[1]});
       return askTimezone(chatId, tenant.id);
     }
-    if (chat.state === 'timezone') {
+    if (!menuHit && chat.state === 'timezone') {
       if (!validTimezone(text)) return send(chatId, 'Не знаю такой пояс. Пример: <code>Europe/Minsk</code>');
       return finish(chatId, tenant.id, text);
     }
-    if (chat.state && chat.state.startsWith('budget:')) {
+    if (!menuHit && chat.state && chat.state.startsWith('budget:')) {
       const [, userId, cid] = chat.state.split(':');
       const dollars = Number(String(text).replace(',', '.').replace(/[^\d.]/g, ''));
       if (!(dollars > 0)) return send(chatId, 'Введите сумму дневного бюджета в валюте кабинета, например <code>15</code> или <code>15.50</code>.');
       await store.setChat(chatId, tenant.id, 'ready');
       return runAction(chatId, tenant.id, {userId, campaignId: cid, dailyBudget: Math.round(dollars * 100)}, 'Бюджет ' + dollars);
     }
-    if (chat.state && chat.state.startsWith('newagent')) {
+    if (!menuHit && chat.state && chat.state.startsWith('newagent')) {
       const name = String(text).trim().slice(0, 40);
       if (!name || /^\//.test(name)) return send(chatId, 'Введите имя агента, например <code>Иван</code>.');
       const agent = await store.createAgent(tenant.id, name);
@@ -448,7 +470,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (text === '👥 Агенты' || text === '/agents') return showAgents(chatId, tenant.id);
     if (text === '/dashboard') return send(chatId, '📊 Веб-ссылка (необязательно, всё есть в «📊 Статистика»):\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
     if (text === '🧩 Подключить соц' || text === '/plugin') return sendPluginKit(chatId, tenant.id);
-    if (text === '⚙️ Настройки' || text === '/settings') return askKeitaroUrl(chatId);
+    if (text === '⚙️ Настройки' || text === '/settings') return showSettings(chatId, tenant.id);
     if (text === '💳 Подписка' || text === '/subscription') return subscription(chatId, tenant);
     if (text === '/token') {
       const fresh = await rotateIntegrationToken(store, tenant.id, env.MASTER_KEY);
@@ -469,6 +491,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const chat = await store.chat(chatId);
     if (!chat?.tenantId) return welcome(chatId);
     if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null}); return askTimezone(chatId, chat.tenantId); }
+    // Settings menu: open one specific step. Any menu button later leaves it.
+    if (data === 'set:keitaro') return askKeitaroUrl(chatId);
+    if (data === 'set:sub') return askKeitaroSub(chatId, chat.tenantId);
+    if (data === 'set:tz') return askTimezone(chatId, chat.tenantId);
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
     if (data.startsWith('soc:')) return showCampaigns(chatId, chat.tenantId, data.slice(4));
     if (data.startsWith('cmp:')) { const [, userId, cid] = data.split(':'); return showCampaign(chatId, chat.tenantId, userId, cid); }

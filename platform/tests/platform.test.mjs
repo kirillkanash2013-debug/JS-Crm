@@ -178,6 +178,25 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /Добавьте Keitaro/);
 });
 
+test('a menu button escapes an input state instead of being parsed as its value', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pesc', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  // Stuck mid-settings waiting for a Keitaro URL.
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'keitaro_url');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'A'}]});
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '100', name: 'C', spend: 1}]});
+    return Response.json({});
+  };
+  try { await h.say('📊 Статистика'); } finally { globalThis.fetch = realFetch; }
+  assert.match(h.last(), /📊 Сейчас/);
+  assert.doesNotMatch(h.last(), /Не похоже на адрес/);
+  // State was reset, so the next plain text is no longer eaten as a URL.
+  assert.equal((await h.store.chat(1)).state, 'ready');
+});
+
 test('agents: a new social is detected, prompted, and assigned to a new agent', async () => {
   const h = harness();
   const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pa', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
