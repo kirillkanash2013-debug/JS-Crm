@@ -316,20 +316,21 @@ test('bot campaigns board: active-only numbered list, budget + toggle by text, p
     await h.tap('cbud:100'); assert.match(h.last(), /1-234 2-423/);
     await h.say('1-50 2-30');
     assert.deepEqual(posted.map(p => [p.campaignId, p.dailyBudget]), [['555111', 5000], ['555222', 3000]]);
-    assert.match(h.last(), /Отправлено бюджетов: 2/);
-    // Toggle flow: Вкл/Выкл lists ALL campaigns; "3" turns Charlie (paused) ON.
-    posted = [];
-    await h.tap('ctog:100'); assert.match(h.last(), /Charlie/); assert.match(h.last(), /1,3,5/);
-    await h.say('3');
-    assert.deepEqual(posted.at(-1), {userId: '100', campaignId: '555333', status: 'ACTIVE'});
-    // Pending: queued job → "ждём подтверждения" + only Обновить; stays until terminal.
-    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555333', status: 'ACTIVE'}, state: 'queued', createdAt: '2026-10-02T00:00:00Z'}];
-    await h.tap('cref:100'); assert.match(h.last(), /ждём подтверждения/);
+    // Pending: queued job → status at the BOTTOM + only «Обновить»; stays until terminal.
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', dailyBudget: 5000}, state: 'queued', createdAt: '2026-10-02T00:00:00Z'}];
+    await h.tap('cref:100');
+    assert.match(h.last(), /Обновления отправлены/);
+    assert.match(h.last(), /Alpha[\s\S]*Обновления отправлены/); // status sits below the cards
     // One-at-a-time: a new submit while pending is refused.
     await h.tap('cbud:100'); await h.say('1-99'); assert.match(h.last(), /Дождитесь/);
-    // Job done → refresh shows the green outcome + buttons return.
-    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555333', status: 'ACTIVE'}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {status: 'ACTIVE'}}}];
-    await h.tap('cref:100'); assert.match(h.last(), /✅/); assert.match(h.last(), /включена/);
+    // Job done → green line + buttons return (numbers come from the cabinet feed).
+    jobs = [{id: 'job-1', userId: '100', action: {campaignId: '555111', dailyBudget: 5000}, state: 'done', createdAt: '2026-10-02T00:00:00Z', actionResult: {after: {daily_budget: '5000'}}}];
+    await h.tap('cref:100'); assert.match(h.last(), /✅ <b>Всё прошло успешно/);
+    // Toggle flow: Вкл/Выкл prompts like budget (space-separated, board numbering).
+    posted = []; jobs = [];
+    await h.tap('ctog:100'); assert.match(h.last(), /1 2 3/); assert.doesNotMatch(h.last(), /Charlie/);
+    await h.say('2'); // #2 on the board = Bravo (ACTIVE → PAUSED)
+    assert.deepEqual(posted.at(-1), {userId: '100', campaignId: '555222', status: 'PAUSED'});
   } finally { globalThis.fetch = realFetch; }
 });
 
