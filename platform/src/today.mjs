@@ -90,17 +90,17 @@ function topBlock({day, times, spendTotal, totals}) {
     'ROI <b>' + Math.round(roiPct(totals.rev, spendTotal)) + '%</b>' + (totals.doletRev ? ' → <b>' + Math.round(roiPct(revAll, spendTotal)) + '%</b>' : '')].join('\n');
 }
 
-// 🟢 profit, 🔴 loss (has spend), ⏸ paused, ⚪ idle; ⚠️ when ad errors exist.
-function campIcon(c, k) {
-  const paused = c.effectiveStatus && c.effectiveStatus !== 'ACTIVE';
-  const base = paused ? '⏸' : c.spend > 0 ? (roiPct(k.rev, c.spend) >= 0 ? '🟢' : '🔴') : '⚪';
-  return base + (c.errorAds ? ' ⚠️' : '');
+// Состояние кампании: 🟢 включена (есть расход) · ⚪ включена, без расхода ·
+// 🔴 выключена. ⚠️ — если есть ошибки в объявлениях.
+function campIcon(c) {
+  const active = !c.effectiveStatus || c.effectiveStatus === 'ACTIVE';
+  return (!active ? '🔴' : c.spend > 0 ? '🟢' : '⚪') + (c.errorAds ? ' ⚠️' : '');
 }
 
 // One campaign: name, 💰budget 💸spend 🤑rev, then inst/CPI − reg/CPR − dep/CPA (ROI%).
 function campaignLines(c, k) {
   const budget = c.dailyBudget ? Math.round(num(c.dailyBudget) / 100) : 0;
-  const line1 = campIcon(c, k) + ' ' + esc(c.name || c.campaignId);
+  const line1 = campIcon(c) + ' ' + esc(c.name || c.campaignId);
   const line2 = '💰' + budget + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(k.rev) + '$';
   const line3 = Math.round(k.inst) + '/' + per(c.spend, k.inst) + '$ - ' +
     Math.round(k.reg) + '/' + per(c.spend, k.reg) + '$ - ' +

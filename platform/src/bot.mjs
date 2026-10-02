@@ -11,7 +11,7 @@ const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '📣 Ка
 
 // Emoji legend — shown in «Профиль → Инструкции» and once after onboarding.
 const LEGEND = '🔣 <b>Обозначения в статистике</b>\n\n' +
-  '🟢 кампания в плюсе · 🔴 в минусе · ⏸ на паузе · ⚪ без расхода сегодня\n' +
+  'Состояние кампании: 🟢 включена · ⚪ включена, без расхода · 🔴 выключена\n' +
   '⚠️ есть ошибки в объявлениях\n\n' +
   '💰 дневной бюджет · 💸 расход · 🤑 доход\n' +
   'Строка кампании: <code>inst/CPI − reg/CPR − dep/CPA (ROI%)</code>\n\n' +
@@ -378,7 +378,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await send(chatId, '🔑 <b>Ваш ключ доступа</b> — вставьте в расширение JS Control:\n<code>' + token + '</code>\n\nНикому не передавайте. Перевыпустить (старый перестанет работать): /token.', MENU);
   }
 
-  const campIcon = s => s === 'ACTIVE' ? '🟢' : s === 'PAUSED' ? '⏸' : '⚪';
+  const campIcon = s => s === 'ACTIVE' ? '🟢' : '🔴';
 
   async function campaignsEntry(chatId, tenantId) {
     await notifyNewSocials(chatId, tenantId);
