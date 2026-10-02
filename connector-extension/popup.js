@@ -37,7 +37,10 @@ function parseProxy(cfg) {
 }
 
 // AdsPower local API (reachable from an extension with host permission).
-async function adsPowerProxy(userId) {
+// Returns the matched profile's proxy AND its name in the antidetect — the name
+// the client gave the profile, which is what they want to see as the soc's label
+// (not the Facebook account's display name).
+async function adsPowerProfile(userId) {
   for (const base of ["http://local.adspower.net:50325", "http://127.0.0.1:50325"]) {
     try {
       const r = await fetch(base + "/api/v1/user/list?page_size=100", { signal: AbortSignal.timeout(4000) });
@@ -45,11 +48,10 @@ async function adsPowerProxy(userId) {
       const list = (j && j.data && j.data.list) || [];
       const hit = list.filter((p) => [p.username, p.remark, p.name].join(" ").indexOf(userId) >= 0);
       const pick = hit.length === 1 ? hit[0] : list.length === 1 ? list[0] : null;
-      const proxy = pick && parseProxy(pick.user_proxy_config);
-      if (proxy) return proxy;
+      if (pick) return { proxy: parseProxy(pick.user_proxy_config), name: (pick.name || pick.remark || pick.username || "").slice(0, 150) || null };
     } catch (e) {}
   }
-  return null;
+  return { proxy: null, name: null };
 }
 
 // Human text for whatever interval the SERVER returned — nothing about the
@@ -98,13 +100,17 @@ $("go").onclick = async () => {
     if (!session || !/^\d{3,30}$/.test(session.userId) || !session.tokens.length) throw new Error("Не нашёл токен. Дождитесь полной загрузки списка кампаний и нажмите снова.");
     show("Беру cookies и прокси профиля…");
     const ck = await cookies();
-    const proxy = $("noproxy").checked ? null : await adsPowerProxy(session.userId);
+    const profile = $("noproxy").checked ? { proxy: null, name: null } : await adsPowerProfile(session.userId);
+    const proxy = profile.proxy;
+    // Label the soc by the antidetect profile name; fall back to the FB account
+    // name only if the profile name couldn't be read (e.g. AdsPower not running).
+    const label = profile.name || session.name || undefined;
     proxyInfo = $("noproxy").checked ? "\nБез прокси (тест): Facebook видит IP сервера." : proxy ? "\nПрокси: " + proxy.server + " (логин: " + (proxy.username ? "есть" : "нет") + ")" : "\nПрокси профиля не найден (AdsPower запущен?).";
     show("Подключаю соц на сервере…" + proxyInfo);
     // Only credentials go up. The server sets the schedule and starts the
     // first collection itself; all settings live on the server, not here.
-    const res = await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: session.name || undefined, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
-    show("✓ Готово! Соц «" + (session.name || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nСервер запустил сбор и обновляет данные" + intervalText(res && res.schedule) + ". Браузер можно закрыть.", "ok");
+    const res = await api("/v1/connections", key, { userId: session.userId, token: session.tokens[0], tokenCandidates: session.tokens, userAgent: session.ua, label: label, proxy: proxy || undefined, cookies: ck.length ? ck : undefined });
+    show("✓ Готово! Соц «" + (label || session.userId) + "» подключён." + (proxy ? "" : "\nПрокси профиля не найден — проверьте, что AdsPower запущен, иначе Facebook увидит IP сервера.") + "\nСервер запустил сбор и обновляет данные" + intervalText(res && res.schedule) + ". Браузер можно закрыть.", "ok");
   } catch (e) {
     show((e.message || String(e)) + proxyInfo, "err");
   } finally {
