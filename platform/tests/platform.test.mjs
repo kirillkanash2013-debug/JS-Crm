@@ -79,11 +79,13 @@ test('client journey: token → Keitaro → timezone → plugin and dashboard', 
   assert.equal(await openSecret(MASTER_KEY, tenantId, s.keitaroKeyEnc), 'good-key');
 
   await h.tap('tz:Europe/Minsk');
-  const done = h.last();
-  assert.match(done, /Настройки сохранены/); assert.match(done, /p\.test\/plugin/); assert.match(done, /расширение/i);
-  const link = done.match(/https:\/\/p\.test\/d\/(jsd_[A-Za-z0-9_-]+)/);
-  assert(link, 'dashboard link sent');
+  assert(h.sent.some(m => /Всё настроено/.test(m.text || '')), 'onboarding finished');
+  assert(h.sent.some(m => /Как подключить/.test(m.text || '')), 'step-by-step instructions sent');
+  assert(h.sent.some(m => m.method === 'sendDocument' && /\/extension\.zip$/.test(m.document || '')), 'extension archive sent');
 
+  await h.say('/dashboard');
+  const link = h.last().match(/https:\/\/p\.test\/d\/(jsd_[A-Za-z0-9_-]+)/);
+  assert(link, 'dashboard link available via /dashboard');
   const page = await h.call('/d/' + link[1]);
   assert.equal(page.status, 200);
   const html = await page.text();
@@ -91,7 +93,7 @@ test('client journey: token → Keitaro → timezone → plugin and dashboard', 
   const summary = await (await h.call('/api/d/' + link[1])).json();
   assert.deepEqual(summary.steps.map(x => x.done), [true, true, true, false]);
 
-  await h.say('📊 Дашборд');
+  await h.say('/dashboard');
   assert.equal((await h.call('/d/' + link[1])).status, 404, 'old dashboard link revoked');
 
   const login = await h.call('/v1/extension/login', {method: 'POST', body: JSON.stringify({token})});
@@ -153,6 +155,23 @@ test('collectorStatus decrypts the sealed token and summarizes the collector', a
   } finally { globalThis.fetch = realFetch; }
   // No sealed token → no call, no data.
   assert.equal(await collectorStatus(env, new MemoryStore(), 'missing'), null);
+});
+
+test('bot «Статистика» pulls socials and today spend from the collector', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pstat', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    assert.match(opts.headers.Authorization, /^Bearer jsi_/);
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}]});
+    return Response.json({totals: {USD: 82.29}, rows: []});
+  };
+  try { await h.say('📊 Статистика'); } finally { globalThis.fetch = realFetch; }
+  assert.match(h.last(), /Статистика за сегодня/);
+  assert.match(h.last(), /82\.29 USD/);
+  assert.match(h.last(), /Алина/);
 });
 
 test('dashboard renders collector spend and marks the social step done', () => {

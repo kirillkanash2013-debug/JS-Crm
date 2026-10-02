@@ -3,10 +3,10 @@
 import {PLANS, applyPayment, authenticate, createInvite, isActive, redeemInvite, rotateDashboardToken, rotateIntegrationToken} from './accounts.mjs';
 import {findInviteCode} from './invites.mjs';
 import {checkKeitaro, keitaroOrigin} from './keitaro.mjs';
-import {sealSecret} from './secrets.mjs';
+import {openSecret, sealSecret} from './secrets.mjs';
 import {findToken} from './tokens.mjs';
 
-const MENU = {keyboard: [[{text: '📊 Дашборд'}, {text: '🧩 Подключить соц'}], [{text: '⚙️ Настройки'}, {text: '💳 Подписка'}]], resize_keyboard: true};
+const MENU = {keyboard: [[{text: '📊 Статистика'}, {text: '🧩 Подключить соц'}], [{text: '⚙️ Настройки'}, {text: '💳 Подписка'}]], resize_keyboard: true};
 const INVITE_ERRORS = {
   invalid: '❌ Код не найден. Проверьте, что скопировали его полностью.',
   used: '❌ Этот код уже использован. Каждый код работает только один раз.',
@@ -120,11 +120,48 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     return env.PUBLIC_URL + '/d/' + await rotateDashboardToken(store, tenantId);
   }
 
+  // Calls the collector as this tenant, using the sealed integration token —
+  // no cross-worker secret. Returns {ok,status,body} or null if not set up.
+  async function collectorCall(tenantId, path, body) {
+    if (!env.COLLECTOR_URL || !env.MASTER_KEY) return null;
+    const t = await store.tenant(tenantId);
+    if (!t?.integrationTokenEnc) return null;
+    let token;
+    try { token = await openSecret(env.MASTER_KEY, tenantId, t.integrationTokenEnc); } catch { return null; }
+    try {
+      const r = await fetch(env.COLLECTOR_URL + path, {method: body ? 'POST' : 'GET', headers: {Authorization: 'Bearer ' + token, ...(body ? {'Content-Type': 'application/json'} : {})}, body: body ? JSON.stringify(body) : undefined});
+      return {ok: r.ok, status: r.status, body: await r.json().catch(() => ({}))};
+    } catch { return null; }
+  }
+
+  // Step-by-step connection instructions + the antidetect extension as a file.
+  async function sendPluginKit(chatId) {
+    await send(chatId, '🧩 <b>Как подключить Facebook — по шагам</b>\n\n' +
+      '1️⃣ Скачайте расширение (файл ниже) и распакуйте в отдельную папку.\n' +
+      '2️⃣ В антидетекте (AdsPower / Dolphin): раздел «Расширения» → добавить локальное → укажите эту папку → включите для нужного профиля.\n' +
+      '3️⃣ Откройте профиль и зайдите в <b>Ads Manager</b> нужного соца.\n' +
+      '4️⃣ Нажмите иконку расширения <b>JS Control</b>, вставьте ваш токен интеграции (если потеряли — команда /token) и нажмите «Подключить этот профиль».\n\n' +
+      '✅ Дальше сервер собирает данные сам — браузер можно закрыть. Статистику смотрите в «📊 Статистика».\n\n' +
+      'Либо подключить все профили сразу по API-токену антидетекта: ' + env.IMPORT_URL);
+    try { await tg('sendDocument', {chat_id: chatId, document: env.COLLECTOR_URL + '/extension.zip', caption: 'Расширение JS Control для антидетекта'}); } catch {}
+  }
+
+  async function showStats(chatId, tenantId) {
+    const st = await collectorCall(tenantId, '/v1/status');
+    const conns = (st && st.body && st.body.connections) || [];
+    if (!conns.length) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц — кнопка «🧩 Подключить соц».', MENU);
+    const today = new Date().toISOString().slice(0, 10);
+    const rep = await collectorCall(tenantId, '/v1/report?since=' + today + '&until=' + today);
+    const totals = Object.entries((rep && rep.body && rep.body.totals) || {}).map(([c, v]) => v + ' ' + c).join(' · ') || 'нет данных';
+    const lines = conns.map(c => '• ' + esc(c.label || c.userId) + ' — ' + esc(c.collectMode || 'api'));
+    await send(chatId, '📊 <b>Статистика за сегодня</b>\nСоцев: ' + conns.length + '\nРасход: ' + esc(totals) + '\n\n' + lines.join('\n'), MENU);
+  }
+
   async function finish(chatId, tenantId, tz) {
     await store.saveSettings(tenantId, {timezone: tz, currency: 'USD', onboardedAt: new Date().toISOString()});
     await store.setChat(chatId, tenantId, 'ready');
-    await send(chatId, '✅ <b>Настройки сохранены</b>\n\nОсталось подключить Facebook:\n' + pluginText() +
-      '\n\n📊 Ваш дашборд: ' + await dashboardLink(tenantId) + '\nДанные появятся после первого сбора (обычно несколько минут).', MENU);
+    await send(chatId, '✅ <b>Всё настроено!</b> Осталось подключить Facebook — инструкция ниже. После первого сбора данные появятся в «📊 Статистика».', MENU);
+    await sendPluginKit(chatId);
   }
 
   function pluginText() {
@@ -226,8 +263,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       return finish(chatId, tenant.id, text);
     }
 
-    if (text === '📊 Дашборд' || text === '/dashboard') return send(chatId, '📊 Ссылка на дашборд:\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
-    if (text === '🧩 Подключить соц' || text === '/plugin') return send(chatId, '🧩 <b>Подключение соца</b>\n' + pluginText(), MENU);
+    if (text === '📊 Статистика' || text === '/stats') return showStats(chatId, tenant.id);
+    if (text === '/dashboard') return send(chatId, '📊 Веб-ссылка (необязательно, всё есть в «📊 Статистика»):\n' + await dashboardLink(tenant.id) + '\n\nПредыдущая ссылка больше не работает.', MENU);
+    if (text === '🧩 Подключить соц' || text === '/plugin') return sendPluginKit(chatId);
     if (text === '⚙️ Настройки' || text === '/settings') return askKeitaroUrl(chatId);
     if (text === '💳 Подписка' || text === '/subscription') return subscription(chatId, tenant);
     if (text === '/token') {
