@@ -364,6 +364,28 @@ test('toggle uses the live (overlaid) status, not the stale archive', async () =
   } finally { globalThis.fetch = realFetch; }
 });
 
+test('stats «Обновить»: triggers a collection at most once per 15 min', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'psr', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  const realFetch = globalThis.fetch;
+  let jobs = 0, collectedAt = new Date(Date.now() - 60 * 60000).toISOString(); // 1h ago → stale
+  globalThis.fetch = async (url, opts) => {
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'A', collectedAt}]});
+    if (url.includes('/v1/campaigns')) return Response.json({campaigns: []});
+    if (url.endsWith('/v1/jobs')) { jobs++; return new Response(JSON.stringify({id: 'j', state: 'queued'}), {status: 202, headers: {'content-type': 'application/json'}}); }
+    return Response.json({});
+  };
+  try {
+    await h.tap('stats:refresh'); // stale → one collection
+    assert.equal(jobs, 1); assert.match(h.last(), /Запустил свежий сбор/);
+    collectedAt = new Date().toISOString(); // now fresh
+    await h.tap('stats:refresh'); // within 15 min → no new collection
+    assert.equal(jobs, 1); assert.match(h.last(), /свежие/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('dashboard renders collector spend and marks the social step done', () => {
   const summary = dashboardSummary({name: 'A', plan: 'team', paidUntil: '2026-10-31'}, {onboardedAt: 'x', timezone: 'UTC'},
     {socials: 1, observedAt: '2026-10-01T10:00:00Z', connections: [{label: 'Алина', mode: 'api'}], totals: {USD: 82.29}, rows: 3});

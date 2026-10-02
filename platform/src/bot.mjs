@@ -232,10 +232,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Fetches the Keitaro aggregation for one day (shared by the «Сейчас» report
   // and the campaigns board). Returns {keitaro, subIndex, note}; keitaro is null
   // when Keitaro isn't set up or is unreachable, and note explains why.
-  async function loadKeitaro(tenantId, day, tz) {
+  async function loadKeitaro(tenantId, day, tz, {force} = {}) {
     const ck = tenantId + '|' + day;
     const hit = keitaroCache.get(ck);
-    if (hit && Date.now() - hit.at < 60000) return {keitaro: hit.keitaro, subIndex: hit.subIndex, note: ''};
+    if (!force && hit && Date.now() - hit.at < 60000) return {keitaro: hit.keitaro, subIndex: hit.subIndex, note: ''};
     const s = await store.settings(tenantId);
     const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
     let key = null;
@@ -253,7 +253,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Builds the «Сейчас» report text (FB spend ↔ Keitaro revenue/ROI). Returns
   // null if no socials are connected. Shared by «📊 Статистика» and the optional
   // push-on-update notification.
-  async function statsReportText(tenantId) {
+  async function statsReportText(tenantId, {force} = {}) {
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = (st && st.body && st.body.connections) || [];
     if (!conns.length) return null;
@@ -268,7 +268,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     // по времени кабинета); доход Keitaro — в нашем поясе (кабинет Keitaro по Минску).
     const [campaignsArrays, kt] = await Promise.all([
       Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&accountToday=1'))),
-      loadKeitaro(tenantId, day, tz)
+      loadKeitaro(tenantId, day, tz, {force})
     ]);
     const campaigns = [];
     for (const r of campaignsArrays) for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
@@ -276,11 +276,32 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note;
   }
 
+  const statsMarkup = {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'stats:refresh'}]]};
   async function showStats(chatId, tenantId) {
     await notifyNewSocials(chatId, tenantId);
     const text = await statsReportText(tenantId);
-    if (!text) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц — кнопка «🧩 Подключить соц».', MENU);
-    await send(chatId, text, MENU);
+    if (!text) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц через «👤 Профиль → Инструкции».', MENU);
+    await send(chatId, text, statsMarkup);
+  }
+
+  // «🔄 Обновить» под «Сейчас»: тянем свежий Keitaro всегда, а повторный сбор FB
+  // запускаем не чаще раза в 15 минут после успешного сбора (не долбим кабинет).
+  async function refreshStats(chatId, tenantId, mid) {
+    const st = await collectorCall(tenantId, '/v1/status');
+    const conns = (st && st.body && st.body.connections) || [];
+    const lastAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
+    const recent = lastAt && Date.now() - Date.parse(lastAt) < 15 * 60000;
+    let note = '';
+    if (!conns.length) { return edit(chatId, mid, '📊 Нет подключённых соцов.', statsMarkup); }
+    if (recent) {
+      note = '\n\n✅ Данные уже свежие (сбор был недавно). Авто-сбор — в начале каждого часа.';
+    } else {
+      const today = new Date().toISOString().slice(0, 10), yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      for (const c of conns) await collectorCall(tenantId, '/v1/jobs', {userId: c.userId, since: yest, until: today});
+      note = '\n\n⏳ Запустил свежий сбор FB — через ~минуту нажмите «🔄 Обновить» ещё раз.';
+    }
+    const text = await statsReportText(tenantId, {force: true});
+    await edit(chatId, mid, (text || '📊 Данных пока нет.') + note, statsMarkup);
   }
 
   // --- Agents: assign each connected social to a buyer for spend accounting ---
@@ -813,6 +834,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (data === 'pr:freq') { const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
     if (data.startsWith('pr:freq:')) { const m = Number(data.slice(8)); if ([30, 60, 120].includes(m)) { await store.saveSettings(chat.tenantId, {refreshMinutes: m}); try { await applyFrequency(chat.tenantId, m); } catch {} } const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
+    if (data === 'stats:refresh') return refreshStats(chatId, chat.tenantId, mid);
     // Борд кампаний.
     if (data.startsWith('soc:')) { const v = await campaignsBoard(chat.tenantId, data.slice(4)); return edit(chatId, mid, v.text, v.markup); }
     if (data === 'csoc') return socPicker(chatId, chat.tenantId, mid);

@@ -9,6 +9,10 @@ const IMPORT_USER='__import__';
 // текущие сутки любого рекламного аккаунта (FB считает спенд в поясе кабинета)
 // точно попадали в запрос, даже когда пояс аккаунта смещён относительно UTC.
 const COLLECT_RANGE=()=>{const t=Date.now(),d=u=>new Date(u).toISOString().slice(0,10);return {since:d(t-86400000),until:d(t)};};
+// Следующий слот сбора, выровненный по часам на :01 (минуты не зависят от пояса).
+// Для 60 мин — HH:01 каждый час, для 30 — :01/:31, для 120 — через 2 часа в :01.
+// Так сбор привязан к часам, а не «плавает» от момента подключения/ручного обновления.
+const NEXT_SLOT=(minutes)=>{const step=(minutes||60)*60000,now=Date.now();let next=Math.floor(now/step)*step+60000;while(next<=now)next+=step;return next;};
 const NEEDS_AUTH=['needs_auth','identity',190,102];
 const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
@@ -68,7 +72,7 @@ export class Control {
    // The server owns the settings: a social gets the default schedule from the
    // server (not the client) and an immediate first collection. The plugin only
    // forwards credentials — it never sends a schedule or a collection job.
-   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()+DEFAULT_SCHEDULE_MINUTES*60000},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
+   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:NEXT_SLOT(DEFAULT_SCHEDULE_MINUTES)},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
    // Re-arm the one-time "collected" notification for this (re)connection, so the
    // fresh card gets its "✅ loaded" update even if the social was announced before.
    if(this.state.announced)delete this.state.announced[c.userId];
@@ -84,7 +88,7 @@ export class Control {
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/schedule'){
    const c=this.state.connections[b.userId];if(!c||!Number.isInteger(b.minutes)||b.minutes<0||b.minutes>1440||(b.minutes>0&&b.minutes<15))throw new Error('Invalid schedule');
-   c.schedule=b.minutes?{minutes:b.minutes,nextAt:Date.now()+b.minutes*60000}:null;await this.persist();return reply(200,{ok:true});
+   c.schedule=b.minutes?{minutes:b.minutes,nextAt:NEXT_SLOT(b.minutes)}:null;await this.persist();return reply(200,{ok:true});
   }
   if(method==='DELETE'&&path==='/v1/connections'){
    delete this.state.connections[b.userId];delete this.state.results[b.userId];this.archive?.forget(b.userId);for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
@@ -99,7 +103,7 @@ export class Control {
   for(const c of Object.values(this.state.connections)){
    // Daily retry of the cheap path; one more rejection sends it back to the browser.
    if(c.mode==='browser'&&c.apiRetryAt<=now){c.mode='api';c.apiFailures=2;}
-   if(c.schedule?.nextAt<=now){const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});c.schedule.nextAt=now+c.schedule.minutes*60000;}
+   if(c.schedule?.nextAt<=now){const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});c.schedule.nextAt=NEXT_SLOT(c.schedule.minutes);}
   }
   const ad=this.state.antidetect;
   if(ad&&ad.nextAt<=now&&!this.state.jobs.some(j=>j.kind==='import'&&['queued','running'].includes(j.state))){
