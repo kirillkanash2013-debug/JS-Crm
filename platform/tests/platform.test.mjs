@@ -128,7 +128,8 @@ test('Telegram Stars: invoice, pre-checkout, payment creates tenant and starts o
   assert.equal(h.sent.at(-1).ok, true);
   const paid = {message_id: 50, chat: {id: 2}, from: {username: 'buyer'}, successful_payment: {invoice_payload: 'plan:start', telegram_payment_charge_id: 'ch1', total_amount: 500, currency: 'XTR'}};
   await h.update({message: paid});
-  assert(h.sent.some(m => /токен интеграции/.test(m.text || '') && /jsi_/.test(m.text)));
+  assert(h.sent.some(m => /Поздравляем/.test(m.text || '')), 'congratulation after payment, no raw token dump');
+  assert(!h.sent.some(m => /jsi_[A-Za-z0-9_-]{20,}/.test(m.text || '')), 'token is not dumped into the chat');
   assert.match(h.last(), /Шаг 1 из 3/);
   const count = h.sent.length;
   await h.update({message: paid});
@@ -172,6 +173,15 @@ test('bot «Статистика» pulls socials and today spend from the collec
   assert.match(h.last(), /Статистика за сегодня/);
   assert.match(h.last(), /82\.29 USD/);
   assert.match(h.last(), /Алина/);
+});
+
+test('«🔑 Ключ» shows the current token without rotating it', async () => {
+  const h = harness();
+  const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pk', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
+  await h.say('/start ' + token);
+  await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  await h.say('🔑 Ключ');
+  assert(h.last().includes(token), 'shows the same key, not a new one');
 });
 
 test('bot campaign management: open a campaign, pause it, and check the result', async () => {

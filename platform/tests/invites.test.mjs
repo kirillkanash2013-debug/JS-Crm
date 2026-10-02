@@ -41,7 +41,9 @@ test('admin issues codes; each code creates exactly one account; one account per
   assert(!JSON.stringify([...h.store.invites.values()]).includes(code), 'only the hash is stored');
 
   await h.say(201, '/start ' + code);
-  assert(h.sent.some(m => /Код активирован/.test(m.text) && /Start/.test(m.text) && /jsi_/.test(m.text)));
+  assert(h.sent.some(m => /Код активирован/.test(m.text || '')));
+  assert(h.sent.some(m => /Поздравляем/.test(m.text || '') && /Start/.test(m.text || '')));
+  assert(!h.sent.some(m => /jsi_[A-Za-z0-9_-]{20,}/.test(m.text || '')), 'token is not dumped into the chat');
   assert.match(h.last(), /Шаг 1 из 3/);
   const tenant = await h.store.tenant((await h.store.chat(201)).tenantId);
   assert.equal(tenant.socialLimit, 3); assert.equal(tenant.name, 'u201');
