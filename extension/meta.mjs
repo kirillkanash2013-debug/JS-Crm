@@ -122,7 +122,13 @@ export async function discoverSocial(token,expectedUserId,progress=()=>{},fetche
     if(bm)businesses.set(bm.id,bm);
     return {id,name:String(a.name || ""),currency:String(a.currency || ""),timezone:a.timezone_name || null,statusRaw:a.account_status ?? null,business:bm};
   });
-  return {schemaVersion:1,user:{id:String(user.id),name:String(user.name || "")},accounts:clean,businesses:[...businesses.values()],
+  // Fan pages the user manages — best effort: a plain Ads Manager token often
+  // lacks the pages scope, so a failure just means an empty list, never a stop.
+  let fanPages=[];
+  try{const list=await pages(String(user.id)+"/accounts",{fields:"id,name",limit:100},token,fetcher);
+    const pseen=new Set();fanPages=list.filter(p=>p?.id&&!pseen.has(String(p.id))&&pseen.add(String(p.id))).map(p=>({id:String(p.id),name:String(p.name||"")}));
+  }catch(e){}
+  return {schemaVersion:1,user:{id:String(user.id),name:String(user.name || "")},accounts:clean,businesses:[...businesses.values()],fanPages,
     discoveredAt:new Date().toISOString(),accountsComplete:true,businessesComplete:false,
     scope:"Кабинеты, доступные через этот токен; БМ — только связанные с найденными кабинетами."};
 }

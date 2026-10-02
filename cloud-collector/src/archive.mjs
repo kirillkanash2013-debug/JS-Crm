@@ -139,6 +139,14 @@ export class SqlArchive {
     return {since, until, rows: list, totals};
   }
 
+  // Compact per-social summary (accounts/БМ/pages counts, last collection) from
+  // the last stored run — for the «соц добавлен» notification in the bot.
+  socialSummary(userId) {
+    const [r] = rows(this.sql, 'SELECT summary,last_at FROM socials WHERE user_id=?', String(userId));
+    if (!r?.summary) return null;
+    try { return {...JSON.parse(r.summary), lastAt: r.last_at}; } catch { return null; }
+  }
+
   changes({since, objectId}) {
     return rows(this.sql, 'SELECT * FROM changes WHERE at >= ? AND (? IS NULL OR object_id=?) ORDER BY at DESC LIMIT 500', since, objectId ?? null, objectId ?? null);
   }
@@ -163,5 +171,6 @@ export function summarize(snapshot, mode) {
     if (cur) spendByCurrency[cur] = Math.round(((spendByCurrency[cur] || 0) + (r.metrics || []).reduce((n, m) => n + (Number(m.spend) || 0), 0)) * 100) / 100;
   }
   return {source: snapshot.source, complete: snapshot.complete, observedAt: snapshot.observedAt, mode,
-    accounts: snapshot.social?.accounts?.length || 0, campaigns: count('campaigns'), adsets: count('adsets'), ads: count('ads'), spendByCurrency};
+    accounts: snapshot.social?.accounts?.length || 0, businesses: snapshot.social?.businesses?.length || 0, pages: snapshot.social?.fanPages?.length || 0,
+    campaigns: count('campaigns'), adsets: count('adsets'), ads: count('ads'), spendByCurrency};
 }

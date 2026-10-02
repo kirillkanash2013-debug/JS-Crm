@@ -245,7 +245,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const fresh = [];
     for (const c of conns) {
       const existing = await store.social(tenantId, c.userId);
-      if (!existing) { await store.addSocial(tenantId, c.userId, c.label || String(c.userId)); fresh.push({userId: String(c.userId), label: c.label || String(c.userId)}); }
+      if (!existing) { await store.addSocial(tenantId, c.userId, c.label || String(c.userId)); fresh.push({userId: String(c.userId), label: c.label || String(c.userId), accounts: c.accounts, businesses: c.businesses, pages: c.pages, collectedAt: c.collectedAt}); }
       else if (c.label && c.label !== existing.label) await store.setSocialLabel(tenantId, c.userId, c.label);
     }
     return fresh;
@@ -258,15 +258,22 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     return {inline_keyboard: rows};
   }
 
-  async function promptAssign(chatId, tenantId, userId, label) {
-    await send(chatId, '🆕 Соц «' + esc(label) + '» добавлен. Закрепите за агентом для учёта спендов:', await agentButtons(tenantId, userId));
+  async function promptAssign(chatId, tenantId, s) {
+    // Counts come from the first collection; if it hasn't finished yet, say so
+    // instead of showing zeros that would look wrong.
+    const haveCounts = s.collectedAt || s.accounts != null;
+    const counts = haveCounts
+      ? 'Рекламных кабинетов: <b>' + (s.accounts ?? 0) + '</b> · БМ: <b>' + (s.businesses ?? 0) + '</b> · ФП: <b>' + (s.pages ?? 0) + '</b>'
+      : '<i>Данные кабинетов ещё собираются — появятся через минуту.</i>';
+    await send(chatId, '✅ Профиль «' + esc(s.label) + '» успешно добавлен.\n' + counts +
+      '\n\nК какому агенту отнести? (для учёта спендов)', await agentButtons(tenantId, s.userId));
   }
 
   // Detects newly connected socials and prompts to assign each. Works whether
   // the client added one or many — each new social is prompted once; all
   // unassigned ones also stay listed under «👥 Агенты».
   async function notifyNewSocials(chatId, tenantId) {
-    for (const s of await syncSocials(tenantId)) await promptAssign(chatId, tenantId, s.userId, s.label);
+    for (const s of await syncSocials(tenantId)) await promptAssign(chatId, tenantId, s);
   }
 
   async function showAgents(chatId, tenantId) {

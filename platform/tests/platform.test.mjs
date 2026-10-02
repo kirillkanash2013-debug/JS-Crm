@@ -210,7 +210,7 @@ test('agents: a new social is detected, prompted, and assigned to a new agent', 
   };
   try {
     await h.say('👥 Агенты');
-    assert(h.sent.some(m => /Соц «Алина» добавлен/.test(m.text || '')), 'new social prompted for assignment');
+    assert(h.sent.some(m => /Профиль «Алина» успешно добавлен/.test(m.text || '')), 'new social prompted for assignment');
     await h.tap('assign:100:new'); assert.match(h.last(), /имя нового агента/);
     await h.say('Иван'); assert.match(h.last(), /закреплён/i);
     await h.say('👥 Агенты'); assert.match(h.last(), /Иван/); assert.match(h.last(), /Нераспределённых соцев: <b>0<\/b>/);
