@@ -22,6 +22,10 @@ test('client metrics include only its own live permits and waiting jobs',()=>{
  assert.equal(g.summary().activeJobs,1);assert.equal(g.summary('b').activeJobs,0);
  assert.equal(g.summary('a').waiting,0);assert.equal(g.summary('b').waiting,1);
 });
+test('an empty alarm releases admission without inventing a completed job',()=>{
+ const g=new Admission();const permit=g.acquire('jobs','a',1);g.release(permit,true,null,false);
+ assert.equal(g.summary().activeJobs,0);assert.deepEqual(g.summary().usage,[]);
+});
 test('report loads over 10000 conversions and passes chosen sub index on every page',async()=>{
  const all=Array.from({length:10001},(_,id)=>({conversion_id:id,sub_id_2:'c',status:'sale',revenue:1}));
  const calls=[];const r=await fetchKeitaroReport(async(path,p)=>{calls.push(p);assert(p.columns.includes('sub_id_2'));return {result:'ok',json:{rows:path.endsWith('/build')?[]:all.slice(p.offset,p.offset+p.limit)}};},{subIndex:2});

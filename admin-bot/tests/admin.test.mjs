@@ -21,6 +21,11 @@ test('admin displays counters without claiming container milliseconds are CPU bi
  const sent=[];const bot=createAdminBot({tg:async(m,p)=>sent.push(p),api:async()=>({activeJobs:3,activeContainerCalls:2,waiting:9,usage:[{jobs:10,failed:1,jobMs:1000,containerCalls:5,containerMs:500}]})});
  await bot({message:{from:{id:7},text:'/load'}});assert(sent[0].text.includes('Активные задания: 3'));assert(sent[0].text.includes('не равно оплачиваемому CPU'));
 });
+test('empty monitoring shows zero counters and an explicit absence of measurements',async()=>{
+ const sent=[];const bot=createAdminBot({tg:async(m,p)=>sent.push(p),api:async()=>({activeJobs:0,activeContainerCalls:0,activeReports:0,waiting:0,usage:[]})});
+ await bot({message:{from:{id:7},text:'/load'}});
+ assert(!/undefined|NaN/.test(sent[0].text));assert(sent[0].text.includes('Заданий: 0'));assert(sent[0].text.includes('нет измерений'));
+});
 test('readiness is authenticated and checks both dependencies without exposing client metadata',async()=>{
  const calls=[],env={ADMIN_CHAT_IDS:'7',ADMIN_WEBHOOK_SECRET:'wh',ADMIN_API_KEY:'api',PLATFORM:{fetch:async r=>{calls.push(new URL(r.url).pathname);return Response.json({clients:[{name:'private-client'}],usage:[]});}}};
  const call=(key='wh')=>adminRoute(new Request('https://admin/internal/ready',{method:'POST',headers:{'x-admin-internal':key}}),env);

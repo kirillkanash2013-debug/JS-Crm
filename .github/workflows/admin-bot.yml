@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deploy: ${{ steps.verify.outputs.deploy }}
+      foundation: ${{ steps.verify.outputs.foundation }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,7 +25,8 @@ jobs:
       - id: verify
         name: Verify the requested administrative bot before any deployment
         env:
-          DEPLOY_REQUESTED: ${{ vars.ADMIN_BOT_DEPLOY == 'true' || contains(github.event.head_commit.message, '[activate-admin]') }}
+          DEPLOY_REQUESTED: ${{ vars.ADMIN_BOT_DEPLOY == 'true' || contains(github.event.head_commit.message, '[activate-admin]') || contains(github.event.head_commit.message, '[deploy-admin]') || contains(github.event.head_commit.message, '[deploy-client]') }}
+          FOUNDATION_REQUESTED: ${{ contains(github.event.head_commit.message, '[activate-admin]') || contains(github.event.head_commit.message, '[deploy-client]') }}
           ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
@@ -33,11 +35,11 @@ jobs:
           import {verifyToken} from './admin-bot/scripts/verify-token.mjs';
           const deploy=process.env.DEPLOY_REQUESTED==='true';
           if(deploy){const username=await verifyToken({token:process.env.ADMIN_BOT_TOKEN,clientToken:process.env.TELEGRAM_BOT_TOKEN,username:'MyJsCrmBot'});console.log('Verified @'+username);}
-          appendFileSync(process.env.GITHUB_OUTPUT,'deploy='+deploy+'\n');
+          appendFileSync(process.env.GITHUB_OUTPUT,'deploy='+deploy+'\nfoundation='+(deploy&&process.env.FOUNDATION_REQUESTED==='true')+'\n');
           JS
   client-foundation:
     needs: preflight
-    if: needs.preflight.outputs.deploy == 'true'
+    if: needs.preflight.outputs.foundation == 'true'
     uses: ./.github/workflows/cloud-collector.yml
     with:
       deploy: true

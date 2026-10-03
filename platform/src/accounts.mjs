@@ -3,9 +3,10 @@ import {sealSecret} from './secrets.mjs';
 import {hashToken, newToken, tokenKind} from './tokens.mjs';
 
 export const PLANS = {
-  start: {name: 'Start', socialLimit: 3, days: 30},
-  team: {name: 'Team', socialLimit: 15, days: 30},
-  agency: {name: 'Agency', socialLimit: 50, days: 30}
+  // 0 is the wire/database sentinel for unlimited connected socials.
+  start: {name: 'Start', socialLimit: 0, days: 30},
+  team: {name: 'Team', socialLimit: 0, days: 30},
+  agency: {name: 'Agency', socialLimit: 0, days: 30}
 };
 
 const addDays = (from, days) => {

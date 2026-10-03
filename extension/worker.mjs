@@ -186,7 +186,7 @@ async function activate(m){
   const origin=serverOrigin(m.origin || DEFAULT_SERVER);
   const health=await serverCommand({type:"SERVER_STATUS",origin,key});
   if(health.mode!=="live")throw new Error("Сервер работает в тестовом режиме и не принимает реальные соцы.");
-  await chrome.storage.local.set({server:{origin,key},license:{mode:"server",plan:"JS Control",socialLimit:1,accountLimit:null,expiresAt:null}});
+  await chrome.storage.local.set({server:{origin,key},license:{mode:"server",plan:"JS Control",socialLimit:0,accountLimit:null,expiresAt:null}});
   await status("Ключ принят. Откройте Ads Manager и подключите соц.");
   return {mode:"server"};
 }

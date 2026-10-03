@@ -2,14 +2,15 @@
 export function createAdminBot({tg,api}){
  const send=(id,text,buttons)=>tg('sendMessage',{chat_id:id,text:String(text).slice(0,4000),...(buttons?{reply_markup:{inline_keyboard:buttons}}:{})});
  const loadText=s=>{
-  const totals=(s.usage||[]).reduce((a,u)=>{for(const k of ['jobs','failed','jobMs','containerCalls','containerMs','reports'])a[k]=(a[k]||0)+(u[k]||0);return a;},{});
-  return 'Нагрузка JS Control\nАктивные задания: '+s.activeJobs+'\nКонтейнерные запросы: '+s.activeContainerCalls+'\nОтчеты Keitaro: '+(s.activeReports||0)+'\nОжидают разрешения: '+s.waiting+'\nСамое долгое ожидание: '+Math.round((s.oldestWaitMs||0)/1000)+' с\n\nПоследние 90 дней:\nЗаданий: '+totals.jobs+' · ошибок: '+totals.failed+'\nВремя заданий: '+Math.round(totals.jobMs/1000)+' с\nКонтейнерных запросов: '+totals.containerCalls+'\nВремя контейнерных запросов: '+Math.round(totals.containerMs/1000)+' с\n\nВремя запросов не равно оплачиваемому CPU/простоевому времени. Фактическую память и CPU сверяем с мониторингом Cloudflare.';
+  const keys=['jobs','failed','jobMs','containerCalls','containerMs','reports'];
+  const totals=(s.usage||[]).reduce((a,u)=>{for(const k of keys){const n=Number(u[k]||0);if(Number.isFinite(n)&&n>=0)a[k]+=n;}return a;},Object.fromEntries(keys.map(k=>[k,0])));
+  return 'Нагрузка JS Control\nАктивные задания: '+s.activeJobs+'\nКонтейнерные запросы: '+s.activeContainerCalls+'\nОтчеты Keitaro: '+(s.activeReports||0)+'\nОжидают разрешения: '+s.waiting+'\nСамое долгое ожидание: '+Math.round((s.oldestWaitMs||0)/1000)+' с\n\nПоследние 90 дней:\nЗаданий: '+totals.jobs+' · ошибок: '+totals.failed+'\nВремя заданий: '+Math.round(totals.jobMs/1000)+' с\nКонтейнерных запросов: '+totals.containerCalls+'\nВремя контейнерных запросов: '+Math.round(totals.containerMs/1000)+' с'+((s.usage||[]).length?'':'\nЗа этот период ещё нет измерений.')+'\n\nВремя запросов не равно оплачиваемому CPU/простоевому времени. Фактическую память и CPU сверяем с мониторингом Cloudflare.';
  };
  async function clients(actor,cursor=''){
   const r=await api(actor,'clients',{cursor});const rows=r.clients||[];
   return send(actor,'Клиенты\n'+(rows.map(c=>c.name+' · '+c.plan+' · до '+c.paidUntil).join('\n')||'Клиентов пока нет.'),[...rows.map(c=>[{text:c.name.slice(0,50),callback_data:'client:'+c.id}]),...(r.nextCursor?[[{text:'Далее',callback_data:'clients:'+r.nextCursor}]]:[])]);
  }
- async function client(actor,id){const c=await api(actor,'client',{tenantId:id});return send(actor,'Клиент: '+c.name+'\nID: '+c.id+'\nПодписка: '+c.plan+' · '+c.status+'\nОплачен до: '+c.paidUntil+'\nПодключений: '+c.socials+'/'+c.socialLimit+'\n\nЛичное сообщение:\n/message '+c.id+' текст',[[{text:'Использование ресурсов',callback_data:'usage:'+c.id}],[{text:'Ошибки',callback_data:'errors:'+c.id}],[{text:'Клиенты',callback_data:'clients:'}]]);}
+ async function client(actor,id){const c=await api(actor,'client',{tenantId:id});return send(actor,'Клиент: '+c.name+'\nID: '+c.id+'\nПодписка: '+c.plan+' · '+c.status+'\nОплачен до: '+c.paidUntil+'\nПодключений: '+c.socials+' · без лимита'+'\n\nЛичное сообщение:\n/message '+c.id+' текст',[[{text:'Использование ресурсов',callback_data:'usage:'+c.id}],[{text:'Ошибки',callback_data:'errors:'+c.id}],[{text:'Клиенты',callback_data:'clients:'}]]);}
  async function preview(actor,tenantId,text){const d=await api(actor,'message/preview',{tenantId,text});return send(actor,'Предпросмотр\nПолучатель: '+(tenantId==='*'?'все клиенты с включенными объявлениями':tenantId)+'\n\n'+d.body+'\n\nБез подтверждения сообщение не отправится. Срок подтверждения — 10 минут.',[[{text:'Подтвердить отправку',callback_data:'confirm:'+d.id}],[{text:'Отмена',callback_data:'cancel:'+d.id}]]);}
  const handle=async update=>{
   const q=update.callback_query,m=update.message,actor=String(q?.from?.id||m?.from?.id||'');
@@ -23,7 +24,7 @@ export function createAdminBot({tg,api}){
    return;
   }
   const text=String(m?.text||'').trim();
-  if(text==='/history')return send(actor,JSON.stringify(await api(actor,'history',{}),null,2));
+  if(text==='/history'){const r=await api(actor,'history',{});return send(actor,r.events?.length?JSON.stringify(r,null,2):'Административных отправок пока не было.');}
   if(text==='/clients')return clients(actor);
   if(text==='/load')return send(actor,loadText(await api(actor,'load',{})));
   if(text.startsWith('/client '))return client(actor,text.slice(8).trim());

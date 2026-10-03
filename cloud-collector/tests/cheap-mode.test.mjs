@@ -60,11 +60,11 @@ test('no browser fallback for proxy errors; rate limit pauses the schedule for a
   assert(c.state.connections['103'].schedule.nextAt >= Date.now() + 59 * 60000);
 });
 
-test('up to 4 API jobs run in parallel; browser jobs run alone; social limit per plan', async () => {
+test('up to 4 API jobs run in parallel; browser jobs run alone; connection count is unlimited', async () => {
   const {c, add} = control({collectApi: async x => snapshot(x.userId), collect: async x => snapshot(x.userId)}, 6);
   for (const id of ['1001', '1002', '1003', '1004', '1005', '1006']) await add(id);
   const limited = await c.request('/v1/connections', 'POST', conn('1007'), 6);
-  assert.equal(limited.status, 409); assert.equal((await limited.json()).limit, 6);
+  assert.equal(limited.status, 201); assert.equal(Object.keys(c.state.connections).length,7);
   const works = [];
   for (let w; (w = await c.prepare());) works.push(w);
   assert.equal(works.length, 4);
@@ -98,7 +98,7 @@ test('structure is re-read at most hourly; spend every run', async () => {
   assert(calls.includes('/v25.0/act_555/ads'), 'refreshed after an hour');
 });
 
-test('collector access: owner key, client token with its plan limit, expired, unknown', async () => {
+test('collector access: owner and client have unlimited connections; expired and unknown still refused', async () => {
   const db = new DatabaseSync(':memory:');
   for (const f of fs.readdirSync(new URL('../../platform/migrations/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort()) db.exec(fs.readFileSync(new URL('../../platform/migrations/' + f, import.meta.url), 'utf8'));
   const d1 = {async batch(stmts){db.exec('BEGIN');try{const out=[];for(const st of stmts)out.push(await st.run());db.exec('COMMIT');return out;}catch(e){db.exec('ROLLBACK');throw e;}},prepare(sql) { let a = []; const st = {bind(...x) { a = x; return st; }, async run() { const r = db.prepare(sql).run(...a); return {meta: {changes: r.changes}}; }, async first() { return db.prepare(sql).get(...a) ?? null; }}; return st; }};
@@ -107,14 +107,20 @@ test('collector access: owner key, client token with its plan limit, expired, un
   const owner = 'js_srv_' + 'o'.repeat(43), equal = async (a, b) => a === b;
   const env = {JS_CONTROL_OWNER_KEY: owner, DB: d1};
   const asOwner = await resolveCaller('Bearer ' + owner, env, equal);
-  assert.equal(asOwner.space, 'owner'); assert.equal(asOwner.socialLimit, 100);
+  assert.equal(asOwner.space, 'owner'); assert.equal(asOwner.socialLimit, 0);
   const asTenant = await resolveCaller('Bearer ' + integrationToken, env, equal);
-  assert.equal(asTenant.space, 'tenant:' + tenant.id); assert.equal(asTenant.socialLimit, 3);
-  assert.equal(asTenant.account.plan, 'start'); assert.equal(asTenant.account.socialLimit, 3);
+  assert.equal(asTenant.space, 'tenant:' + tenant.id); assert.equal(asTenant.socialLimit, 0);
+  assert.equal(asTenant.account.plan, 'start'); assert.equal(asTenant.account.socialLimit, 0);
   assert.equal((await resolveCaller('Bearer jsi_' + 'z'.repeat(43), env, equal)).status, 401);
   assert.equal((await resolveCaller('Bearer ' + integrationToken, {JS_CONTROL_OWNER_KEY: owner}, equal)).status, 503);
   await store.extendTenant(tenant.id, '2020-01-01');
   assert.equal((await resolveCaller('Bearer ' + integrationToken, env, equal)).status, 402);
+});
+test('bulk import ignores the old persisted connection quota',()=>{
+ const c=new Control({...initialState(),socialLimit:1},async()=>{},async()=>{},{ });
+ const job={state:'running'};
+ c.applyImport(job,{at:new Date().toISOString(),found:20,items:Array.from({length:20},(_,i)=>({userId:String(1000+i)})),skipped:[]},null);
+ assert.equal(Object.keys(c.state.connections).length,20);assert.equal(job.state,'done');
 });
 
 test('bookmarklet connection (no cookies): dead token asks the client to reconnect, no browser run', async () => {
