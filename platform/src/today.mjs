@@ -81,7 +81,7 @@ function offersBlock({offers = [], campaigns = []}) {
 
 function topBlock({day, times, spendTotal, totals}) {
   const revAll = round2(totals.rev + totals.doletRev);
-  return ['<b>📊 Сейчас · ' + esc(fmtDate(day)) + '</b>',
+  return ['<b>📊 Сейчас · ' + esc(fmtDate(day)) + (times?.updated ? ' · ' + esc(times.updated) : '') + '</b>',
     '<i>JS Control ' + esc(times?.fb || '—') + ' · Keitaro ' + esc(times?.keitaro || '—') + '</i>', '',
     'Spend <b>' + money(spendTotal) + '</b>',
     'Inst <b>' + Math.round(totals.inst) + '</b> · Reg <b>' + Math.round(totals.reg) + '</b>',
@@ -122,7 +122,7 @@ function campaignLines(c, k) {
 export function buildNow({day, times, campaigns = [], keitaro, subIndex = 4}) {
   if(campaigns.some(c=>c.currency&&c.currency!=='USD')){
     const totals={};for(const c of campaigns){const cur=c.currency||'UNKNOWN';totals[cur]=(totals[cur]||0)+num(c.spend);}
-    return '<b>📊 Сейчас · '+esc(fmtDate(day))+'</b>\n'+Object.entries(totals).map(([cur,v])=>'Spend <b>'+v.toFixed(2)+' '+esc(cur)+'</b>').join('\n')+'\n\n⚠️ Доход, прибыль и ROI не сведены: сначала нужно согласовать валюты источников.\n\n'+campaigns.slice(0,25).map(c=>esc(c.name||c.campaignId)+' · '+num(c.spend).toFixed(2)+' '+esc(c.currency||'UNKNOWN')).join('\n');
+    return '<b>📊 Сейчас · '+esc(fmtDate(day))+(times?.updated?' · '+esc(times.updated):'')+'</b>\n'+Object.entries(totals).map(([cur,v])=>'Spend <b>'+v.toFixed(2)+' '+esc(cur)+'</b>').join('\n')+'\n\n⚠️ Доход, прибыль и ROI не сведены: сначала нужно согласовать валюты источников.\n\n'+campaigns.slice(0,25).map(c=>esc(c.name||c.campaignId)+' · '+num(c.spend).toFixed(2)+' '+esc(c.currency||'UNKNOWN')).join('\n');
   }
   const agg = keitaro || {byCampaign: {}, totals: {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0}};
   const empty = {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0};

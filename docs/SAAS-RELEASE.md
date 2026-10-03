@@ -55,3 +55,7 @@ Manual timezone сопровождается инструкцией профил
 - Повторные updates/платежи/подтверждения, ошибка Telegram при отправке и перезапуск задачи.
 - Проба восстановления отдельной тестовой базы и отката совместимого выпуска.
 - Нагрузочный пилот; queue counters не заменяют реальные замеры.
+
+### Paired statistics refresh
+
+The collector completes Facebook for all connected socials before the platform fetches Keitaro. Menus and refresh taps only read the last published pair; they do not fetch Keitaro independently. A failed/partial Facebook cycle, failed Keitaro fetch, or changed Facebook generation preserves the previous pair. The encrypted `stats_snapshots` row holds one current report per tenant, with a fenced ten-minute lease to prevent concurrent replacement. The heading shows completion time; source timestamps remain actual collection times. Migration 0011 adds storage without rewriting history or keys. After the first rollout the first paired report appears after the next successful Facebook cycle.

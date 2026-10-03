@@ -240,26 +240,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     try { await tg('sendDocument', {chat_id: chatId, document: docUrl, caption: 'Расширение JS Control' + (ver ? ' v' + ver : '') + ' для антидетекта'}); } catch {}
   }
 
-  // Keitaro-отчёт тяжёлый (TCP-сокет к трекеру), а борд перерисовывается часто
-  // (каждое «Обновить»/действие). Поэтому кэшируем успешный результат на 60 c по
-  // (tenant, день) — данные всё равно обновляются раз в 30–120 мин. Живёт в
-  // пределах инстанса воркера; при частых тапах подряд снимает основную задержку.
-  const keitaroCache = new Map();
-  // Fetches the Keitaro aggregation for one day (shared by the «Сейчас» report
-  // and the campaigns board). Returns {keitaro, subIndex, note}; keitaro is null
-  // when Keitaro isn't set up or is unreachable, and note explains why.
-  async function loadKeitaro(tenantId, day, tz, {force} = {}) {
+  // Only the collector completion path fetches a new Keitaro report.
+  async function loadKeitaro(tenantId, day, tz) {
     const s = await store.settings(tenantId);
-    const ck = JSON.stringify([tenantId,day,tz,s.keitaroUrl,s.keitaroKeyEnc,s.keitaroSub]);
-    const hit = keitaroCache.get(ck);
-    if (!force && hit && Date.now() - hit.at < 60000) return {keitaro: hit.keitaro, subIndex: hit.subIndex, note: ''};
     const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
     let key = null;
     if (s.keitaroKeyEnc && env.MASTER_KEY) { try { key = await openSecret(env.MASTER_KEY, tenantId, s.keitaroKeyEnc); } catch {} }
     const subIndex = Number(String(s.keitaroSub || '').match(/\d+/)?.[0]) || 4;
     if (origin && key && env.KEITARO_BRIDGE) {
       const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex,tenantId});
-      if (res && res.result === 'ok') { const keitaro = aggregateKeitaro(res, {subIndex, day}); keitaroCache.set(ck, {at: Date.now(), keitaro, subIndex}); return {keitaro, subIndex, note: ''}; }
+      if (res && res.result === 'ok') { const keitaro = aggregateKeitaro(res, {subIndex, day}); return {keitaro, subIndex, note: ''}; }
       return {keitaro: null, subIndex, note: '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.'};
     }
     if (!origin || !key) return {keitaro: null, subIndex, note: '\n\n💡 Подключите Keitaro в «👤 Профиль → Инструкции» — тогда увидите доход, прибыль и ROI.'};
@@ -269,27 +259,59 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Builds the «Сейчас» report text (FB spend ↔ Keitaro revenue/ROI). Returns
   // null if no socials are connected. Shared by «📊 Статистика» and the optional
   // push-on-update notification.
-  async function statsReportText(tenantId, {force} = {}) {
+  async function savedStats(tenantId) {
+    const row = await store.statsSnapshot(tenantId);
+    if (!row?.enc) return null;
+    return JSON.parse(await openSecret(env.MASTER_KEY, tenantId, row.enc));
+  }
+
+  // Menu reads the last complete pair; it never fetches Keitaro independently.
+  async function statsReportText(tenantId) {
+    const saved = await savedStats(tenantId);
+    if (saved) return saved.text;
     const st = await collectorCall(tenantId, '/v1/status');
-    const conns = (st && st.body && st.body.connections) || [];
+    const conns = st?.body?.connections || [];
     if (!conns.length) return null;
-    const s = await store.settings(tenantId);
-    const tz = s.timezone || 'UTC';
-    const day = new Date().toLocaleDateString('en-CA', {timeZone: tz});
-    const nowHHMM = new Date().toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'});
-    const fbAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
-    const fbTime = fbAt ? new Date(fbAt).toLocaleTimeString('ru-RU', {timeZone: tz, hour: '2-digit', minute: '2-digit'}) : '—';
-    // Параллельно: кампании по каждому соцу + отчёт Keitaro (не ждём по очереди).
-    // Спенд — за «сегодня» в поясе каждого рекламного аккаунта (FB считает спенд
-    // по времени кабинета); доход Keitaro — в нашем поясе (кабинет Keitaro по Минску).
-    const [campaignsArrays, kt] = await Promise.all([
-      Promise.all(conns.map(c => collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&accountToday=1'))),
-      loadKeitaro(tenantId, day, tz, {force})
-    ]);
-    const campaigns = [];
-    for (const r of campaignsArrays) for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
-    const {keitaro, subIndex, note} = kt;
-    return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note;
+    return '📊 Сейчас · сводка ещё не собрана. После следующего успешного сбора Facebook получим Keitaro и обновим это сообщение.';
+  }
+
+  async function collectStatsPair(tenantId) {
+    const owner = crypto.randomUUID();
+    if (!await store.claimStatsCycle(tenantId, owner)) throw new Error('stats_cycle_busy');
+    try {
+      const st = await collectorCall(tenantId, '/v1/status');
+      if (!st?.ok) throw new Error('facebook_status_unavailable');
+      const conns = st.body.connections || [], jobs = st.body.jobs || [];
+      if (!conns.length || conns.some(c => !Number.isFinite(Date.parse(c.collectedAt)))) return null;
+      if (jobs.some(j => ['queued','running'].includes(j.state))) throw new Error('facebook_cycle_pending');
+      if (conns.some(c => jobs.some(j => String(j.userId) === String(c.userId) && !j.action &&
+          ['failed','needs_auth','rate_limited'].includes(j.state) && Date.parse(j.finishedAt) >= Date.parse(c.collectedAt)))) return null;
+      const previous = await savedStats(tenantId);
+      // Every social must advance before replacing a previously published pair.
+      if (previous && conns.some(c => previous.sourceTimes[c.userId] &&
+          Date.parse(c.collectedAt) <= Date.parse(previous.sourceTimes[c.userId]))) return null;
+      const sourceTimes = Object.fromEntries(conns.map(c => [c.userId,c.collectedAt]));
+      const s = await store.settings(tenantId), tz = s.timezone || 'UTC';
+      const started = new Date(), day = todayIn(tz);
+      const responses = await Promise.all(conns.map(c => collectorCall(tenantId,
+        '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&accountToday=1')));
+      if (responses.some(r => !r?.ok || !Array.isArray(r.body.campaigns))) throw new Error('facebook_data_unavailable');
+      const campaigns = responses.flatMap(r => r.body.campaigns);
+      const kt = await loadKeitaro(tenantId, day, tz);
+      if (s.keitaroUrl && s.keitaroKeyEnc && !kt.keitaro) throw new Error('keitaro_cycle_failed');
+      // Reject a pair if Facebook changed while Keitaro was being fetched.
+      const after = await collectorCall(tenantId, '/v1/status');
+      if (!after?.ok || JSON.stringify(Object.fromEntries((after.body.connections || []).map(c => [c.userId,c.collectedAt]))) !== JSON.stringify(sourceTimes) ||
+          (after.body.jobs || []).some(j => ['queued','running'].includes(j.state)) || todayIn(tz) !== day) throw new Error('facebook_cycle_changed');
+      const completed = new Date(), format = d => d.toLocaleTimeString('ru-RU',{timeZone:tz,hour:'2-digit',minute:'2-digit'});
+      const fbAt = conns.map(c => c.collectedAt).sort().pop();
+      const times = {fb:format(new Date(fbAt)),keitaro:kt.keitaro?format(completed):'—',updated:format(completed)};
+      const text = buildNow({day,times,campaigns,keitaro:kt.keitaro,subIndex:kt.subIndex}) + kt.note;
+      const snapshot = {text,day,timezone:tz,sourceTimes,keitaro:kt.keitaro,subIndex:kt.subIndex,startedAt:started.toISOString(),completedAt:completed.toISOString()};
+      const enc = await sealSecret(env.MASTER_KEY,tenantId,JSON.stringify(snapshot));
+      if (!await store.saveStatsSnapshot(tenantId,owner,enc,completed.toISOString())) throw new Error('stats_cycle_lease_lost');
+      return text;
+    } finally { await store.releaseStatsCycle(tenantId,owner); }
   }
 
   const statsMarkup = {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'stats:refresh'}]]};
@@ -301,23 +323,24 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if(msg?.message_id)await store.setStatsMessage(tenantId,msg.message_id);
   }
 
-  // «🔄 Обновить» под «Сейчас»: тянем свежий Keitaro всегда, а повторный сбор FB
-  // запускаем не чаще раза в 15 минут после успешного сбора (не долбим кабинет).
+  // Manual refresh queues Facebook first. The completion callback creates the pair.
   async function refreshStats(chatId, tenantId, mid) {
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = (st && st.body && st.body.connections) || [];
-    const lastAt = conns.map(c => c.collectedAt).filter(Boolean).sort().pop();
-    const recent = lastAt && Date.now() - Date.parse(lastAt) < 15 * 60000;
+    const recent = conns.length > 0 && conns.every(c => c.collectedAt && Date.now() - Date.parse(c.collectedAt) < 15 * 60000);
     let note = '';
     if (!conns.length) { return edit(chatId, mid, '📊 Нет подключённых соцов.', statsMarkup); }
     if (recent) {
       note = '\n\n✅ Данные уже свежие (сбор был недавно). Авто-сбор работает с интервалом, выбранным в «Профиль → Частота обновления».';
     } else {
       const today = new Date().toISOString().slice(0, 10), yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      for (const c of conns) await collectorCall(tenantId, '/v1/jobs', {userId: c.userId, since: yest, until: today});
+      for (const c of conns) {
+        const r = await collectorCall(tenantId, '/v1/jobs', {userId:c.userId,since:yest,until:today});
+        if (!r?.ok) return edit(chatId,mid,((await statsReportText(tenantId)) || '📊 Данных пока нет.') + '\n\nНе удалось запустить сбор Facebook. Предыдущая сводка сохранена.',statsMarkup);
+      }
       note = '\n\n⏳ Запрос принят. После успешного сбора это сообщение обновится автоматически.';
     }
-    const text = await statsReportText(tenantId, {force: true});
+    const text = await statsReportText(tenantId);
     await store.setStatsMessage(tenantId,mid);
     await edit(chatId, mid, (text || '📊 Данных пока нет.') + note, statsMarkup);
   }
@@ -517,7 +540,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const day = todayIn(tz);
     const [cr, {keitaro}] = await Promise.all([
       collectorCall(tenantId, '/v1/campaigns?userId=' + encodeURIComponent(userId) + '&accountToday=1'),
-      loadKeitaro(tenantId, day, tz)
+      savedStats(tenantId).then(s => ({keitaro:s?.day === day && s?.timezone === tz ? s.keitaro : null}))
     ]);
     const conns = (sr && sr.body && sr.body.connections) || [];
     const jobs = (sr && sr.body && sr.body.jobs) || [];
@@ -982,6 +1005,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Push 3 (optional, per «Профиль → Уведомления»): send the fresh «Сейчас»
   // report after a data refresh. Called by the collector once per refresh cycle.
   handleUpdate.notifyStatsRefresh = async (tenantId) => {
+    await collectStatsPair(tenantId);
     const s = await store.settings(tenantId);
     if (!s.notifyOnUpdate && !s.statsMsgId) return;
     const chatId = await store.chatForTenant(tenantId);
