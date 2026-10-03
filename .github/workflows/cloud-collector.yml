@@ -4,6 +4,12 @@ on:
     branches: [claude-code, claude/saas-access]
     paths: ['shared/**', 'cloud-collector/**', 'server/**', 'extension/**', 'platform/**', '.github/workflows/cloud-collector.yml']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      deploy:
+        description: Explicitly authorized deployment to isolated test services
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -12,7 +18,7 @@ concurrency:
 jobs:
   test-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -37,27 +43,40 @@ jobs:
         run: docker build -f server/Dockerfile.cloudflare -t js-control-cloud:test .
       - name: Verify container startup and shared module imports
         run: docker run --rm --network none -e INTERNAL_KEY=ci-only-container-import-test-key-0001 --entrypoint node js-control-cloud:test -e "import('./server/container-runner.mjs').then(()=>process.exit(0))"
+      - name: Save D1 recovery bookmark before migrations
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
+        working-directory: platform
+        run: |
+          ../cloud-collector/node_modules/.bin/wrangler d1 time-travel info js-control-platform --json > "$RUNNER_TEMP/js-control-recovery.json"
+          echo 'D1 recovery bookmark before rollout:' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/js-control-recovery.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Hold collection during rollout
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
+        run: node cloud-collector/release-gate.mjs hold
       - name: Apply D1 migrations before either Worker
-        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
         working-directory: platform
         run: ../cloud-collector/node_modules/.bin/wrangler d1 migrations apply js-control-platform --remote
       - name: Deploy isolated collector and browser container
-        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
         working-directory: cloud-collector
         run: npx wrangler deploy
       - name: Initialize encryption secrets without rotating existing keys
-        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
         run: node cloud-collector/bootstrap-secrets.mjs
       - name: Check public gateway
-        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
         run: |
           curl --fail --retry 5 --retry-delay 5 https://js-control-collector-claude.kirill-kanash2013.workers.dev/health
 
       - name: Deploy platform with private Keitaro container binding
-        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
         working-directory: platform
         run: ../cloud-collector/node_modules/.bin/wrangler deploy
       - name: Check platform uses container transport
-        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
         run: |
           curl --fail --retry 5 --retry-delay 5 https://js-control-platform.kirill-kanash2013.workers.dev/health | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("keitaroTransport")=="container"'
+      - name: Release collection after successful rollout checks
+        if: vars.SAAS_AUTO_DEPLOY == 'true' || inputs.deploy
+        run: node cloud-collector/release-gate.mjs release

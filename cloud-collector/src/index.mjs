@@ -129,7 +129,7 @@ export class CollectorControl extends DurableObject {
  // Takes every job that may run now (several cheap API jobs in parallel), runs
  // them outside the storage gate and records each result as soon as it ends.
  async alarm(){
-  if(this.env.PAUSE_JOBS==='true'){await this.ctx.storage.setAlarm(Date.now()+60000);return;}
+  if(this.env.PAUSE_JOBS==='true'||this.env.RELEASE_HOLD==='true'){await this.ctx.storage.setAlarm(Date.now()+60000);return;}
   const tenant=this.control.state.tenantId;
   if(tenant&&this.env.DB){
    const t=await this.env.DB.prepare('SELECT status,paid_until FROM tenants WHERE id=?').bind(tenant).first();
