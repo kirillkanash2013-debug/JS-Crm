@@ -144,7 +144,7 @@ test('collectorStatus decrypts the sealed token and summarizes the collector', a
   globalThis.fetch = async (url, opts) => {
     assert.match(opts.headers.Authorization, /^Bearer jsi_/);
     assert(url.startsWith('https://c.test/v1/'));
-    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}], results: {'100': {observedAt: '2026-10-01T10:00:00Z'}}});
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api', collectedAt:new Date().toISOString()}], results: {'100': {observedAt: '2026-10-01T10:00:00Z'}}});
     return Response.json({totals: {USD: 82.29}, rows: [1, 2, 3]});
   };
   try {
@@ -163,14 +163,15 @@ test('bot «Статистика» pulls socials and today spend from the collec
   const {integrationToken: token} = await applyPayment(h.store, {paymentId: 'pstat', provider: 'test', plan: 'team', masterKey: MASTER_KEY});
   await h.say('/start ' + token);
   await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
+  const collectedAt = new Date().toISOString();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     assert.match(opts.headers.Authorization, /^Bearer jsi_/);
-    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}]});
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api', collectedAt}]});
     if (url.includes('/v1/campaigns')) return Response.json({campaigns: [{campaignId: '100', name: 'KG_A', effectiveStatus: 'ACTIVE', dailyBudget: 15400, spend: 82.29}]});
     return Response.json({totals: {}, rows: []});
   };
-  try { await h.say('📊 Статистика'); } finally { globalThis.fetch = realFetch; }
+  try { await createBot({store:h.store,tg:async()=>({}),env}).notifyStatsRefresh((await h.store.chat(1)).tenantId); await h.say('📊 Статистика'); } finally { globalThis.fetch = realFetch; }
   // Keitaro not configured → «Сейчас» with FB spend only, plus a hint to add Keitaro.
   assert.match(h.last(), /📊 Сейчас/);
   assert.match(h.last(), /Spend <b>\$82\.29<\/b>/);
@@ -251,7 +252,7 @@ test('agents: a new social is detected, prompted, and assigned to a new agent', 
   await h.store.setChat(1, tenantId, 'ready');
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api'}]});
+    if (url.endsWith('/v1/status')) return Response.json({connections: [{userId: '100', label: 'Алина', collectMode: 'api', collectedAt:new Date().toISOString()}]});
     return Response.json({totals: {}, rows: []});
   };
   try {

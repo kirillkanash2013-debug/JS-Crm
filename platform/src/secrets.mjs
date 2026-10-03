@@ -14,7 +14,9 @@ export async function sealSecret(masterKey, tenantId, plain) {
   const data = await crypto.subtle.encrypt({name: 'AES-GCM', iv}, await tenantKey(masterKey, tenantId), new TextEncoder().encode(plain));
   const out = new Uint8Array(12 + data.byteLength);
   out.set(iv); out.set(new Uint8Array(data), 12);
-  return btoa(String.fromCharCode(...out));
+  let binary = '';
+  for (let offset = 0; offset < out.length; offset += 8192) binary += String.fromCharCode(...out.subarray(offset,offset+8192));
+  return btoa(binary);
 }
 
 export async function openSecret(masterKey, tenantId, sealed) {

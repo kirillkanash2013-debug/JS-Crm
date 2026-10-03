@@ -3,6 +3,10 @@ const now = () => new Date().toISOString();
 
 export class D1Store {
   constructor(db) { this.db = db; }
+  async statsSnapshot(tenantId){return this.db.prepare('SELECT enc,completed_at AS completedAt FROM stats_snapshots WHERE tenant_id=?').bind(tenantId).first();}
+  async claimStatsCycle(tenantId,owner){const r=await this.db.prepare('INSERT INTO stats_snapshots(tenant_id,lock_owner,lease_until) VALUES(?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET lock_owner=excluded.lock_owner,lease_until=excluded.lease_until WHERE stats_snapshots.lease_until<?').bind(tenantId,owner,Date.now()+600000,Date.now()).run();return r.meta?.changes===1;}
+  async saveStatsSnapshot(tenantId,owner,enc,completedAt){const r=await this.db.prepare('UPDATE stats_snapshots SET enc=?,completed_at=? WHERE tenant_id=? AND lock_owner=? AND lease_until>?').bind(enc,completedAt,tenantId,owner,Date.now()).run();return r.meta?.changes===1;}
+  async releaseStatsCycle(tenantId,owner){await this.db.prepare('UPDATE stats_snapshots SET lock_owner=NULL,lease_until=0 WHERE tenant_id=? AND lock_owner=?').bind(tenantId,owner).run();}
   async createStarsOrder(o){await this.db.prepare('INSERT INTO stars_orders(id,chat_id,tenant_id,plan,amount,created_at,expires_at) VALUES(?,?,?,?,?,?,?)').bind(o.id,String(o.chatId),o.tenantId||null,o.plan,o.amount,now(),o.expiresAt).run();}
   async starsOrder(id){return this.db.prepare('SELECT id,chat_id AS chatId,tenant_id AS tenantId,plan,amount,expires_at AS expiresAt FROM stars_orders WHERE id=?').bind(id).first();}
   async claimOwner(id,chatId){const r=await this.db.prepare('UPDATE tenants SET owner_chat_id=? WHERE id=? AND (owner_chat_id IS NULL OR owner_chat_id=?)').bind(String(chatId),id,String(chatId)).run();return r.meta?.changes===1;}
@@ -109,6 +113,10 @@ const socialRow = s => ({userId: s.userId, label: s.label, agentId: s.agentId, n
 
 export class MemoryStore {
   constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); this.agents = new Map(); this.socialsMap = new Map(); }
+  async statsSnapshot(tenantId){return this.snapshots?.get(tenantId)||null;}
+  async claimStatsCycle(tenantId,owner){this.snapshots??=new Map();const r=this.snapshots.get(tenantId)||{};if(r.leaseUntil>Date.now())return false;this.snapshots.set(tenantId,{...r,owner,leaseUntil:Date.now()+600000});return true;}
+  async saveStatsSnapshot(tenantId,owner,enc,completedAt){const r=this.snapshots.get(tenantId);if(r?.owner!==owner||r.leaseUntil<=Date.now())return false;Object.assign(r,{enc,completedAt});return true;}
+  async releaseStatsCycle(tenantId,owner){const r=this.snapshots.get(tenantId);if(r?.owner===owner){r.owner=null;r.leaseUntil=0;}}
   async createStarsOrder(o){this.starsOrders??=new Map();this.starsOrders.set(o.id,{...o,chatId:String(o.chatId)});}
   async starsOrder(id){return this.starsOrders?.get(id)||null;}
   async claimOwner(id,chatId){const t=this.tenants.get(id);if(!t||(t.ownerChatId&&t.ownerChatId!==String(chatId)))return false;t.ownerChatId=String(chatId);return true;}

@@ -32,6 +32,17 @@ test('D1Store works with the migration schema', async () => {
   await store.saveSettings(tenant.id, {serviceMessages:1,statsMsgId:null,keitaroUrl: 'https://k.test'}); await store.saveSettings(tenant.id, {timezone: 'UTC'});
   assert.deepEqual(await store.settings(tenant.id), {serviceMessages:1,statsMsgId:null,keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null, notifyOnUpdate: 0, refreshMinutes: null});
 
+  assert.equal(await store.claimStatsCycle(tenant.id,'first'),true);
+  assert.equal(await store.claimStatsCycle(tenant.id,'second'),false);
+  assert.equal(await store.saveStatsSnapshot(tenant.id,'second','wrong','2026-10-03T10:00:00Z'),false);
+  assert.equal(await store.saveStatsSnapshot(tenant.id,'first','encrypted-pair','2026-10-03T10:00:00Z'),true);
+  await store.releaseStatsCycle(tenant.id,'second');
+  assert.equal(await store.claimStatsCycle(tenant.id,'second'),false);
+  await store.releaseStatsCycle(tenant.id,'first');
+  assert.equal(await store.claimStatsCycle(tenant.id,'second'),true);
+  assert.equal((await store.statsSnapshot(tenant.id)).enc,'encrypted-pair');
+  await store.releaseStatsCycle(tenant.id,'second');
+
   // Agents and socials.
   const ag = await store.createAgent(tenant.id, 'Иван');
   assert.deepEqual(await store.listAgents(tenant.id), [{id: ag.id, name: 'Иван'}]);
