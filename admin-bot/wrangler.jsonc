@@ -1,0 +1,10 @@
+{
+ "name":"js-control-admin",
+ "main":"src/index.mjs",
+ "compatibility_date":"2026-09-30",
+ "workers_dev":true,
+ "services":[{"binding":"PLATFORM","service":"js-control-platform"}],
+ "durable_objects":{"bindings":[{"name":"INBOX","class_name":"AdminInbox"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["AdminInbox"]}],
+ "vars":{"ADMIN_CHAT_IDS":"481573572"}
+}

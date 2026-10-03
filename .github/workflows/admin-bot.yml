@@ -1,0 +1,85 @@
+name: Check and deploy isolated administrative bot
+on:
+  push:
+    branches: [feature/admin-bot, claude-code]
+    paths: ['admin-bot/**', 'platform/**', '.github/workflows/admin-bot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: js-control-admin-orchestration
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.verify.outputs.deploy }}
+      foundation: ${{ steps.verify.outputs.foundation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: verify
+        name: Verify the requested administrative bot before any deployment
+        env:
+          DEPLOY_REQUESTED: ${{ vars.ADMIN_BOT_DEPLOY == 'true' || contains(github.event.head_commit.message, '[activate-admin]') || contains(github.event.head_commit.message, '[deploy-admin]') || contains(github.event.head_commit.message, '[deploy-client]') }}
+          FOUNDATION_REQUESTED: ${{ contains(github.event.head_commit.message, '[activate-admin]') || contains(github.event.head_commit.message, '[deploy-client]') }}
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          node --input-type=module <<'JS'
+          import {appendFileSync} from 'node:fs';
+          import {verifyToken} from './admin-bot/scripts/verify-token.mjs';
+          const deploy=process.env.DEPLOY_REQUESTED==='true';
+          if(deploy){const username=await verifyToken({token:process.env.ADMIN_BOT_TOKEN,clientToken:process.env.TELEGRAM_BOT_TOKEN,username:'MyJsCrmBot'});console.log('Verified @'+username);}
+          appendFileSync(process.env.GITHUB_OUTPUT,'deploy='+deploy+'\nfoundation='+(deploy&&process.env.FOUNDATION_REQUESTED==='true')+'\n');
+          JS
+  client-foundation:
+    needs: preflight
+    if: needs.preflight.outputs.foundation == 'true'
+    uses: ./.github/workflows/cloud-collector.yml
+    with:
+      deploy: true
+    secrets: inherit
+  check:
+    needs: [preflight, client-foundation]
+    if: always() && needs.preflight.result == 'success' && (needs.client-foundation.result == 'success' || needs.client-foundation.result == 'skipped')
+    concurrency:
+      group: js-control-cloud-collector
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix cloud-collector
+      - run: node --test admin-bot/tests/*.test.mjs platform/tests/hardening.test.mjs
+      - run: cloud-collector/node_modules/.bin/wrangler deploy --config admin-bot/wrangler.jsonc --dry-run
+      - name: Validate deployment inputs
+        if: needs.preflight.outputs.deploy == 'true'
+        env:
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+        run: test -n "$ADMIN_BOT_TOKEN"
+      - name: Deploy admin worker
+        if: needs.preflight.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: cloud-collector/node_modules/.bin/wrangler deploy --config admin-bot/wrangler.jsonc
+      - name: Preserve shared keys and connect separate Telegram bot
+        if: needs.preflight.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_BOT_URL: ${{ vars.ADMIN_BOT_URL }}
+          EXPECTED_ADMIN_BOT_USERNAME: MyJsCrmBot
+        run: node admin-bot/scripts/setup.mjs
