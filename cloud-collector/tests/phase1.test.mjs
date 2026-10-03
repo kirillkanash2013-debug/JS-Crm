@@ -140,3 +140,48 @@ test('collection recovers after non-JSON 503; auth and permission failures do no
  let w=await queue(c);let result=await c.execute(w);await c.finish(w,result.result,result.error);c.state.jobs.at(-1).retryAt=0;w=await c.prepare();result=await c.execute(w);await c.finish(w,result.result,result.error);await publish(c);assert.equal(calls,2);
  for(const code of [190,200]){const d=control();d.runner.collectApi=()=>graph('me',{},'token',async()=>Response.json({error:{code}},{status:403}));const work=await queue(d),failure=await d.execute(work);await d.finish(work,null,failure.error);assert.equal(d.state.cycles.at(-1).result,'failed');assert.equal(d.state.jobs.at(-1).attempts.length,1);assert.equal(d.state.connections['101'].lifecycle_status,code===190?'needs_auth':'active');}
 });
+
+async function completedAction(c,id='101',status='PAUSED'){
+ const response=await c.request('/v1/actions','POST',{userId:id,campaignId:'12345',status});const action=await response.json();
+ // Existing prepare serializes writes; simulate its already acquired work lease.
+ const job=c.state.jobs.find(j=>j.id===action.id);job.state='running';job.attempt=crypto.randomUUID();job.leaseUntil=Date.now()+60000;
+ const work={job:structuredClone(job),connection:structuredClone(c.state.connections[id])};
+ await c.finish(work,{actionResult:{campaignId:'12345',state:'done',observedAt:new Date().toISOString()}});return {job,work};
+}
+for(const phase of ['meta','keitaro'])test(`action after A collection in ${phase} schedules durable successor after terminal current cycle`,async()=>{
+ let c=control(['101','102']);const a=await queue(c);await success(c,a);const b=await c.prepare();
+ if(phase==='keitaro')await success(c,b);
+ const oldCycle=c.currentCycle(),oldGeneration=structuredClone(oldCycle.meta_generations['101']);
+ const {job:action,work:actionWork}=await completedAction(c);
+ assert.deepEqual(oldCycle.meta_generations['101'],oldGeneration);assert.equal(c.state.jobs.find(j=>j.id===a.job.id).post_action_reconciliation,undefined);
+ assert.equal(c.state.pendingPostAction['101'][0].action_job_id,action.id);
+ await c.finish(actionWork,{actionResult:{campaignId:'12345',state:'done'}});assert.equal(c.state.pendingPostAction['101'].length,1,'duplicate completion never replays a write or successor request');
+ // Pending request survives encrypted-state reload while old cycle still runs.
+ let alarmAt;c=new Control(structuredClone(c.state),async()=>{},async at=>{alarmAt=at;},{});
+ if(phase==='meta')await success(c,b);await publish(c);assert(alarmAt<=Date.now()+1100,'terminal cycle re-arms pending successor immediately');
+ for(const social of Object.values(c.state.connections))social.lastCollectedAt=0;
+ let successor=await c.prepare();assert.equal(successor,null,'existing 15-minute collection cooldown remains intact');c.state.jobs.filter(j=>j.state==='queued').forEach(j=>j.retryAt=0);successor=await c.prepare();const next=c.currentCycle();assert.notEqual(next.cycle_id,oldCycle.cycle_id);assert.equal(next.trigger,'post_action');
+ assert.equal(successor.job.userId,'101');assert.equal(successor.job.cycle_id,next.cycle_id);assert.notEqual(successor.job.id,a.job.id);
+ assert.equal(successor.job.post_action_reconciliation[0].action_job_id,action.id);
+ assert(Date.parse(successor.job.startedAt)>=Date.parse(action.action_completed_at));assert.equal(c.state.pendingPostAction['101'],undefined);
+ await success(c,successor);const second=await c.prepare();await success(c,second);await publish(c);assert.equal(c.state.cycles.at(-1).result,'published');
+ assert.equal(c.state.jobs.filter(j=>j.action).length,1,'no duplicate campaign writes');
+});
+
+test('multiple successful actions coalesce into one later collection; failed predecessor also wakes successor',async()=>{
+ const c=control();const w=await queue(c);await success(c,w);const first=await completedAction(c),second=await completedAction(c,'101','ACTIVE');
+ assert.equal(c.state.pendingPostAction['101'].length,2);c.endCycle(c.currentCycle(),'failed','keitaro_failure');c.state.connections['101'].lastCollectedAt=0;
+ let job=await c.prepare();if(!job){c.state.jobs.filter(j=>j.state==='queued').forEach(j=>j.retryAt=0);job=await c.prepare();}
+ assert.equal(job.job.post_action_reconciliation.length,2);assert(Date.parse(job.job.startedAt)>=Date.parse(second.job.action_completed_at));
+ assert.deepEqual(job.job.post_action_reconciliation.map(a=>a.action_job_id),[first.job.id,second.job.id]);
+ await success(c,job);await publish(c);
+});
+
+test('cancelling a queued successor before execution retains the post-action request',async()=>{
+ const c=control();const {job:action}=await completedAction(c);const first=c.currentCycle();
+ assert.equal(c.state.pendingPostAction['101'][0].action_job_id,action.id);
+ c.endCycle(first,'failed','another_mandatory_social_failed');const next=await c.prepare();
+ assert.notEqual(next.job.cycle_id,first.cycle_id);assert.equal(next.job.post_action_reconciliation[0].action_job_id,action.id);
+ assert(Date.parse(next.job.startedAt)>=Date.parse(action.action_completed_at));assert.equal(c.state.pendingPostAction['101'],undefined);
+ await success(c,next);await publish(c);
+});

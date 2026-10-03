@@ -57,3 +57,29 @@ test('manual cooldown uses the newest social and its footer shows when refresh b
  assert.equal(calls,0);assert.match(sent.at(-1).text,/Ручное обновление доступно в \d{2}:\d{2}/);assert.match(sent.at(-1).text,/Плановый сбор: каждые 30 мин/);
  }finally{globalThis.fetch=real;}
 });
+
+import {isCollectionJob} from '../../shared/jobs.mjs';
+for(const state of ['queued','running'])for(const kind of ['validation','action','import','collection','legacy'])test(`${state} ${kind}: manual refresh and Stats footer respect collection classification`,async()=>{
+ const store=new MemoryStore(),sent=[];let queued=0;const {tenant}=await applyPayment(store,{paymentId:crypto.randomUUID(),provider:'test',plan:'team',masterKey:MASTER_KEY});
+ await store.setChat(1,tenant.id,'ready');
+ const job={state,userId:'a',...(kind==='legacy'?{}:kind==='action'?{action:{campaignId:'12345'}}:{kind})};const collection=['collection','legacy'].includes(kind);
+ assert.equal(isCollectionJob(job),collection);
+ // Legacy cached queued/facebook phases must not make candidate/action/import mandatory.
+ await store.setStatsPhase(tenant.id,state==='queued'?'queued':'facebook');
+ const bot=createBot({store,tg:async(m,p)=>{sent.push(p);return {message_id:9};},env:{MASTER_KEY,COLLECTOR_URL:'https://c.test'}}),real=globalThis.fetch;
+ globalThis.fetch=async url=>{if(url.endsWith('/v1/jobs')){queued++;return Response.json({});}return Response.json({connections:[{userId:'a',lifecycle_status:'active',collectedAt:new Date(Date.now()-3600000).toISOString()}],jobs:[job]});};
+ try{
+  await bot({message:{chat:{id:1},text:'📊 Статистика'}});
+  const text=sent.at(-1).text;assert.equal(/Собираем Facebook|Обновление в очереди/.test(text),collection);
+  await bot({callback_query:{id:'manual',data:'stats:refresh',message:{message_id:9,chat:{id:1}}}});
+  assert.equal(queued,collection?0:1);
+ }finally{globalThis.fetch=real;}
+});
+
+for(const kind of ['validation','action','import'])test(`legacy publication excludes running ${kind} from pending collection`,async()=>{
+ const store=new MemoryStore();const {tenant}=await applyPayment(store,{paymentId:crypto.randomUUID(),provider:'test',plan:'team',masterKey:MASTER_KEY});
+ const bot=createBot({store,tg:async()=>({}),env:{MASTER_KEY,COLLECTOR_URL:'https://c.test'}}),real=globalThis.fetch;
+ const at=new Date().toISOString();const job={state:'running',userId:'a',...(kind==='action'?{action:{campaignId:'12345'}}:{kind})};
+ globalThis.fetch=async url=>url.endsWith('/v1/status')?Response.json({connections:[{userId:'a',lifecycle_status:'active',collectedAt:at}],jobs:[job]}):Response.json({campaigns:[]});
+ try{assert.equal((await bot.notifyStatsRefresh(tenant.id)).result,'published');assert((await store.statsSnapshot(tenant.id)).enc);}finally{globalThis.fetch=real;}
+});

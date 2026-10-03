@@ -34,7 +34,7 @@ export class Control {
  // full snapshot is kept in state, as in the prototype.
  constructor(state,save,schedule,runner,archive=null,publication=null){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;this.archive=archive;this.publication=publication;normalize(state);}
  async persist(){await this.save(this.state);await this.plan();}
- async plan(){let next=Infinity;const cycle=this.currentCycle();if(cycle)next=Math.min(next,cycle.deadlineAt);if(this.state.pendingAnnounce?.length||this.state.pendingRefresh)next=Math.min(next,this.state.notifyRetryAt||Date.now()+10000);for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,j.retryAt||Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(active(c)&&c.schedule&&!this.state.subscriptionSuspended)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
+ async plan(){let next=Infinity;const cycle=this.currentCycle();if(!cycle&&!this.state.subscriptionSuspended&&Object.keys(this.state.pendingPostAction||{}).some(id=>active(this.state.connections[id]||{lifecycle_status:"disconnected"})))next=Date.now()+1000;if(cycle)next=Math.min(next,cycle.deadlineAt);if(this.state.pendingAnnounce?.length||this.state.pendingRefresh)next=Math.min(next,this.state.notifyRetryAt||Date.now()+10000);for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,j.retryAt||Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(active(c)&&c.schedule&&!this.state.subscriptionSuspended)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
  status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).filter(c=>c.lifecycle_status!=='disconnected').map(c=>{const sum=this.archive?.socialSummary?.(c.userId)||null;return {userId:c.userId,label:c.label||null,lifecycle_status:c.lifecycle_status,auth_issue_reason:c.auth_issue_reason,lifecycle_updated_at:c.lifecycle_updated_at,source:c.profileId?'antidetect':'manual',connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api',accounts:sum?.accounts??null,businesses:sum?.businesses??null,pages:sum?.pages??null,refreshAllowedAt:c.lastCollectedAt?c.lastCollectedAt+15*60000:null,collectedAt:sum?.lastAt||this.state.results[c.userId]?.observedAt||null};}),antidetect:this.antidetectStatus(),cycles:this.state.cycles,cycle:this.currentCycle()||this.state.cycles.at(-1)||null,jobs:this.state.jobs,results:this.state.results};}
  antidetectStatus(){const a=this.state.antidetect;return a?{type:a.type,connectedAt:a.connectedAt,nextImportAt:a.nextAt,lastImport:a.lastImport}:null;}
  currentCycle(){return this.state.cycles.find(c=>c.result==='processing');}
@@ -84,6 +84,24 @@ export class Control {
   const receipt=await this.publication.commit(payload);
   if(!receipt)return {result:'failed',reason:'stats_cycle_lease_lost'};
   this.endCycle(c,'published',null,receipt);await this.persist();return {result:'published',cycle_id:c.cycle_id,snapshot:receipt};
+ }
+ // A pre-action generation never discharges this durable successor request.
+ // Coalesce successful actions into a read after all recorded completions;
+ // never replay the campaign writes themselves.
+ queuePostAction(job){
+  const completedAt=new Date().toISOString();job.action_completed_at=completedAt;
+  this.state.pendingPostAction??={};const pending=this.state.pendingPostAction[job.userId]??=[];
+  if(!pending.some(a=>a.action_job_id===job.id))pending.push({action_job_id:job.id,completed_at:completedAt});
+  this.state.pendingPostAction[job.userId]=pending;this.startPostActionSuccessor();
+ }
+ startPostActionSuccessor(){
+  if(this.currentCycle()||this.state.subscriptionSuspended)return;
+  const pending=this.state.pendingPostAction||{},ids=Object.keys(pending).filter(id=>this.state.connections[id]&&active(this.state.connections[id]));
+  if(!ids.length)return;const range=COLLECT_RANGE();this.enqueueCycle({userId:ids[0],...range},'post_action');
+  const cycle=this.currentCycle();
+  for(const id of ids){const job=this.state.jobs.find(j=>j.cycle_id===cycle.cycle_id&&j.userId===id&&j.kind==='collection');
+   if(job)job.post_action_reconciliation=structuredClone(pending[id]);
+  }
  }
  async preparePublication(){
   await this.expireCycle();const c=this.currentCycle();
@@ -185,7 +203,7 @@ export class Control {
  // Cheap API jobs run up to API_PARALLEL at once; browser and action jobs run alone.
  async prepare(){
   if(this.state.subscriptionSuspended){await this.persist();return null;}
-  await this.expireCycle();const now=Date.now();
+  await this.expireCycle();this.startPostActionSuccessor();const now=Date.now();
   if(!this.currentCycle()){const legacy=this.state.jobs.find(j=>!j.action&&j.kind!=='import'&&j.kind!=='validation'&&['queued','running'].includes(j.state)&&this.state.connections[j.userId]&&(active(this.state.connections[j.userId])||this.state.connections[j.userId].validationPending));if(legacy)this.enqueueCycle({userId:legacy.userId,...legacy.range},'scheduled');}
   const cycle=this.currentCycle();if(cycle&&cycle.deadlineAt<=now){this.endCycle(cycle,'failed','cycle_timeout');for(const j of this.state.jobs)if(j.cycle_id===cycle.cycle_id&&['queued','running'].includes(j.state)){j.state='failed';j.finishedAt=new Date().toISOString();}}
   for(const j of this.state.jobs)if(j.state==='running'&&j.leaseUntil<=now){j.state=j.action?'unverified':(j.attemptCount||0)>=RETRY_LIMIT?'failed':'queued';j.recovered=true;if(j.attempts?.length)Object.assign(j.attempts.at(-1),{finished_at:new Date().toISOString(),result:'lease_expired'});if(j.state==='queued'&&j.attemptCount>1)j.retryAt=now+backoff(j.attemptCount);if(j.state==='failed'){if(j.kind==='validation'){const c=this.state.connections[j.userId];if(c&&!active(c)){delete c.validationPending;c.schedule=null;}}j.finishedAt=new Date().toISOString();if(j.kind!=='validation')this.endCycle(this.state.cycles.find(c=>c.cycle_id===j.cycle_id),'failed','meta_lease_exhausted');}}
@@ -207,7 +225,9 @@ export class Control {
   if(j&&!isImport&&!c){j.state='cancelled';await this.persist();return null;}
   const heavy=j&&(isImport||j.action||c.mode==='browser'||!c.token);
   if(!j||exclusive||running.length>=API_PARALLEL||(heavy&&running.length)){await this.persist();return null;}
-  j.attemptCount=(j.attemptCount||0)+1;j.attempts??=[];j.attempt=crypto.randomUUID();j.attempts.push({attempt_id:j.attempt,number:j.attemptCount,started_at:new Date().toISOString()});j.state='running';j.startedAt=new Date().toISOString();j.leaseUntil=now+(heavy?15:5)*60000;await this.persist();
+  j.attemptCount=(j.attemptCount||0)+1;j.attempts??=[];j.attempt=crypto.randomUUID();j.attempts.push({attempt_id:j.attempt,number:j.attemptCount,started_at:new Date().toISOString()});j.state='running';j.startedAt=new Date().toISOString();
+  if(j.post_action_reconciliation){const consumed=new Set(j.post_action_reconciliation.map(a=>a.action_job_id)),pending=this.state.pendingPostAction?.[j.userId]||[];const rest=pending.filter(a=>!consumed.has(a.action_job_id));if(rest.length)this.state.pendingPostAction[j.userId]=rest;else delete this.state.pendingPostAction[j.userId];}
+  j.leaseUntil=now+(heavy?15:5)*60000;await this.persist();
   if(isImport)return {job:structuredClone(j),antidetect:structuredClone(ad)};
   return {job:structuredClone(j),connection:structuredClone(c),previous:this.archive?this.archive.previous(j.userId):this.state.results[j.userId]?structuredClone(this.state.results[j.userId]):null};
  }
@@ -269,7 +289,7 @@ export class Control {
   else if(j.action){const a=result?.actionResult;if(!a||a.campaignId!==j.action.campaignId){j.state='failed';j.error={code:'invalid_action_result'};}else{j.state=a.state;j.actionResult=a;j.observedAt=a.observedAt;if(result.storageState)c.storageState=result.storageState;
    // Успешное действие → ставим пересбор, чтобы архив (источник статуса/бюджета)
    // быстро подтянул новое состояние из кабинета (persist ниже назначит аларм).
-   if(a.state==='done'){try{const r=COLLECT_RANGE();if(active(c))this.enqueueCycle({userId:j.userId,since:r.since,until:r.until});}catch{}}}}
+   if(a.state==='done')this.queuePostAction(j);}}
   else if(result?.snapshot?.social?.user.id&&result.snapshot.social.user.id!==j.userId){lifecycle(c,'needs_auth','wrong_identity');c.schedule=null;delete c.validationPending;j.state='needs_auth';j.error={code:'identity'};this.endCycle(this.state.cycles.find(c=>c.cycle_id===j.cycle_id),'failed','wrong_identity');}
   else if(!Number.isFinite(Date.parse(result?.snapshot?.observedAt))||!result?.snapshot?.complete||result.snapshot.source!=='facebook-server'||result.snapshot.social?.user.id!==j.userId){j.state='failed';j.error={code:'invalid_snapshot'};}
   else{

@@ -1,3 +1,4 @@
+import {isCollectionJob} from '../../shared/jobs.mjs';
 import {resumeCollection} from './refresh.mjs';
 // Telegram bot for clients: bind a chat with the integration token (or buy
 // with Telegram Stars), fill basic settings, get the plugin and the dashboard.
@@ -279,10 +280,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   async function statsFooter(tenantId) {
     let phase = await store.statsPhase(tenantId);
     const s = await store.settings(tenantId), status = await collectorCall(tenantId,'/v1/status');
-    const jobs = (status?.body?.jobs || []).filter(j => !j.action && j.kind !== 'import');
+    const jobs = (status?.body?.jobs || []).filter(isCollectionJob);
     if (phase !== 'keitaro') {
       if (jobs.some(j => j.state === 'running')) phase='facebook';
       else if (jobs.some(j => j.state === 'queued')) phase='queued';
+      else if(status?.ok&&['queued','facebook'].includes(phase))phase='idle';
     }
     const messages = {
       partial:'🕓 Ожидаем успешный сбор всех соцов. Предыдущая сводка сохранена.',
@@ -315,13 +317,13 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!st?.ok) throw new Error('facebook_status_unavailable');
       const cycle=st.body.cycle;
       if(work&&cycle?.cycle_id!==work.cycle_id)throw new Error('facebook_cycle_changed');
-      const conns = (st.body.connections || []).filter(c=>cycle?cycle.active_collection_set.includes(c.userId):!c.lifecycle_status||c.lifecycle_status==='active'), jobs = (st.body.jobs || []).filter(j=>!j.action&&j.kind!=='import'&&(!cycle||j.cycle_id===cycle.cycle_id));
+      const conns = (st.body.connections || []).filter(c=>cycle?cycle.active_collection_set.includes(c.userId):!c.lifecycle_status||c.lifecycle_status==='active'), jobs = (st.body.jobs || []).filter(j=>isCollectionJob(j)&&(!cycle||j.cycle_id===cycle.cycle_id));
       if(cycle&&(conns.length!==cycle.active_collection_set.length||conns.some(c=>c.lifecycle_status!=='active')))throw new Error('facebook_cycle_changed');
       if(cycle&&cycle.result==='failed')throw new Error('facebook_cycle_failed');
       if(cycle&&cycle.phase!=='keitaro')throw new Error('facebook_cycle_pending');
       if (!conns.length || conns.some(c => !Number.isFinite(Date.parse(c.collectedAt)))) { await publishStatsPhase(tenantId,'partial'); return null; }
       if (jobs.some(j => ['queued','running'].includes(j.state))) throw new Error('facebook_cycle_pending');
-      if (conns.some(c => jobs.some(j => String(j.userId) === String(c.userId) && !j.action &&
+      if (conns.some(c => jobs.some(j => String(j.userId) === String(c.userId) &&
           ['failed','needs_auth','rate_limited'].includes(j.state) && Date.parse(j.finishedAt) >= Date.parse(c.collectedAt)))) { await publishStatsPhase(tenantId,'failed'); return null; }
       const previous = await savedStats(tenantId);
       // Every social must advance before replacing a previously published pair.
@@ -343,7 +345,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const after = await collectorCall(tenantId, '/v1/status');
       if (!after?.ok || JSON.stringify(Object.fromEntries((after.body.connections || []).filter(c=>cycle?cycle.active_collection_set.includes(c.userId)&&c.lifecycle_status==='active':!c.lifecycle_status||c.lifecycle_status==='active').map(c => [c.userId,c.collectedAt]))) !== JSON.stringify(sourceTimes) ||
           (cycle&&(after.body.cycle?.cycle_id!==cycle.cycle_id||after.body.cycle?.result!=='processing'||JSON.stringify(after.body.cycle?.meta_generations)!==JSON.stringify(cycle.meta_generations))) ||
-          (after.body.jobs || []).some(j => !j.action&&j.kind!=='import'&&(!cycle||j.cycle_id===cycle.cycle_id)&&['queued','running'].includes(j.state)) || todayIn(tz) !== day) throw new Error('facebook_cycle_changed');
+          (after.body.jobs || []).some(j => isCollectionJob(j)&&(!cycle||j.cycle_id===cycle.cycle_id)&&['queued','running'].includes(j.state)) || todayIn(tz) !== day) throw new Error('facebook_cycle_changed');
       const completed = new Date(), format = d => d.toLocaleTimeString('ru-RU',{timeZone:tz,hour:'2-digit',minute:'2-digit'});
       const fbAt = conns.map(c => c.collectedAt).sort().pop();
       const times = {fb:format(new Date(fbAt)),keitaro:kt.keitaro?format(completed):'—',updated:format(completed)};
@@ -382,7 +384,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const allowedAt = Math.max(lastAt + 15 * 60000,...conns.map(c => Number(c.refreshAllowedAt)||0)), recent = Date.now() < allowedAt;
     const phase = await store.statsPhase(tenantId);
     await store.setStatsMessage(tenantId,mid);
-    if (['queued','facebook','keitaro'].includes(phase) || (st?.body?.jobs || []).some(j => ['queued','running'].includes(j.state))) {
+    if (phase==='keitaro' || st?.body?.cycle?.result==='processing' || (st?.body?.jobs || []).some(j => isCollectionJob(j)&&['queued','running'].includes(j.state))) {
       return edit(chatId,mid,(await statsReportText(tenantId)) || '⏳ Обновление уже выполняется.',statsMarkup);
     }
     let note = '';
