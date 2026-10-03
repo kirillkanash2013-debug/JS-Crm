@@ -36,7 +36,7 @@ test('reconnect validation alone does not activate; same identity preserves resu
  const c=control();c.state.results['101']={observedAt:'2026-10-01T00:00:00Z',history:'preserved'};
  c.state.connections['101'].lifecycle_status='needs_auth';
  await c.request('/v1/connections','POST',{userId:'101',token:'EA'+'y'.repeat(30)});
- assert.equal(c.state.connections['101'].lifecycle_status,'needs_auth');assert.equal(c.state.results['101'].history,'preserved');assert.deepEqual(c.currentCycle().active_collection_set,[]);
+ assert.equal(c.state.connections['101'].lifecycle_status,'needs_auth');assert.equal(c.state.results['101'].history,'preserved');assert.equal(c.currentCycle(),undefined);
  const w=await c.prepare();await success(c,w);assert.equal(c.state.connections['101'].lifecycle_status,'active');assert.equal(c.state.connections['101'].auth_issue_reason,null);await publish(c);
  await c.request('/v1/connections','DELETE',{userId:'101'});assert.equal(c.state.connections['101'].lifecycle_status,'disconnected');assert.equal(c.state.connections['101'].token,undefined);
  await assert.rejects(c.request('/v1/jobs','POST',{userId:'101',...range}),/Reconnect/);
@@ -44,7 +44,7 @@ test('reconnect validation alone does not activate; same identity preserves resu
 
 test('wrong identity does not activate a reconnect or publish its snapshot',async()=>{
  const c=control();await c.request('/v1/connections','POST',{userId:'101',token:'EA'+'y'.repeat(30)});
- const w=await c.prepare();await c.finish(w,snap('999'));assert.equal(c.state.connections['101'].auth_issue_reason,'wrong_identity');assert.equal(c.state.cycles.at(-1).result,'failed');assert.equal(c.state.results['101'],undefined);
+ const w=await c.prepare();await c.finish(w,snap('999'));assert.equal(c.state.connections['101'].auth_issue_reason,'wrong_identity');assert.equal(c.currentCycle(),undefined);assert.equal(c.state.jobs.at(-1).state,'needs_auth');assert.equal(c.state.results['101'],undefined);
 });
 
 test('Keitaro retries reuse Meta generation across restart and terminate without another Meta job',async()=>{
@@ -68,7 +68,7 @@ test('deadline and repeated lease expiry always end processing; stale attempts c
  const c=control();let w=await queue(c);const first=w;
  c.state.jobs.at(-1).leaseUntil=0;w=await c.prepare();assert(w);await success(c,first);assert.equal(c.state.jobs.at(-1).state,'running');
  c.state.jobs.at(-1).leaseUntil=0;assert.equal(await c.prepare(),null);c.state.jobs.at(-1).retryAt=0;w=await c.prepare();c.state.jobs.at(-1).leaseUntil=0;await c.prepare();assert.equal(c.state.cycles.at(-1).result,'failed');
- const d=control();w=await queue(d);d.currentCycle().deadlineAt=0;d.expireCycle();await success(d,w);assert.equal(d.state.cycles.at(-1).failure_reason,'cycle_timeout');assert.equal(d.state.results['101'],undefined);
+ const d=control();w=await queue(d);d.currentCycle().deadlineAt=0;await d.expireCycle();await success(d,w);assert.equal(d.state.cycles.at(-1).failure_reason,'cycle_timeout');assert.equal(d.state.results['101'],undefined);
 });
 
 test('lazy additive state migration preserves credentials and recognizes legacy needs_auth',async()=>{
@@ -80,9 +80,63 @@ test('lazy additive state migration preserves credentials and recognizes legacy 
 test('failed reconnect validation cannot become mandatory in later active-only cycles',async()=>{
  const c=control(['101','102']);c.state.connections['102'].lifecycle_status='needs_auth';c.state.connections['102'].schedule=null;
  await c.request('/v1/connections','POST',{userId:'102',token:'EA'+'y'.repeat(30)});
+ c.enqueueCycle({userId:'101',...range});
+ let candidate=await c.prepare();assert.equal(candidate.job.userId,'102');
  const activeWork=await c.prepare();assert.equal(activeWork.job.userId,'101');await success(c,activeWork);
- let candidate=await c.prepare();
  for(let n=0;n<RETRY_LIMIT;n++){await c.finish(candidate,null,{code:'proxy'});if(n<RETRY_LIMIT){c.state.jobs.find(j=>j.id===candidate.job.id).retryAt=0;candidate=await c.prepare();}}
  assert.equal(c.state.connections['102'].validationPending,undefined);
- const w=await queue(c,'101');assert.deepEqual(c.currentCycle().active_collection_set,['101']);assert.deepEqual(c.currentCycle().validation_set,[]);await success(c,w);await publish(c);
+ assert.deepEqual(c.currentCycle().active_collection_set,['101']);await publish(c);
+ const w=await queue(c,'101');assert.deepEqual(c.currentCycle().validation_set,[]);await success(c,w);await publish(c);
+});
+
+test('validation checkpoint is traced separately and cannot fail a successful mandatory active cycle',async()=>{
+ const c=control(['101','102']);c.state.connections['102'].lifecycle_status='needs_auth';
+ const activeWork=await queue(c);
+ await c.request('/v1/connections','POST',{userId:'102',token:'EA'+'y'.repeat(30)});
+ const candidate=await c.prepare();const cycle=c.currentCycle();
+ assert.equal(candidate.job.kind,'validation');assert.equal(candidate.job.cycle_id,undefined);
+ assert.equal(candidate.job.validation_origin_cycle_id,cycle.cycle_id);assert.deepEqual(cycle.meta_jobs,[activeWork.job.id]);
+ await success(c,activeWork);await c.finish(candidate,null,{code:'checkpoint'});
+ assert.equal(c.state.connections['102'].lifecycle_status,'needs_auth');assert.equal(c.state.connections['102'].auth_issue_reason,'checkpoint');
+ assert.equal(cycle.phase,'keitaro');await publish(c);assert.equal(cycle.result,'published');
+});
+
+test('successful candidate does not change the current mandatory set; next cycle includes its verified identity',async()=>{
+ const c=control(['101','102']);c.state.connections['102'].lifecycle_status='needs_auth';const w=await queue(c);
+ await c.request('/v1/connections','POST',{userId:'102',token:'EA'+'y'.repeat(30)});const candidate=await c.prepare();await success(c,candidate);
+ assert.equal(c.state.connections['102'].lifecycle_status,'active');assert.deepEqual(c.currentCycle().active_collection_set,['101']);
+ await success(c,w);await publish(c);c.enqueueCycle({userId:'101',...range});assert.deepEqual(c.currentCycle().active_collection_set,['101','102']);
+});
+
+for(const state of ['queued','running'])test(`existing ${state} campaign action cannot satisfy collection dedupe`,async()=>{
+ const c=control();const action={id:'action',userId:'101',action:{campaignId:'12345',status:'PAUSED'},state,createdAt:new Date().toISOString()};
+ c.state.jobs.push(action);let actionWork;
+ if(state==='running'){action.attempt='action-attempt';action.leaseUntil=Date.now()+60000;actionWork={job:structuredClone(action),connection:structuredClone(c.state.connections['101'])};}
+ const collection=c.enqueueCycle({userId:'101',...range});const cycle=c.currentCycle();
+ assert.notEqual(collection.id,action.id);assert.equal(collection.kind,'collection');assert.equal(collection.cycle_id,cycle.cycle_id);assert.deepEqual(cycle.meta_jobs,[collection.id]);assert.equal(action.cycle_id,undefined);
+ assert.equal(c.enqueue({userId:'101',...range}).id,collection.id);
+ if(state==='queued')actionWork=await c.prepare();
+ await c.finish(actionWork,{actionResult:{campaignId:'12345',state:'done',observedAt:new Date().toISOString()}});
+ assert.deepEqual(cycle.meta_jobs,[collection.id]);collection.retryAt=0;const work=await c.prepare();assert.equal(work.job.id,collection.id);
+ await success(c,work);await publish(c);assert.equal(cycle.result,'published');
+});
+
+import {graph} from '../../extension/meta.mjs';
+import {collectionError} from '../../shared/collection-errors.mjs';
+for(const status of [503,429])for(const json of [false,true])test(`HTTP ${status}, ${json?'JSON':'non-JSON'} preserves transport status and exhausts bounded retry without needs_auth`,async()=>{
+ const c=control();c.runner.collectApi=()=>graph('me',{},'token',async()=>json?Response.json({error:{code:status===503?2:613}},{status}):new Response('<html>unavailable</html>',{status}));
+ let w=await queue(c);
+ for(let n=1;n<=RETRY_LIMIT;n++){
+  const result=await c.execute(w);assert.equal(result.error.transient,true);assert.equal(result.error.httpStatus,status);
+  await c.finish(w,null,result.error);assert.equal(c.state.connections['101'].lifecycle_status,'active');
+  if(n<RETRY_LIMIT){assert(c.state.jobs.at(-1).retryAt>Date.now());c.state.jobs.at(-1).retryAt=0;w=await c.prepare();}
+ }
+ assert.equal(c.state.cycles.at(-1).result,'failed');assert.equal(c.state.jobs.at(-1).attempts.length,RETRY_LIMIT);
+ let error;try{await c.runner.collectApi();}catch(e){error=e;}assert.equal(collectionError(error).httpStatus,status);assert.equal(collectionError(error).transient,true);
+});
+
+test('collection recovers after non-JSON 503; auth and permission failures do not retry',async()=>{
+ const c=control();let calls=0;c.runner.collectApi=async()=>{if(++calls===1)return graph('me',{},'token',async()=>new Response('unavailable',{status:503}));return snap('101');};
+ let w=await queue(c);let result=await c.execute(w);await c.finish(w,result.result,result.error);c.state.jobs.at(-1).retryAt=0;w=await c.prepare();result=await c.execute(w);await c.finish(w,result.result,result.error);await publish(c);assert.equal(calls,2);
+ for(const code of [190,200]){const d=control();d.runner.collectApi=()=>graph('me',{},'token',async()=>Response.json({error:{code}},{status:403}));const work=await queue(d),failure=await d.execute(work);await d.finish(work,null,failure.error);assert.equal(d.state.cycles.at(-1).result,'failed');assert.equal(d.state.jobs.at(-1).attempts.length,1);assert.equal(d.state.connections['101'].lifecycle_status,code===190?'needs_auth':'active');}
 });

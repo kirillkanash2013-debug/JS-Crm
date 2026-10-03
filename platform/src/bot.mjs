@@ -307,14 +307,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     }
   }
 
-  async function collectStatsPair(tenantId) {
+  async function collectStatsPair(tenantId,work) {
     const owner = crypto.randomUUID();
     if (!await store.claimStatsCycle(tenantId, owner)) throw new Error('stats_cycle_busy');
     try {
       const st = await collectorCall(tenantId, '/v1/status');
       if (!st?.ok) throw new Error('facebook_status_unavailable');
       const cycle=st.body.cycle;
-      const conns = (st.body.connections || []).filter(c=>!c.lifecycle_status||c.lifecycle_status==='active'), jobs = (st.body.jobs || []).filter(j=>!j.action&&j.kind!=='import'&&(!cycle||j.cycle_id===cycle.cycle_id));
+      if(work&&cycle?.cycle_id!==work.cycle_id)throw new Error('facebook_cycle_changed');
+      const conns = (st.body.connections || []).filter(c=>cycle?cycle.active_collection_set.includes(c.userId):!c.lifecycle_status||c.lifecycle_status==='active'), jobs = (st.body.jobs || []).filter(j=>!j.action&&j.kind!=='import'&&(!cycle||j.cycle_id===cycle.cycle_id));
+      if(cycle&&(conns.length!==cycle.active_collection_set.length||conns.some(c=>c.lifecycle_status!=='active')))throw new Error('facebook_cycle_changed');
       if(cycle&&cycle.result==='failed')throw new Error('facebook_cycle_failed');
       if(cycle&&cycle.phase!=='keitaro')throw new Error('facebook_cycle_pending');
       if (!conns.length || conns.some(c => !Number.isFinite(Date.parse(c.collectedAt)))) { await publishStatsPhase(tenantId,'partial'); return null; }
@@ -339,7 +341,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (s.keitaroUrl && s.keitaroKeyEnc && !kt.keitaro){const e=new Error('keitaro_cycle_failed');e.retryable=['unreachable','timeout','rate_limited','temporary_failure'].includes(kt.failure);throw e;}
       // Reject a pair if Facebook changed while Keitaro was being fetched.
       const after = await collectorCall(tenantId, '/v1/status');
-      if (!after?.ok || JSON.stringify(Object.fromEntries((after.body.connections || []).filter(c=>!c.lifecycle_status||c.lifecycle_status==='active').map(c => [c.userId,c.collectedAt]))) !== JSON.stringify(sourceTimes) ||
+      if (!after?.ok || JSON.stringify(Object.fromEntries((after.body.connections || []).filter(c=>cycle?cycle.active_collection_set.includes(c.userId)&&c.lifecycle_status==='active':!c.lifecycle_status||c.lifecycle_status==='active').map(c => [c.userId,c.collectedAt]))) !== JSON.stringify(sourceTimes) ||
           (cycle&&(after.body.cycle?.cycle_id!==cycle.cycle_id||after.body.cycle?.result!=='processing'||JSON.stringify(after.body.cycle?.meta_generations)!==JSON.stringify(cycle.meta_generations))) ||
           (after.body.jobs || []).some(j => !j.action&&j.kind!=='import'&&(!cycle||j.cycle_id===cycle.cycle_id)&&['queued','running'].includes(j.state)) || todayIn(tz) !== day) throw new Error('facebook_cycle_changed');
       const completed = new Date(), format = d => d.toLocaleTimeString('ru-RU',{timeZone:tz,hour:'2-digit',minute:'2-digit'});
@@ -348,11 +350,15 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const text = buildNow({day,times,campaigns,keitaro:kt.keitaro,subIndex:kt.subIndex}) + kt.note;
       const snapshot = {cycle_id:cycle?.cycle_id||owner,text,day,timezone:tz,sourceTimes,keitaro:kt.keitaro,subIndex:kt.subIndex,startedAt:started.toISOString(),completedAt:completed.toISOString()};
       const enc = await sealSecret(env.MASTER_KEY,tenantId,JSON.stringify(snapshot));
-      if (!await store.saveStatsSnapshot(tenantId,owner,enc,completed.toISOString())) throw new Error('stats_cycle_lease_lost');
+      if(cycle){
+        if(!env.PUBLICATION_COMMIT)throw new Error('publication_binding_missing');
+        let outcome;try{outcome=await env.PUBLICATION_COMMIT.commit(tenantId,{cycle_id:cycle.cycle_id,attempt:work?.attempt||cycle.keitaro_attempts.at(-1)?.attempt,meta_generations:cycle.meta_generations,sourceTimes,owner,enc,completedAt:completed.toISOString()});}catch{const receipt=await store.publicationReceipt(tenantId,cycle.cycle_id).catch(()=>null);if(receipt)outcome={result:'published'};else{const e=new Error('publication_commit_unavailable');e.retryable=true;throw e;}}
+        if(outcome?.result!=='published')throw new Error(outcome?.reason||'publication_fence_rejected');
+      }else if (!await store.saveStatsSnapshot(tenantId,owner,enc,completed.toISOString())) throw new Error('stats_cycle_lease_lost');
       try{await store.setStatsPhase(tenantId,'ready');}catch{}
       return text;
     } catch (e) {
-      await publishStatsPhase(tenantId,e.message==='facebook_cycle_pending'?'facebook':'failed');
+      await publishStatsPhase(tenantId,e.retryable?'keitaro':e.message==='facebook_cycle_pending'?'facebook':'failed');
       throw e;
     } finally { await store.releaseStatsCycle(tenantId,owner); }
   }
@@ -1060,8 +1066,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Push 3 (optional, per «Профиль → Уведомления»): send the fresh «Сейчас»
   // report after a data refresh. Called by the collector once per refresh cycle.
   handleUpdate.notifyStatsPhase = publishStatsPhase;
-  handleUpdate.notifyStatsRefresh = async (tenantId) => {
-    try{await collectStatsPair(tenantId);}catch(e){if(e.retryable)return {result:'retry',reason:e.message};throw e;}
+  handleUpdate.notifyStatsRefresh = async (tenantId,work) => {
+    try{await collectStatsPair(tenantId,work);}catch(e){if(e.retryable)return {result:'retry',reason:e.message};throw e;}
     const snapshot=await savedStats(tenantId);
     const outcome={result:snapshot?'published':'failed',cycle_id:snapshot?.cycle_id,snapshot:snapshot?{cycle_id:snapshot.cycle_id,completed_at:snapshot.completedAt,sourceTimes:snapshot.sourceTimes}:null};
     try{

@@ -7,5 +7,5 @@ export function transient(code){return [1,2,4,17,32,613,80004,'network','network
 export function collectionError(error){
  const original=error?.code;
  const code=original==='busy'?'capacity_busy':typeof original==='number'||authReason(original)||transient(original)?original:!original?(['AbortError','TimeoutError'].includes(error?.name)?'timeout':'network'):'collector_failed';
- return {code,transient:!!error?.transient||error?.httpStatus===429||error?.httpStatus>=500||transient(code),subcode:Number.isInteger(error?.subcode)?error.subcode:null};
+ return {code,httpStatus:Number.isInteger(error?.httpStatus)?error.httpStatus:null,transient:!!error?.transient||error?.httpStatus===429||error?.httpStatus>=500||transient(code),subcode:Number.isInteger(error?.subcode)?error.subcode:null};
 }

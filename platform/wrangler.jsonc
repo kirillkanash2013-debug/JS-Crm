@@ -6,6 +6,7 @@
   "workers_dev": true,
   "triggers":{"crons":["* * * * *"]},
   "services": [
+    {"binding":"PUBLICATION_COMMIT","service":"js-control-collector-claude","entrypoint":"PublicationCommit"},
     {"binding":"KEITARO_BRIDGE","service":"js-control-collector-claude","entrypoint":"KeitaroBridge"},
     // Internal calls to the collector go through this binding, not the public
     // workers.dev URL: a Worker fetching another Worker's workers.dev host on

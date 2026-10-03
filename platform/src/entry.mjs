@@ -16,7 +16,7 @@ export class BotNotify extends WorkerEntrypoint {
   async socialConnected(tenantId, social) { await this.#bot().notifySocialConnected(String(tenantId), social || {}); }
   async socialCollected(tenantId, social) { await this.#bot().notifySocialCollected(String(tenantId), social || {}); }
   async statsStateChanged(tenantId,phase) { if(['facebook','failed'].includes(phase)) await this.#bot().notifyStatsPhase(String(tenantId),phase); }
-  async statsRefreshed(tenantId) { try{return await this.#bot().notifyStatsRefresh(String(tenantId));}catch(e){return {result:'failed',reason:['facebook_cycle_changed','facebook_cycle_pending','facebook_data_unavailable','facebook_cycle_failed','keitaro_cycle_failed','stats_cycle_lease_lost','stats_cycle_busy'].includes(e.message)?e.message:'publication_failed'};} }
+  async statsRefreshed(tenantId,work) { try{return await this.#bot().notifyStatsRefresh(String(tenantId),work);}catch(e){return {result:'failed',reason:['facebook_cycle_changed','facebook_cycle_pending','facebook_data_unavailable','facebook_cycle_failed','keitaro_cycle_failed','stats_cycle_lease_lost','stats_cycle_busy'].includes(e.message)?e.message:'publication_failed'};} }
 }
 
 export default worker;
