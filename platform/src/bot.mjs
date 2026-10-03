@@ -289,9 +289,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const campaigns = [];
     for (const r of campaignsArrays) for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
     const {keitaro, subIndex, note} = kt;
-    const periods=new Set(campaigns.map(c=>c.accountTz).filter(Boolean));
-    const periodNote=[...periods].some(p=>p!==tz)?'\n\n⚠️ Периоды отличаются: расход — сутки рекламных кабинетов, доход — '+esc(tz)+'. ROI требует учета этой разницы.':'';
-    return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note + periodNote;
+    return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note;
   }
 
   const statsMarkup = {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'stats:refresh'}]]};
@@ -313,7 +311,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     let note = '';
     if (!conns.length) { return edit(chatId, mid, '📊 Нет подключённых соцов.', statsMarkup); }
     if (recent) {
-      note = '\n\n✅ Данные уже свежие (сбор был недавно). Авто-сбор — в начале каждого часа.';
+      note = '\n\n✅ Данные уже свежие (сбор был недавно). Авто-сбор работает с интервалом, выбранным в «Профиль → Частота обновления».';
     } else {
       const today = new Date().toISOString().slice(0, 10), yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       for (const c of conns) await collectorCall(tenantId, '/v1/jobs', {userId: c.userId, since: yest, until: today});
