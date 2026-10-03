@@ -1,3 +1,4 @@
+import {active,authReason,transient,lifecycle,normalize,RETRY_LIMIT,backoff} from './lifecycle.mjs';
 import {diagnostic,diagnosticCode} from './diagnostics.mjs';
 import {REIMPORT_MS} from './importer.mjs';
 const API_PARALLEL=4;
@@ -14,8 +15,6 @@ const COLLECT_RANGE=()=>{const t=Date.now(),d=u=>new Date(u).toISOString().slice
 // Для 60 мин — HH:01 каждый час, для 30 — :01/:31, для 120 — через 2 часа в :01.
 // Так сбор привязан к часам, а не «плавает» от момента подключения/ручного обновления.
 const NEXT_SLOT=(minutes,seed='')=>{const step=(minutes||60)*60000,now=Date.now();let next=Math.floor(now/step)*step+60000+[...seed].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,0)%240000;while(next<=now)next+=step;return next;};
-const NEEDS_AUTH=['needs_auth','identity',190,102];
-const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
 const BROWSER_FALLBACK=[1,190,102];
 const CONNECT_ERRORS={proxy:'proxy_failed',190:'token_invalid',102:'token_invalid',identity:'wrong_user',cookies_owner:'cookies_owner',cookies:'validation_failed',invalid:'validation_failed',container_unavailable:'validation_failed'};
@@ -33,16 +32,106 @@ export function initialState(){return {connections:{},jobs:[],results:{}};}
 export class Control {
  // archive: per-client SQLite history (src/archive.mjs). Without it the latest
  // full snapshot is kept in state, as in the prototype.
- constructor(state,save,schedule,runner,archive=null){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;this.archive=archive;}
+ constructor(state,save,schedule,runner,archive=null,publication=null){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;this.archive=archive;this.publication=publication;normalize(state);}
  async persist(){await this.save(this.state);await this.plan();}
- async plan(){let next=Infinity;if(this.state.pendingAnnounce?.length||this.state.pendingRefresh)next=this.state.notifyRetryAt||Date.now()+10000;for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,j.retryAt||Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(c.schedule)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
- status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).map(c=>{const sum=this.archive?.socialSummary?.(c.userId)||null;return {userId:c.userId,label:c.label||null,source:c.profileId?'antidetect':'manual',connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api',accounts:sum?.accounts??null,businesses:sum?.businesses??null,pages:sum?.pages??null,refreshAllowedAt:c.lastCollectedAt?c.lastCollectedAt+15*60000:null,collectedAt:sum?.lastAt||null};}),antidetect:this.antidetectStatus(),jobs:this.state.jobs,results:this.state.results};}
+ async plan(){let next=Infinity;const cycle=this.currentCycle();if(!cycle&&!this.state.subscriptionSuspended&&Object.keys(this.state.pendingPostAction||{}).some(id=>active(this.state.connections[id]||{lifecycle_status:"disconnected"})))next=Date.now()+1000;if(cycle)next=Math.min(next,cycle.deadlineAt);if(this.state.pendingAnnounce?.length||this.state.pendingRefresh)next=Math.min(next,this.state.notifyRetryAt||Date.now()+10000);for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,j.retryAt||Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(active(c)&&c.schedule&&!this.state.subscriptionSuspended)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
+ status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).filter(c=>c.lifecycle_status!=='disconnected').map(c=>{const sum=this.archive?.socialSummary?.(c.userId)||null;return {userId:c.userId,label:c.label||null,lifecycle_status:c.lifecycle_status,auth_issue_reason:c.auth_issue_reason,lifecycle_updated_at:c.lifecycle_updated_at,source:c.profileId?'antidetect':'manual',connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api',accounts:sum?.accounts??null,businesses:sum?.businesses??null,pages:sum?.pages??null,refreshAllowedAt:c.lastCollectedAt?c.lastCollectedAt+15*60000:null,collectedAt:sum?.lastAt||this.state.results[c.userId]?.observedAt||null};}),antidetect:this.antidetectStatus(),cycles:this.state.cycles,cycle:this.currentCycle()||this.state.cycles.at(-1)||null,jobs:this.state.jobs,results:this.state.results};}
  antidetectStatus(){const a=this.state.antidetect;return a?{type:a.type,connectedAt:a.connectedAt,nextImportAt:a.nextAt,lastImport:a.lastImport}:null;}
- enqueue(b){const userId=String(b.userId||'');if(!this.state.connections[userId])throw new Error('Connect first');const range=period(b.since,b.until);const existing=this.state.jobs.find(j=>j.userId===userId&&['queued','running'].includes(j.state));if(existing)return existing;
+ currentCycle(){return this.state.cycles.find(c=>c.result==='processing');}
+ endCycle(c,result,reason=null,snapshot=null){if(!c||c.result!=='processing')return;if(result==='failed')for(const j of this.state.jobs)if(j.cycle_id===c.cycle_id&&['queued','running'].includes(j.state)){j.state='cancelled';j.finishedAt=new Date().toISOString();}if(result==='published'){const attempt=c.keitaro_attempts.at(-1);if(attempt&&!attempt.finished_at)Object.assign(attempt,{finished_at:new Date().toISOString(),result:'published',reason:null});}c.result=result;c.failure_reason=reason;c.finished_at=new Date().toISOString();c.published_snapshot=snapshot;c.meta_attempts=this.state.jobs.filter(j=>j.cycle_id===c.cycle_id).map(j=>({job_id:j.id,user_id:j.userId,result:j.state,attempts:j.attempts||[],finished_at:j.finishedAt||null}));this.state.pendingRefresh=false;delete this.state.notifyRetryAt;}
+ startCycle(trigger,requested){
+  let c=this.currentCycle();if(c)return c;
+  const ids=Object.values(this.state.connections).filter(active).map(c=>c.userId);
+  c={cycle_id:crypto.randomUUID(),trigger,active_collection_set:ids,validation_set:[],validation_jobs:[],collection_revisions:Object.fromEntries(ids.map(id=>[id,this.state.connections[id].revision])),meta_jobs:[],meta_generations:{},keitaro_attempts:[],started_at:new Date().toISOString(),deadlineAt:Date.now()+45*60000,result:'processing',phase:'meta'};
+  this.state.cycles=this.state.cycles.slice(-99).concat(c);return c;
+ }
+ enqueueCycle(b,trigger='manual',seed=null){
+  const connection=this.state.connections[String(b.userId)];
+  if(!connection||connection.lifecycle_status==='disconnected')throw new Error('Reconnect first');
+  if(!active(connection)){if(connection.validationPending)return this.enqueueValidation(b,trigger);throw new Error('Reconnect first');}
+  const cycle=this.startCycle(trigger,String(b.userId));
+  if(cycle.phase!=='meta')return this.state.jobs.find(j=>j.cycle_id===cycle.cycle_id);
+  if(seed&&cycle.active_collection_set.includes(seed.userId)){const j={...structuredClone(seed),id:crypto.randomUUID(),kind:'collection',validation_job_id:seed.id,cycle_id:cycle.cycle_id};this.state.jobs.push(j);cycle.meta_jobs.push(j.id);cycle.meta_generations[j.userId]={job_id:j.id,attempt:j.attempt,generation:j.observedAt,revision:this.state.connections[j.userId].revision};}
+  for(const userId of cycle.active_collection_set){
+   const done=this.state.jobs.find(j=>j.userId===userId&&j.cycle_id===cycle.cycle_id&&j.state==='done');if(done)continue;
+   const j=this.enqueue({...b,userId});j.cycle_id=cycle.cycle_id;if(!cycle.meta_jobs.includes(j.id))cycle.meta_jobs.push(j.id);
+  }
+  this.metaReady(cycle);
+  return this.state.jobs.find(j=>j.cycle_id===cycle.cycle_id&&j.userId===String(b.userId));
+ }
+ enqueueValidation(b,trigger='manual'){
+  const j=this.enqueue({...b,validation:true});j.validation_id??=crypto.randomUUID();j.trigger??=trigger;
+  const c=this.currentCycle();if(c){c.validation_set??=[];c.validation_jobs??=[];if(!c.validation_set.includes(j.userId))c.validation_set.push(j.userId);if(!c.validation_jobs.includes(j.id))c.validation_jobs.push(j.id);j.validation_origin_cycle_id=c.cycle_id;}
+  return j;
+ }
+ metaReady(c){if(c?.result==='processing'&&c.active_collection_set.length&&c.meta_jobs.length===c.active_collection_set.length&&c.meta_jobs.every(id=>this.state.jobs.find(j=>j.id===id)?.state==='done')){c.phase='keitaro';c.meta_completed_at??=new Date().toISOString();this.state.pendingRefresh=true;}}
+ async reconcilePublication(c=this.currentCycle()){
+  if(!c||!this.publication)return null;const receipt=await this.publication.receipt(c.cycle_id);
+  if(receipt&&c.result==='processing')this.endCycle(c,'published',null,receipt);return receipt;
+ }
+ async expireCycle(){await this.reconcilePublication();const c=this.currentCycle();if(c&&c.deadlineAt<=Date.now())this.endCycle(c,'failed','cycle_timeout');}
+ async commitPublication(payload){
+  if(!this.publication)throw new Error('publication_binding_missing');
+  const replay=await this.publication.receipt(payload.cycle_id);if(replay){const old=this.state.cycles.find(c=>c.cycle_id===payload.cycle_id);if(old?.result==='processing')this.endCycle(old,'published',null,replay);await this.persist();return {result:'published',cycle_id:payload.cycle_id,snapshot:replay};}
+  await this.expireCycle();const c=this.currentCycle(),attempt=c?.keitaro_attempts.at(-1);
+  const valid=c&&c.cycle_id===payload.cycle_id&&c.phase==='keitaro'&&attempt?.attempt===payload.attempt&&attempt.lease_until>Date.now()&&!this.state.subscriptionSuspended&&
+    Object.keys(payload.sourceTimes||{}).length===c.active_collection_set.length&&
+    JSON.stringify(payload.meta_generations)===JSON.stringify(c.meta_generations)&&
+    c.active_collection_set.every(id=>{const social=this.state.connections[id],generation=c.meta_generations[id],at=this.archive?.socialSummary?.(id)?.lastAt||this.state.results[id]?.observedAt;return social&&active(social)&&social.revision===c.collection_revisions[id]&&generation?.revision===social.revision&&payload.sourceTimes[id]===generation.generation&&at===generation.generation;});
+  if(!valid)return {result:'failed',reason:'publication_fence_rejected'};
+  // Caller holds the DO gate across this atomic D1 commit. Social mutations
+  // cannot interleave; the receipt is authoritative if the DO dies after D1 commits.
+  const receipt=await this.publication.commit(payload);
+  if(!receipt)return {result:'failed',reason:'stats_cycle_lease_lost'};
+  this.endCycle(c,'published',null,receipt);await this.persist();return {result:'published',cycle_id:c.cycle_id,snapshot:receipt};
+ }
+ // A pre-action generation never discharges this durable successor request.
+ // Coalesce successful actions into a read after all recorded completions;
+ // never replay the campaign writes themselves.
+ queuePostAction(job){
+  const completedAt=new Date().toISOString();job.action_completed_at=completedAt;
+  this.state.pendingPostAction??={};const pending=this.state.pendingPostAction[job.userId]??=[];
+  if(!pending.some(a=>a.action_job_id===job.id))pending.push({action_job_id:job.id,completed_at:completedAt});
+  this.state.pendingPostAction[job.userId]=pending;this.startPostActionSuccessor();
+ }
+ startPostActionSuccessor(){
+  if(this.currentCycle()||this.state.subscriptionSuspended)return;
+  const pending=this.state.pendingPostAction||{},ids=Object.keys(pending).filter(id=>this.state.connections[id]&&active(this.state.connections[id]));
+  if(!ids.length)return;const range=COLLECT_RANGE();this.enqueueCycle({userId:ids[0],...range},'post_action');
+  const cycle=this.currentCycle();
+  for(const id of ids){const job=this.state.jobs.find(j=>j.cycle_id===cycle.cycle_id&&j.userId===id&&j.kind==='collection');
+   if(job)job.post_action_reconciliation=structuredClone(pending[id]);
+  }
+ }
+ async preparePublication(){
+  await this.expireCycle();const c=this.currentCycle();
+  if(!c||c.phase!=='keitaro'||!this.state.pendingRefresh||(this.state.notifyRetryAt||0)>Date.now())return null;
+  const previous=c.keitaro_attempts.at(-1);if(previous&&!previous.finished_at&&previous.lease_until>Date.now())return null;
+  if(c.keitaro_attempts.length>=RETRY_LIMIT){this.endCycle(c,'failed','publication_attempts_exhausted');await this.persist();return null;}
+  const attempt={attempt:c.keitaro_attempts.length+1,started_at:new Date().toISOString(),lease_until:Date.now()+5*60000};c.keitaro_attempts.push(attempt);await this.persist();return {cycle_id:c.cycle_id,attempt:attempt.attempt};
+ }
+ async finishPublication(work,outcome){
+  await this.reconcilePublication();const c=this.currentCycle();if(!c||c.cycle_id!==work.cycle_id)return;
+  const attempt=c.keitaro_attempts[work.attempt-1];if(!attempt||attempt.finished_at||c.keitaro_attempts.at(-1)!==attempt)return;
+  Object.assign(attempt,{finished_at:new Date().toISOString(),result:outcome?.result||'failed',reason:outcome?.reason||null});
+  if(outcome?.result==='published'&&outcome.cycle_id===c.cycle_id&&!this.publication)this.endCycle(c,'published',null,outcome.snapshot);
+  else if(outcome?.result==='retry'&&c.keitaro_attempts.length<RETRY_LIMIT)this.state.notifyRetryAt=Date.now()+backoff(c.keitaro_attempts.length);
+  else this.endCycle(c,'failed',outcome?.reason||'publication_failed');
+  await this.persist();
+ }
+ async subscription(enabled){
+  await this.reconcilePublication();this.state.subscriptionSuspended=!enabled;
+  if(!enabled){this.endCycle(this.currentCycle(),'failed','subscription_expired');for(const j of this.state.jobs)if(!j.action&&['queued','running'].includes(j.state)){j.state='failed';j.finishedAt=new Date().toISOString();}}
+  else for(const c of Object.values(this.state.connections))if(active(c)&&!c.schedule)c.schedule={minutes:this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()};
+  await this.persist();
+ }
+ enqueue(b){const userId=String(b.userId||'');if(!this.state.connections[userId])throw new Error('Connect first');const range=period(b.since,b.until);const kind=b.validation?'validation':'collection';const existing=this.state.jobs.find(j=>j.userId===userId&&!j.action&&j.kind!=='import'&&(j.kind||'collection')===kind&&['queued','running'].includes(j.state));if(existing)return existing;
  const lastAt=Number(this.state.connections[userId].lastCollectedAt)||Date.parse(this.archive?.socialSummary?.(userId)?.lastAt||this.state.results[userId]?.observedAt)||0;
- const j={id:crypto.randomUUID(),userId,range,retryAt:Math.max(Date.now(),lastAt+15*60000),state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)).slice(-99));this.state.jobs.push(j);return j;}
+ const j={id:crypto.randomUUID(),userId,kind,range,retryAt:Math.max(Date.now(),lastAt+15*60000),state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};const cycleId=this.currentCycle()?.cycle_id;this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)||x.cycle_id===cycleId).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)&&x.cycle_id!==cycleId).slice(-99));this.state.jobs.push(j);return j;}
  async request(path,method,b){
+  await this.reconcilePublication();
   delete this.state.socialLimit;
+  if(method==='POST'&&path==='/v1/subscription/resume'){await this.subscription(true);return reply(200,{ok:true});}
   if(path==='/v1/antidetect'){
    if(method==='GET')return reply(200,this.antidetectStatus());
    if(method==='DELETE'){delete this.state.antidetect;await this.persist();return reply(200,{ok:true});}
@@ -71,6 +160,8 @@ export class Control {
    try{c=this.runner.validateApi?await this.runner.validateApi(b):await this.runner.validate(b);}
    catch(e){return reply(422,{error:CONNECT_ERRORS[e.code]||'validation_failed',detail:((e&&(e.detail||e.message))?String(e.detail||e.message):null)?.slice(0,200)??null});}
    const old=this.state.connections[c.userId];
+   if(this.currentCycle()?.active_collection_set.includes(c.userId))this.endCycle(this.currentCycle(),'failed','connection_replaced');
+   for(const j of this.state.jobs)if(j.userId===c.userId&&['queued','running'].includes(j.state)){j.state='cancelled';j.finishedAt=new Date().toISOString();}
    // The server owns the settings: a social gets the default schedule from the
    // server (not the client) and an immediate first collection. The plugin only
    // forwards credentials — it never sends a schedule or a collection job.
@@ -78,10 +169,11 @@ export class Control {
    // Re-arm the one-time "collected" notification for this (re)connection, so the
    // fresh card gets its "✅ loaded" update even if the social was announced before.
    if(this.state.announced)delete this.state.announced[c.userId];
-   const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});
+   lifecycle(conn,'needs_auth',null);conn.validationPending=true;
+   const r=COLLECT_RANGE();this.enqueueCycle({userId:c.userId,since:r.since,until:r.until});
    await this.persist();return reply(201,{userId:c.userId,label:conn.label,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
-  if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');
+  if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId]||this.state.connections[b.userId].lifecycle_status==='disconnected')throw new Error('Connect first');
    if(this.archive&&!this.archive.ownsCampaign(b.userId,action.campaignId))return reply(403,{error:'campaign_forbidden'});
    const duplicate=this.state.jobs.find(j=>j.userId===b.userId&&j.action&&JSON.stringify(j.action)===JSON.stringify(action)&&(['queued','running'].includes(j.state)||Date.now()-Date.parse(j.createdAt)<60000));
    if(duplicate)return reply(202,duplicate);
@@ -90,7 +182,7 @@ export class Control {
    // pending action queue to avoid abuse.
    if(this.state.jobs.filter(j=>j.action&&['queued','running'].includes(j.state)).length>=25)return reply(409,{error:'busy'});
    const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
-  if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
+  if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueueCycle(b);await this.persist();return reply(202,j);}
  if(method==='POST'&&path==='/v1/schedule'){
    const c=this.state.connections[b.userId];if(!c||!Number.isInteger(b.minutes)||b.minutes<0||b.minutes>1440||(b.minutes>0&&b.minutes<15))throw new Error('Invalid schedule');
    c.schedule=b.minutes?{minutes:b.minutes,nextAt:NEXT_SLOT(b.minutes,this.state.tenantId||b.userId)}:null;await this.persist();return reply(200,{ok:true});
@@ -102,19 +194,23 @@ export class Control {
    await this.persist();return reply(200,{ok:true,minutes:b.minutes});
   }
   if(method==='DELETE'&&path==='/v1/connections'){
-   delete this.state.connections[b.userId];delete this.state.results[b.userId];this.archive?.forget(b.userId);for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
+   delete this.state.results[b.userId];
+   const c=this.state.connections[b.userId];if(c){lifecycle(c,'disconnected');c.schedule=null;delete c.validationPending;for(const key of ['token','cookies','storageState','proxy'])delete c[key];}if(this.currentCycle()?.active_collection_set.includes(b.userId))this.endCycle(this.currentCycle(),'failed','social_disconnected');for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
   }
   return reply(404,{error:'not_found'});
  }
  // Caller serializes prepare and finish, but releases the DO gate during collection.
  // Cheap API jobs run up to API_PARALLEL at once; browser and action jobs run alone.
  async prepare(){
-  const now=Date.now();
-  for(const j of this.state.jobs)if(j.state==='running'&&j.leaseUntil<=now){j.state=j.action?'unverified':'queued';j.recovered=true;}
+  if(this.state.subscriptionSuspended){await this.persist();return null;}
+  await this.expireCycle();this.startPostActionSuccessor();const now=Date.now();
+  if(!this.currentCycle()){const legacy=this.state.jobs.find(j=>!j.action&&j.kind!=='import'&&j.kind!=='validation'&&['queued','running'].includes(j.state)&&this.state.connections[j.userId]&&(active(this.state.connections[j.userId])||this.state.connections[j.userId].validationPending));if(legacy)this.enqueueCycle({userId:legacy.userId,...legacy.range},'scheduled');}
+  const cycle=this.currentCycle();if(cycle&&cycle.deadlineAt<=now){this.endCycle(cycle,'failed','cycle_timeout');for(const j of this.state.jobs)if(j.cycle_id===cycle.cycle_id&&['queued','running'].includes(j.state)){j.state='failed';j.finishedAt=new Date().toISOString();}}
+  for(const j of this.state.jobs)if(j.state==='running'&&j.leaseUntil<=now){j.state=j.action?'unverified':(j.attemptCount||0)>=RETRY_LIMIT?'failed':'queued';j.recovered=true;if(j.attempts?.length)Object.assign(j.attempts.at(-1),{finished_at:new Date().toISOString(),result:'lease_expired'});if(j.state==='queued'&&j.attemptCount>1)j.retryAt=now+backoff(j.attemptCount);if(j.state==='failed'){if(j.kind==='validation'){const c=this.state.connections[j.userId];if(c&&!active(c)){delete c.validationPending;c.schedule=null;}}j.finishedAt=new Date().toISOString();if(j.kind!=='validation')this.endCycle(this.state.cycles.find(c=>c.cycle_id===j.cycle_id),'failed','meta_lease_exhausted');}}
   for(const c of Object.values(this.state.connections)){
    // Daily retry of the cheap path; one more rejection sends it back to the browser.
    if(c.mode==='browser'&&c.apiRetryAt<=now){c.mode='api';c.apiFailures=2;}
-   if(c.schedule?.nextAt<=now){const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});c.schedule.nextAt=NEXT_SLOT(c.schedule.minutes,this.state.tenantId||c.userId);}
+   if(active(c)&&!this.state.subscriptionSuspended&&c.schedule?.nextAt<=now&&(!this.currentCycle()||this.currentCycle().active_collection_set.includes(c.userId))){const r=COLLECT_RANGE();this.enqueueCycle({userId:c.userId,since:r.since,until:r.until},'scheduled');c.schedule.nextAt=NEXT_SLOT(c.schedule.minutes,this.state.tenantId||c.userId);}
   }
   const ad=this.state.antidetect;
   if(ad&&ad.nextAt<=now&&!this.state.jobs.some(j=>j.kind==='import'&&['queued','running'].includes(j.state))){
@@ -129,7 +225,9 @@ export class Control {
   if(j&&!isImport&&!c){j.state='cancelled';await this.persist();return null;}
   const heavy=j&&(isImport||j.action||c.mode==='browser'||!c.token);
   if(!j||exclusive||running.length>=API_PARALLEL||(heavy&&running.length)){await this.persist();return null;}
-  j.state='running';j.startedAt=new Date().toISOString();j.leaseUntil=now+(heavy?15:5)*60000;j.attempt=crypto.randomUUID();await this.persist();
+  j.attemptCount=(j.attemptCount||0)+1;j.attempts??=[];j.attempt=crypto.randomUUID();j.attempts.push({attempt_id:j.attempt,number:j.attemptCount,started_at:new Date().toISOString()});j.state='running';j.startedAt=new Date().toISOString();
+  if(j.post_action_reconciliation){const consumed=new Set(j.post_action_reconciliation.map(a=>a.action_job_id)),pending=this.state.pendingPostAction?.[j.userId]||[];const rest=pending.filter(a=>!consumed.has(a.action_job_id));if(rest.length)this.state.pendingPostAction[j.userId]=rest;else delete this.state.pendingPostAction[j.userId];}
+  j.leaseUntil=now+(heavy?15:5)*60000;await this.persist();
   if(isImport)return {job:structuredClone(j),antidetect:structuredClone(ad)};
   return {job:structuredClone(j),connection:structuredClone(c),previous:this.archive?this.archive.previous(j.userId):this.state.results[j.userId]?structuredClone(this.state.results[j.userId]):null};
  }
@@ -148,53 +246,61 @@ export class Control {
     if([190,102].includes(e.code)&&connection.cookies?.length&&this.runner.refreshToken){
      try{const token=await this.runner.refreshToken(connection);const result=await this.runner.collectApi({...connection,token},job.range,previous);return {result:{...result,token}};}catch{}
     }
-    if(!BROWSER_FALLBACK.includes(e.code)||!this.runner.collect||!connection.cookies?.length)return {error:{code:e.code}};
+    if(!BROWSER_FALLBACK.includes(e.code)||!this.runner.collect||!connection.cookies?.length)return {error:{code:e.code||(['AbortError','TimeoutError'].includes(e.name)?'timeout':'network'),httpStatus:e.httpStatus,transient:!!e.transient||e.httpStatus===429||e.httpStatus>=500,subcode:e.subcode}};
     // Without cookies (bookmarklet connection) there is no browser fallback: the client clicks the bookmark again.
    }
   }
   try{const result=await this.runner.collect(connection,job.range);return {result:{...result,viaBrowser:true,apiError:apiError?.code??null}};}
-  catch(e){return {error:{code:e.code}};}
+  catch(e){return {error:{code:e.code||(['AbortError','TimeoutError'].includes(e.name)?'timeout':'network'),httpStatus:e.httpStatus,transient:!!e.transient||e.httpStatus===429||e.httpStatus>=500,subcode:e.subcode}};}
  }
  // Adds or refreshes socials found in the antidetect account. Existing socials
  // keep their schedule; new ones start on the server's default schedule.
  applyImport(j,result,error){
   const a=this.state.antidetect;
   if(error||!result){j.state='failed';j.error={code:error?.code||'import_failed'};if(a)a.lastImport={at:new Date().toISOString(),error:j.error.code};return;}
-  const skipped=[...result.skipped];let added=0,updated=0;
+  const skipped=[...result.skipped];let added=0,updated=0;const validation=[];
   for(const item of result.items){
    const old=this.state.connections[item.userId];
+   if(this.currentCycle()?.active_collection_set.includes(item.userId))this.endCycle(this.currentCycle(),'failed','connection_replaced');
+   if(old?.lifecycle_status==='disconnected')continue;
    this.state.connections[item.userId]={...old,...item,token:item.token||old?.token||null,mode:'api',apiFailures:0,
     schedule:old?.schedule||{minutes:this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
+   const c=this.state.connections[item.userId];if(!old||!active(old)){lifecycle(c,'needs_auth',null);c.validationPending=true;validation.push(item.userId);}
    old?updated++:added++;
   }
+  for(const userId of validation)this.enqueueValidation({userId,...COLLECT_RANGE()},'scheduled');
   j.state='done';
   if(a)a.lastImport={at:result.at,found:result.found,added,updated,skipped:skipped.slice(0,200)};
  }
- async finish(work,result,error){const j=this.state.jobs.find(x=>x.id===work.job.id);if(!j||j.state!=='running'||j.attempt!==work.job.attempt)return;
+ async finish(work,result,error){await this.reconcilePublication();const j=this.state.jobs.find(x=>x.id===work.job.id);if(!j||j.state!=='running'||j.attempt!==work.job.attempt)return;
+  delete j.error;
   if(j.kind==='import'){this.applyImport(j,result,error);delete j.leaseUntil;j.finishedAt=new Date().toISOString();await this.persist();return;}
   const c=this.state.connections[j.userId];
   if(!c||c.revision!==work.connection.revision)j.state='cancelled';
   else if(error){
-   j.state=NEEDS_AUTH.includes(error.code)?'needs_auth':RATE_LIMIT.includes(error.code)?'rate_limited':'failed';
-   j.error={code:diagnosticCode(error.code)};
-   if(error.code==='capacity_busy'){j.state='queued';j.retryAt=Date.now()+10000;}
-   if(j.state==='needs_auth')c.schedule=null;
-   // Meta asked us to slow down: skip the next hour of scheduled runs.
-   if(j.state==='rate_limited'&&c.schedule)c.schedule.nextAt=Math.max(c.schedule.nextAt,Date.now()+60*60000);
+   const reason=authReason(error.code);
+   j.state=reason?'needs_auth':'failed';j.error={code:diagnosticCode(error.code)};
+   if(reason){if(j.action&&this.currentCycle()?.active_collection_set.includes(j.userId))this.endCycle(this.currentCycle(),'failed',reason);lifecycle(c,'needs_auth',reason);c.schedule=null;delete c.validationPending;}
+   else if(!j.action&&(error.transient||transient(error.code))&&(j.attemptCount||0)<RETRY_LIMIT){j.state='queued';j.retryAt=Date.now()+backoff(j.attemptCount);}
+   if(j.state!=='queued'&&j.kind==='validation'){delete c.validationPending;if(!active(c))c.schedule=null;}
+   if(j.state!=='queued'&&j.kind!=='validation')this.endCycle(this.state.cycles.find(c=>c.cycle_id===j.cycle_id),'failed',reason||j.error.code);
+
   }
   else if(j.action){const a=result?.actionResult;if(!a||a.campaignId!==j.action.campaignId){j.state='failed';j.error={code:'invalid_action_result'};}else{j.state=a.state;j.actionResult=a;j.observedAt=a.observedAt;if(result.storageState)c.storageState=result.storageState;
    // Успешное действие → ставим пересбор, чтобы архив (источник статуса/бюджета)
    // быстро подтянул новое состояние из кабинета (persist ниже назначит аларм).
-   if(a.state==='done'){try{const r=COLLECT_RANGE();this.enqueue({userId:j.userId,since:r.since,until:r.until});}catch{}}}}
-  else if(!result?.snapshot?.complete||result.snapshot.source!=='facebook-server'||result.snapshot.social?.user.id!==j.userId){j.state='failed';j.error={code:'invalid_snapshot'};}
+   if(a.state==='done')this.queuePostAction(j);}}
+  else if(result?.snapshot?.social?.user.id&&result.snapshot.social.user.id!==j.userId){lifecycle(c,'needs_auth','wrong_identity');c.schedule=null;delete c.validationPending;j.state='needs_auth';j.error={code:'identity'};this.endCycle(this.state.cycles.find(c=>c.cycle_id===j.cycle_id),'failed','wrong_identity');}
+  else if(!Number.isFinite(Date.parse(result?.snapshot?.observedAt))||!result?.snapshot?.complete||result.snapshot.source!=='facebook-server'||result.snapshot.social?.user.id!==j.userId){j.state='failed';j.error={code:'invalid_snapshot'};}
   else{
    // History goes to the client's database; state keeps only a compact summary.
    this.state.results[j.userId]=this.archive?await this.archive.record(j.userId,result.snapshot,result.viaBrowser?'browser':'api',c.label):result.snapshot;j.state='done';j.observedAt=result.snapshot.observedAt;j.mode=result.viaBrowser?'browser':'api';
    // First successful collection for this social → queue a one-time "connected"
    // notification to the bot (with real accounts/БМ/pages counts). The DO sends
    // it outside the storage gate after the alarm finishes.
-   c.lastCollectedAt=Date.now();
-   this.state.pendingRefresh=true;
+   c.lastCollectedAt=Date.now();lifecycle(c,'active');delete c.validationPending;if(!c.schedule)c.schedule={minutes:this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,nextAt:NEXT_SLOT(this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,this.state.tenantId||c.userId)};
+   const cycle=this.state.cycles.find(c=>c.cycle_id===j.cycle_id);if(cycle?.result==='processing'){cycle.meta_generations[j.userId]={job_id:j.id,attempt:j.attempt,generation:result.snapshot.observedAt,revision:c.revision};this.metaReady(cycle);}
+   if(j.kind==='validation'){j.finishedAt=new Date().toISOString();if(j.attempts?.length)Object.assign(j.attempts.at(-1),{finished_at:j.finishedAt,result:'done'});if(!this.currentCycle())this.enqueueCycle({userId:j.userId,...j.range},j.trigger||'manual',j);else c.schedule.nextAt=Date.now();}
    if(!j.action){this.state.announced=this.state.announced||{};this.state.pendingAnnounce=this.state.pendingAnnounce||[];if(!this.state.announced[j.userId]){this.state.announced[j.userId]=true;this.state.pendingAnnounce.push(j.userId);}}
    if(result.storageState)c.storageState=result.storageState;
    if(typeof result.token==='string'&&/^EA[A-Za-z0-9_-]{18,4094}$/.test(result.token))c.token=result.token;
@@ -203,7 +309,11 @@ export class Control {
    // the browser for a day, then try the cheap path again.
    else if(result.apiError===1&&++c.apiFailures>=3){c.mode='browser';c.apiRetryAt=Date.now()+24*60*60000;}
   }
+  if(j.state!=='queued')j.finishedAt=new Date().toISOString();
+  if(j.attempts?.length)Object.assign(j.attempts.at(-1),{finished_at:new Date().toISOString(),result:j.state,error:j.error?.code||null});
+  if(['failed','cancelled'].includes(j.state)&&j.kind==='validation'){delete c?.validationPending;if(c&&!active(c))c.schedule=null;}
+  if(['failed','cancelled'].includes(j.state)&&j.kind!=='validation')this.endCycle(this.state.cycles.find(c=>c.cycle_id===j.cycle_id),'failed',j.error?.code||j.state);
   if(j.error){this.state.errors=(this.state.errors||[]).filter(e=>Date.parse(e.at)>Date.now()-90*864e5).slice(-199);this.state.errors.push(diagnostic(j,j.error));}
-  delete j.leaseUntil;j.finishedAt=new Date().toISOString();await this.persist();
+  delete j.leaseUntil;await this.persist();
  }
 }

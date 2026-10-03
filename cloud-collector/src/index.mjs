@@ -1,3 +1,4 @@
+import {D1Store} from '../../platform/src/store.mjs';
 import {Admission} from './admission.mjs';
 import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
@@ -34,7 +35,7 @@ async function validateApi(b,{apiValidate,containerValidate}){
  if(lastError?.code===1&&c.cookies.length)return containerValidate(b);
  throw lastError;
 }
-const paths=new Map([['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/refresh-frequency','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
+const paths=new Map([['/v1/subscription/resume','POST'],['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/refresh-frequency','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
 export class GlobalAdmission extends DurableObject {
@@ -83,7 +84,7 @@ export class CollectorControl extends DurableObject {
     // error with a snippet, instead of leaking a raw JSON.parse SyntaxError.
     const text=await r.text();let value;
     try{value=text?JSON.parse(text):{};}catch{throw Object.assign(new Error('container_non_json'),{code:'container_unavailable',detail:'Коллектор ещё запускается, попробуйте ещё раз. ('+text.slice(0,120)+')'});}
-    if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail});return value;
+    if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail,transient:!!value.transient,subcode:value.subcode,httpStatus:value.httpStatus??r.status});return value;
    });
    this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,{apiValidate:x=>call('/api-validate',x),containerValidate:x=>call('/validate',x)}),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
     // Cheap path: with a proxy use the Node container (reliable SOCKS5+TLS);
@@ -97,7 +98,8 @@ export class CollectorControl extends DurableObject {
     importProfiles:config=>importProfiles(antidetectClient(config),{connect,browserAvailable:true}),
     matchProfile:async(config,userAgent)=>matchProfile(await antidetectClient(config).profiles(),userAgent)},
     // Client's own database (SQLite in this Durable Object) + raw archive in R2.
-    new SqlArchive(ctx.storage.sql,null,ctx.id.toString()));
+    new SqlArchive(ctx.storage.sql,null,ctx.id.toString()),env.DB?{receipt:id=>new D1Store(env.DB).publicationReceipt(this.control.state.tenantId,id),commit:payload=>new D1Store(env.DB).commitStatsPublication(this.control.state.tenantId,payload)}:null);
+   await this.control.reconcilePublication();await this.control.persist();
   });
  }
  async fetch(request){
@@ -107,6 +109,7 @@ export class CollectorControl extends DurableObject {
   // Remember which tenant owns this DO, so collection-finish notifications can
   // be addressed to the right bot chat (persisted whenever a request persists).
   const tid=request.headers.get('x-tenant-id');if(tid)this.control.state.tenantId=tid;
+  if(new URL(request.url).pathname==='/internal/publication/commit'&&request.method==='POST')return this.ctx.blockConcurrencyWhile(async()=>reply(200,await this.control.commitPublication(await request.json())));
   try{return await this.ctx.blockConcurrencyWhile(async()=>{
    const url=new URL(request.url),b=request.method==='GET'?Object.fromEntries(url.searchParams):await request.json();return this.control.request(url.pathname,request.method,b);
   });}catch{return reply(400,{error:'invalid_request'});}
@@ -130,13 +133,15 @@ export class CollectorControl extends DurableObject {
  // them outside the storage gate and records each result as soon as it ends.
  async alarm(){
   if(this.env.PAUSE_JOBS==='true'||this.env.RELEASE_HOLD==='true'){await this.ctx.storage.setAlarm(Date.now()+60000);return;}
+  await this.ctx.blockConcurrencyWhile(async()=>{await this.control.expireCycle();await this.control.persist();});
   const tenant=this.control.state.tenantId;
   if(tenant&&this.env.DB){
    const t=await this.env.DB.prepare('SELECT status,paid_until FROM tenants WHERE id=?').bind(tenant).first();
    if(!t||t.status!=='active'||t.paid_until<new Date().toISOString().slice(0,10)){
-    await this.ctx.blockConcurrencyWhile(async()=>{for(const c of Object.values(this.control.state.connections))c.schedule=null;for(const j of this.control.state.jobs)if(j.state==='queued')j.state='cancelled';delete this.control.state.antidetect;await this.control.persist();});return;
+    await this.ctx.blockConcurrencyWhile(()=>this.control.subscription(false));await this.ctx.storage.setAlarm(Date.now()+60000);return;
    }
   }
+  if(this.control.state.subscriptionSuspended)await this.ctx.blockConcurrencyWhile(()=>this.control.subscription(true));
   let permit;
   try{({permit}=await admission(this.env,{op:'acquire',pool:'jobs',tenant:tenant||this.ctx.id.toString()}));}catch{}
   if(!permit){await this.ctx.storage.setAlarm(Date.now()+10000);return;}
@@ -145,7 +150,7 @@ export class CollectorControl extends DurableObject {
    const work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare());
    executed=!!work;
    if(work){
-    const reportState=async phase=>{if(!work.job.action&&work.job.kind!=='import'&&tenant&&this.env.PLATFORM)try{await this.env.PLATFORM.statsStateChanged(tenant,phase);}catch{}};
+    const reportState=async phase=>{if(!work.job.action&&work.job.kind!=='import'&&work.job.kind!=='validation'&&tenant&&this.env.PLATFORM)try{await this.env.PLATFORM.statsStateChanged(tenant,phase);}catch{}};
     await reportState('facebook');
     const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));ok=!error;code=error?.code||null;collected=ok&&result?.snapshot?.complete;if(!collected&&!work.job.action&&work.job.kind!=='import')await reportState('failed');}
    else ok=true;
@@ -154,8 +159,19 @@ export class CollectorControl extends DurableObject {
   await this.announcePending();
   // Once per refresh cycle, let the bot send the fresh report (if the client
   // turned that on). Fire-and-forget; the platform checks the setting.
-  if(this.control.state.pendingRefresh&&this.env.PLATFORM&&this.control.state.tenantId){try{await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId);this.control.state.pendingRefresh=false;}catch{}}
-  await this.ctx.blockConcurrencyWhile(async()=>{this.control.state.notifyRetryAt=Date.now()+60000;await this.control.persist();});
+  if(this.env.PLATFORM&&this.control.state.tenantId){
+   const work=await this.ctx.blockConcurrencyWhile(()=>this.control.preparePublication());
+   if(work){let outcome;try{outcome=await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId,work);}catch{outcome={result:'retry',reason:'platform_unavailable'};}
+    await this.ctx.blockConcurrencyWhile(()=>this.control.finishPublication(work,outcome));}
+  }
+  await this.ctx.blockConcurrencyWhile(async()=>{await this.control.persist();});
+ }
+}
+// Private service binding only. The public gateway never forwards this path.
+export class PublicationCommit extends WorkerEntrypoint {
+ async commit(tenantId,payload){
+  const r=await this.env.CONTROL.getByName('tenant:'+String(tenantId)).fetch(new Request('http://collector.internal/internal/publication/commit',{method:'POST',headers:{'x-control-internal':this.env.INTERNAL_KEY,'x-tenant-id':String(tenantId),'content-type':'application/json'},body:JSON.stringify(payload)}));
+  if(!r.ok)throw new Error('publication_commit_unavailable');return r.json();
  }
 }
 export default {

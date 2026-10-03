@@ -57,7 +57,7 @@ async function batchRead(url,token,fetcher){
 }
 async function decodeResponse(r,token){
   let body;
-  try {body=await r.json();} catch {throw new MetaError("response","Meta вернула ответ, который невозможно прочитать.");}
+  try {body=await r.json();} catch {const error=new MetaError("response","Meta вернула ответ, который невозможно прочитать.");error.httpStatus=r.status;error.transient=r.status===429||r.status>=500;throw error;}
   if(!r.ok || body.error) {
     const code=Number(body.error?.code || 0);
     const message=code===190 ? "Токен Meta недействителен или истёк." :
@@ -66,7 +66,7 @@ async function decodeResponse(r,token){
     const error=new MetaError(code,message);
     error.httpStatus=r.status;
     error.subcode=Number.isInteger(body.error?.error_subcode) ? body.error.error_subcode : null;
-    error.transient=body.error?.is_transient===true;
+    error.transient=body.error?.is_transient===true||r.status===429||r.status>=500;
     error.detail=redactMetaDetail(body.error?.message,token);
     // Classify locally; never retain or export Meta's raw error text.
     const raw=String(body.error?.message || "").toLowerCase();

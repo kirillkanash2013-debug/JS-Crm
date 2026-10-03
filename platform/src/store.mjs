@@ -8,6 +8,15 @@ export class D1Store {
   async statsSnapshot(tenantId){return this.db.prepare('SELECT enc,completed_at AS completedAt FROM stats_snapshots WHERE tenant_id=?').bind(tenantId).first();}
   async claimStatsCycle(tenantId,owner){const r=await this.db.prepare('INSERT INTO stats_snapshots(tenant_id,lock_owner,lease_until) VALUES(?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET lock_owner=excluded.lock_owner,lease_until=excluded.lease_until WHERE stats_snapshots.lease_until<?').bind(tenantId,owner,Date.now()+600000,Date.now()).run();return r.meta?.changes===1;}
   async saveStatsSnapshot(tenantId,owner,enc,completedAt){const r=await this.db.prepare('UPDATE stats_snapshots SET enc=?,completed_at=? WHERE tenant_id=? AND lock_owner=? AND lease_until>?').bind(enc,completedAt,tenantId,owner,Date.now()).run();return r.meta?.changes===1;}
+  async publicationReceipt(tenantId,cycleId){const r=await this.db.prepare('SELECT cycle_id,completed_at,source_times FROM stats_publication_receipts WHERE tenant_id=? AND cycle_id=?').bind(tenantId,cycleId).first();return r&&{cycle_id:r.cycle_id,completed_at:r.completed_at,sourceTimes:JSON.parse(r.source_times)};}
+  async commitStatsPublication(tenantId,{cycle_id,owner,enc,completedAt,sourceTimes}){
+    const receipt=await this.publicationReceipt(tenantId,cycle_id);if(receipt)return receipt;
+    await this.db.batch([
+      this.db.prepare("UPDATE stats_snapshots SET enc=?,completed_at=?,cycle_id=? WHERE tenant_id=? AND lock_owner=? AND lease_until>? AND NOT EXISTS(SELECT 1 FROM stats_publication_receipts WHERE tenant_id=? AND cycle_id=?) AND EXISTS(SELECT 1 FROM tenants WHERE id=? AND status='active' AND paid_until>=?)").bind(enc,completedAt,cycle_id,tenantId,owner,Date.now(),tenantId,cycle_id,tenantId,now().slice(0,10)),
+      this.db.prepare('INSERT OR IGNORE INTO stats_publication_receipts(tenant_id,cycle_id,completed_at,source_times) SELECT tenant_id,cycle_id,completed_at,? FROM stats_snapshots WHERE tenant_id=? AND cycle_id=? AND lock_owner=?').bind(JSON.stringify(sourceTimes),tenantId,cycle_id,owner)
+    ]);
+    return this.publicationReceipt(tenantId,cycle_id);
+  }
   async releaseStatsCycle(tenantId,owner){await this.db.prepare('UPDATE stats_snapshots SET lock_owner=NULL,lease_until=0 WHERE tenant_id=? AND lock_owner=?').bind(tenantId,owner).run();}
   async createStarsOrder(o){await this.db.prepare('INSERT INTO stars_orders(id,chat_id,tenant_id,plan,amount,created_at,expires_at) VALUES(?,?,?,?,?,?,?)').bind(o.id,String(o.chatId),o.tenantId||null,o.plan,o.amount,now(),o.expiresAt).run();}
   async starsOrder(id){return this.db.prepare('SELECT id,chat_id AS chatId,tenant_id AS tenantId,plan,amount,expires_at AS expiresAt FROM stars_orders WHERE id=?').bind(id).first();}
@@ -120,6 +129,13 @@ export class MemoryStore {
   async statsSnapshot(tenantId){return this.snapshots?.get(tenantId)||null;}
   async claimStatsCycle(tenantId,owner){this.snapshots??=new Map();const r=this.snapshots.get(tenantId)||{};if(r.leaseUntil>Date.now())return false;this.snapshots.set(tenantId,{...r,owner,leaseUntil:Date.now()+600000});return true;}
   async saveStatsSnapshot(tenantId,owner,enc,completedAt){const r=this.snapshots.get(tenantId);if(r?.owner!==owner||r.leaseUntil<=Date.now())return false;Object.assign(r,{enc,completedAt});return true;}
+  async publicationReceipt(tenantId,cycleId){return this.publicationReceipts?.get(tenantId+':'+cycleId)||null;}
+  async commitStatsPublication(tenantId,{cycle_id,owner,enc,completedAt,sourceTimes}){
+    const receipt=await this.publicationReceipt(tenantId,cycle_id);if(receipt)return receipt;
+    const r=this.snapshots?.get(tenantId),t=await this.tenant(tenantId);
+    if(r?.owner!==owner||r.leaseUntil<=Date.now()||!t||t.status!=='active'||t.paidUntil<now().slice(0,10))return null;
+    Object.assign(r,{enc,completedAt,cycle_id});this.publicationReceipts??=new Map();const published={cycle_id,completed_at:completedAt,sourceTimes};this.publicationReceipts.set(tenantId+':'+cycle_id,published);return published;
+  }
   async releaseStatsCycle(tenantId,owner){const r=this.snapshots.get(tenantId);if(r?.owner===owner){r.owner=null;r.leaseUntil=0;}}
   async createStarsOrder(o){this.starsOrders??=new Map();this.starsOrders.set(o.id,{...o,chatId:String(o.chatId)});}
   async starsOrder(id){return this.starsOrders?.get(id)||null;}

@@ -10,7 +10,11 @@ export async function collect(connection,range,{chromium,timeoutMs=15*60*1000}={
   const context=await browser.newContext({userAgent:connection.userAgent,storageState:connection.storageState||{cookies:connection.cookies,origins:[]}});
   const page=await context.newPage();
   await page.goto('https://adsmanager.facebook.com/adsmanager/',{waitUntil:'domcontentloaded',timeout:60000});
-  try{await page.waitForFunction(id=>{try{return String(globalThis.require('CurrentUserInitialData').USER_ID)===id;}catch{return false;}},connection.userId,{timeout:30000});}catch{throw Object.assign(new Error('Session requires reconnection'),{code:'needs_auth'});}
+  try{await page.waitForFunction(id=>{try{return String(globalThis.require('CurrentUserInitialData').USER_ID)===id;}catch{return false;}},connection.userId,{timeout:30000});}catch{
+   const url=new URL(page.url());const actual=await page.evaluate(()=>{try{return String(globalThis.require('CurrentUserInitialData').USER_ID);}catch{return null;}}).catch(()=>null);
+   const code=/checkpoint/.test(url.pathname)?'checkpoint':/login/.test(url.pathname)?'expired_session':actual&&actual!=='0'&&actual!==connection.userId?'identity':'temporary_provider_failure';
+   throw Object.assign(new Error('Session validation did not complete'),{code});
+  }
   const fetcher=async(url,options)=>{
    if(options.method!=='GET')throw new Error('Read only');
    const token=options.headers.Authorization.slice(7);
@@ -25,10 +29,11 @@ export async function collect(connection,range,{chromium,timeoutMs=15*60*1000}={
   catch(e){
    if(![190,102].includes(e.code))throw e;
    const found=await page.evaluate(inspectAdsSession).catch(()=>null);
+   let lastError=e;
    for(const candidate of found?.userId===connection.userId?found.candidates:[]){
-    try{social=await discoverSocial(candidate.token,connection.userId,()=>{},fetcher);token=candidate.token;break;}catch{}
+    try{social=await discoverSocial(candidate.token,connection.userId,()=>{},fetcher);token=candidate.token;break;}catch(error){lastError=error;}
    }
-   if(!social)throw Object.assign(new Error('Session requires reconnection'),{code:'needs_auth'});
+   if(!social)throw lastError;
   }
   const reports={},structures={};
   for(const a of social.accounts){reports[a.id]=await syncMeta(a.id,range,token,()=>{},fetcher);structures[a.id]=await syncStructure(a.id,token,()=>{},fetcher);}

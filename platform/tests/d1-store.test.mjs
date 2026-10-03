@@ -58,3 +58,16 @@ test('D1Store works with the migration schema', async () => {
   assert.equal((await store.social(tenant.id, '100')).agentId, null);
   assert.deepEqual(await store.listAgents(tenant.id), []);
 });
+
+test('D1 publication atomically commits snapshot and receipt, rolls back failure and replays idempotently',async()=>{
+ const db=new DatabaseSync(':memory:');for(const f of fs.readdirSync(new URL('../migrations/',import.meta.url)).filter(n=>n.endsWith('.sql')).sort())db.exec(fs.readFileSync(new URL('../migrations/'+f,import.meta.url),'utf8'));
+ const store=new D1Store(d1(db));const {tenant}=await applyPayment(store,{paymentId:'publication',provider:'test',plan:'start'});
+ await store.claimStatsCycle(tenant.id,'owner');await store.saveStatsSnapshot(tenant.id,'owner','previous','2026-10-01T00:00:00Z');
+ const payload={cycle_id:'cycle',owner:'owner',enc:'published',completedAt:'2026-10-03T00:00:00Z',sourceTimes:{'101':'generation'}};
+ assert.equal(await store.commitStatsPublication(tenant.id,{...payload,owner:'wrong'}),null);assert.equal((await store.statsSnapshot(tenant.id)).enc,'previous');
+ db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON stats_publication_receipts BEGIN SELECT RAISE(ABORT,'receipt failure'); END");
+ await assert.rejects(store.commitStatsPublication(tenant.id,payload),/receipt failure/);assert.equal((await store.statsSnapshot(tenant.id)).enc,'previous');assert.equal(await store.publicationReceipt(tenant.id,'cycle'),null);
+ db.exec('DROP TRIGGER fail_receipt');const receipt=await store.commitStatsPublication(tenant.id,payload);assert.equal(receipt.cycle_id,'cycle');
+ await store.saveStatsSnapshot(tenant.id,'owner','newer','2026-10-04T00:00:00Z');assert.deepEqual(await store.commitStatsPublication(tenant.id,{...payload,enc:'replayed'}),receipt);assert.equal((await store.statsSnapshot(tenant.id)).enc,'newer');
+ db.exec("UPDATE tenants SET status='expired'");assert.equal(await store.commitStatsPublication(tenant.id,{...payload,cycle_id:'expired'}),null);assert.equal((await store.statsSnapshot(tenant.id)).enc,'newer');
+});

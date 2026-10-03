@@ -34,7 +34,7 @@ test('durable pairs: menus never fetch Keitaro; failed or partial FB/Keitaro kee
   at='2026-10-03T10:00:00Z';await bot().notifyStatsRefresh(tenant.id);assert.equal(events.length,0,'partial social refresh cannot fetch Keitaro');
   secondAt=at;failFB=true;await assert.rejects(bot().notifyStatsRefresh(tenant.id),/facebook_data_unavailable/);assert(!events.includes('keitaro'));assert.equal((await read()).text,first.text);
   assert(sent.at(-1).text.indexOf('Spend') < sent.at(-1).text.indexOf('Обновление не завершено'),'failure status appears below the report');
-  failFB=false;failKT=true;await assert.rejects(bot().notifyStatsRefresh(tenant.id),/keitaro_cycle_failed/);assert.equal((await read()).text,first.text);
+  failFB=false;failKT=true;assert.equal((await bot().notifyStatsRefresh(tenant.id)).result,'retry');assert.equal((await read()).text,first.text);
   failKT=false;changed=true;await assert.rejects(bot().notifyStatsRefresh(tenant.id),/facebook_cycle_changed/);assert.equal((await read()).text,first.text);
   changed=false;secondAt=at;spend=20;await bot().notifyStatsRefresh(tenant.id);assert.match((await read()).text,/Spend <b>\$40\.00/);
   events.length=0;jobs=[{userId:'a',state:'failed',finishedAt:'2026-10-03T11:00:00Z'}];at=secondAt='2026-10-03T10:30:00Z';await bot().notifyStatsRefresh(tenant.id);assert.equal(events.length,0,'failed FB cannot fetch Keitaro');
@@ -56,4 +56,30 @@ test('manual cooldown uses the newest social and its footer shows when refresh b
  try{await bot({callback_query:{id:'1',data:'stats:refresh',message:{message_id:9,chat:{id:1}}}});
  assert.equal(calls,0);assert.match(sent.at(-1).text,/Ручное обновление доступно в \d{2}:\d{2}/);assert.match(sent.at(-1).text,/Плановый сбор: каждые 30 мин/);
  }finally{globalThis.fetch=real;}
+});
+
+import {isCollectionJob} from '../../shared/jobs.mjs';
+for(const state of ['queued','running'])for(const kind of ['validation','action','import','collection','legacy'])test(`${state} ${kind}: manual refresh and Stats footer respect collection classification`,async()=>{
+ const store=new MemoryStore(),sent=[];let queued=0;const {tenant}=await applyPayment(store,{paymentId:crypto.randomUUID(),provider:'test',plan:'team',masterKey:MASTER_KEY});
+ await store.setChat(1,tenant.id,'ready');
+ const job={state,userId:'a',...(kind==='legacy'?{}:kind==='action'?{action:{campaignId:'12345'}}:{kind})};const collection=['collection','legacy'].includes(kind);
+ assert.equal(isCollectionJob(job),collection);
+ // Legacy cached queued/facebook phases must not make candidate/action/import mandatory.
+ await store.setStatsPhase(tenant.id,state==='queued'?'queued':'facebook');
+ const bot=createBot({store,tg:async(m,p)=>{sent.push(p);return {message_id:9};},env:{MASTER_KEY,COLLECTOR_URL:'https://c.test'}}),real=globalThis.fetch;
+ globalThis.fetch=async url=>{if(url.endsWith('/v1/jobs')){queued++;return Response.json({});}return Response.json({connections:[{userId:'a',lifecycle_status:'active',collectedAt:new Date(Date.now()-3600000).toISOString()}],jobs:[job]});};
+ try{
+  await bot({message:{chat:{id:1},text:'📊 Статистика'}});
+  const text=sent.at(-1).text;assert.equal(/Собираем Facebook|Обновление в очереди/.test(text),collection);
+  await bot({callback_query:{id:'manual',data:'stats:refresh',message:{message_id:9,chat:{id:1}}}});
+  assert.equal(queued,collection?0:1);
+ }finally{globalThis.fetch=real;}
+});
+
+for(const kind of ['validation','action','import'])test(`legacy publication excludes running ${kind} from pending collection`,async()=>{
+ const store=new MemoryStore();const {tenant}=await applyPayment(store,{paymentId:crypto.randomUUID(),provider:'test',plan:'team',masterKey:MASTER_KEY});
+ const bot=createBot({store,tg:async()=>({}),env:{MASTER_KEY,COLLECTOR_URL:'https://c.test'}}),real=globalThis.fetch;
+ const at=new Date().toISOString();const job={state:'running',userId:'a',...(kind==='action'?{action:{campaignId:'12345'}}:{kind})};
+ globalThis.fetch=async url=>url.endsWith('/v1/status')?Response.json({connections:[{userId:'a',lifecycle_status:'active',collectedAt:at}],jobs:[job]}):Response.json({campaigns:[]});
+ try{assert.equal((await bot.notifyStatsRefresh(tenant.id)).result,'published');assert((await store.statsSnapshot(tenant.id)).enc);}finally{globalThis.fetch=real;}
 });

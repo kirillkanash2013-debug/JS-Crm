@@ -1,3 +1,4 @@
+import {collectionError} from '../shared/collection-errors.mjs';
 import {applyCampaignActionApi,validateAction} from './campaign-action.mjs';
 import http from 'node:http';
 import {checkKeitaroNode,reportKeitaroNode,timezoneKeitaroNode} from './keitaro.mjs';
@@ -28,13 +29,13 @@ http.createServer(async(req,res)=>{
  if(req.method!=='POST'||!['/validate','/collect','/smoke','/action','/api-validate','/api-collect','/keitaro-check','/keitaro-report','/keitaro-timezone'].includes(req.url))return send(404,{error:'not_found'});
  // API (no-browser) endpoints run concurrently; only browser work uses the busy gate.
  const browserPath=['/validate','/collect','/smoke'].includes(req.url);
- if(browserPath&&busy)return send(409,{code:'busy'});
+ if(browserPath&&busy)return send(409,{code:'capacity_busy'});
  try{let bytes=0,text='';for await(const chunk of req){bytes+=chunk.length;if(bytes>4*1024*1024){send(413,{code:'too_large'});req.destroy();return;}text+=chunk;}const b=JSON.parse(text);
   if(req.url==='/keitaro-timezone')return send(200,await timezoneKeitaroNode(b.origin,b.key));
   if(req.url==='/keitaro-check')return send(200,await checkKeitaroNode(b.origin,b.key));
   if(req.url==='/keitaro-report')return send(200,await reportKeitaroNode(b.origin,b.key,{from:b.from,to:b.to,timezone:b.timezone,subIndex:b.subIndex}));
   if(req.url==='/api-validate'){try{const c=await cleanApi(b);await apiValidate(c);return send(200,{userId:c.userId,token:c.token,userAgent:c.userAgent,cookies:c.cookies,proxy:c.proxy});}catch(e){return send(422,{code:e.code==='proxy'?'proxy':(typeof e.code==='number'?e.code:e.code==='identity'?'identity':'validation_failed'),detail:e.detail||e.message});}}
-  if(req.url==='/api-collect'){try{const c=await cleanApi(b.connection);const range=period(b.range.since,b.range.until);return send(200,await collectViaApi(c,range,{previous:b.previous}));}catch(e){return send(400,{code:[190,102].includes(e.code)?e.code:(e.code==='proxy'?'proxy':'collector_failed'),detail:e.detail||e.message});}}
+  if(req.url==='/api-collect'){try{const c=await cleanApi(b.connection);const range=period(b.range.since,b.range.until);return send(200,await collectViaApi(c,range,{previous:b.previous}));}catch(e){return send(400,collectionError(e));}}
   if(req.url==='/smoke'){busy=true;let browser;try{browser=await chromium.launch({headless:true});const page=await browser.newPage();await page.goto('data:text/html,<title>JS Control cloud smoke</title>');const title=await page.title();if(title!=='JS Control cloud smoke')throw new Error();return send(200,{ok:true,source:'cloudflare-browser-smoke',facebookVerified:false,browserVersion:browser.version(),observedAt:new Date().toISOString()});}finally{if(browser)await browser.close();busy=false;}}
   if(req.url==='/validate'){const c=validateConnection(b);c.proxy=await publicProxy(c.proxy);return send(200,c);}
   const c=validateConnection(b.connection);c.proxy=await publicProxy(c.proxy);
@@ -44,5 +45,5 @@ http.createServer(async(req,res)=>{
   if(req.url==='/action'){validateAction(b.action);return send(200,await applyCampaignActionApi(c,b.action));}
   const range=period(b.range.since,b.range.until);busy=true;
   try{return send(200,await collect(c,range,{timeoutMs:13*60000}));}finally{busy=false;}
- }catch(e){return send(400,{code:[190,102,'identity','needs_auth'].includes(e.code)?e.code:'collector_failed',detail:e.detail||e.message||null});}
+ }catch(e){return send(400,collectionError(e));}
 }).listen(8080,'0.0.0.0');
