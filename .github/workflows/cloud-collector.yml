@@ -33,6 +33,10 @@ jobs:
           REQUIRE_BROWSER: '1'
       - name: Test platform
         run: node --test platform/tests/*.mjs
+      - name: Build the actual Cloudflare container image
+        run: docker build -f server/Dockerfile.cloudflare -t js-control-cloud:test .
+      - name: Verify container startup and shared module imports
+        run: docker run --rm --network none -e INTERNAL_KEY=ci-only-container-import-test-key-0001 --entrypoint node js-control-cloud:test -e "import('./server/container-runner.mjs').then(()=>process.exit(0))"
       - name: Apply D1 migrations before either Worker
         if: vars.SAAS_AUTO_DEPLOY == 'true'
         working-directory: platform
