@@ -1,0 +1,10 @@
+name = "js-crm-telegram-claude"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+GAS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ/exec"
+
+[observability]
+enabled = true

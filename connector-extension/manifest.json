@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "JS Control",
+  "version": "0.9.0",
+  "description": "Подключение профиля к JS Control: читает токен, cookies и прокси профиля и запускает сбор на сервере.",
+  "permissions": ["scripting", "activeTab", "cookies", "storage"],
+  "host_permissions": [
+    "https://*.facebook.com/*",
+    "https://js-control-collector-claude.kirill-kanash2013.workers.dev/*",
+    "http://local.adspower.net/*",
+    "http://127.0.0.1/*"
+  ],
+  "action": {"default_popup": "popup.html", "default_title": "JS Control"},
+  "icons": {"128": "icon.png"}
+}

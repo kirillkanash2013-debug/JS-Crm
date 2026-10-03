@@ -24,6 +24,10 @@ let writes=0;
 const legacy={getLastRow:()=>1032,getLastColumn:()=>23,getName:()=> 'ALL',getRange:()=>({getValues:()=>[Array(23).fill('legacy')],setValues:()=>writes++})};
 assert.throws(()=>ctx.ensureHeaders_(legacy,['Date','Spend']),/Schema mismatch/);
 assert.equal(writes,0);
+ctx.ScriptApp={getScriptId:()=> '1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd'};
+assert.equal(ctx.getCrmEnv_().name,'prod');
+assert.equal(ctx.getStorageIds_().FB,'1K1jWjsjWAHni1G4ctU1n39hccPNfTvfqcPgYKsT20Yc');
+assert.equal(ctx.getCrmEnv_().devEndpoint,false);
 ctx.SpreadsheetApp={getActiveSpreadsheet:()=>({getId:()=> '1OybSL2WmQAsibfvNqmvy9A0rTXCQJ02ghbX2NeFxfYM',getSheetByName:()=>legacy})};
 assert.throws(()=>ctx.assertCrmReady_(),/migration required/);
 assert.equal(writes,0);
@@ -107,4 +111,37 @@ assert.equal(staleCandidates.act_1[0].cab._resolved_bm_id,'');
 const currentCandidates={};
 ctx.addCabCandidate_(currentCandidates,{account_id:'act_1'},'new_bm','New','ACTIVE',{new_bm:{name:'New',status:'ACTIVE'}},true);
 assert.equal(currentCandidates.act_1[0].cab._resolved_bm_id,'new_bm');
+// Sandbox: separate spreadsheet, polling bot, dev endpoint; prod never serves dev requests.
+ctx.ScriptApp={getScriptId:()=> '1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP'};
+assert.equal(ctx.getCrmEnv_().name,'claude');
+assert.equal(ctx.getStorageIds_().CRM,'1KOYIS9vT1VN9zs9eCKj32IK9iYlBWS_QJHVB8xSUSEs');
+ctx.ScriptApp={getScriptId:()=> '1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd'};
+const prodStorage=new Set(Object.values(ctx.getStorageIds_()));
+ctx.ScriptApp={getScriptId:()=> '1zBbm3wUrgFJyag0wj25ckY-p-lygkdpOMWCjV8uaH0GQLaOMoS12D6RP'};
+assert(Object.values(ctx.getStorageIds_()).every(id=>!prodStorage.has(id)),'Sandbox must not touch prod storage');
+assert.equal(new Set(Object.values(ctx.getStorageIds_())).size,5,'Sandbox keeps five separate spreadsheets like prod');
+assert.equal(ctx.getCrmEnv_().telegramWorkerUrl,'https://js-crm-telegram-claude.kirill-kanash2013.workers.dev');
+const devProps={CRM_CLAUDE_DEV_SECRET:'s'.repeat(64)};
+ctx.PropertiesService={getScriptProperties:()=>({getProperty:k=>devProps[k]||null})};
+ctx.ContentService={MimeType:{JSON:'json'},createTextOutput:t=>({text:t,setMimeType(){return this;}})};
+const devCall=(secret,body)=>ctx.handleDevRequest_({parameter:{dev:'1'},postData:{contents:JSON.stringify(Object.assign({secret},body))}}).text;
+assert.equal(devCall('wrong',{action:'ping'}),'forbidden');
+assert.equal(JSON.parse(devCall(devProps.CRM_CLAUDE_DEV_SECRET,{action:'ping'})).result.env,'claude');
+assert.match(JSON.parse(devCall(devProps.CRM_CLAUDE_DEV_SECRET,{action:'run',fn:'installTriggers'})).error,/not allowlisted/);
+ctx.ScriptApp={getScriptId:()=> '1eZEdgudWM6s5bbXAXLQfmdOvv_CO-uhRd52UCRCpiGpzvg3nF3iXH3pd'};
+assert.equal(devCall(devProps.CRM_CLAUDE_DEV_SECRET,{action:'ping'}),'forbidden');
+ctx.ScriptApp={getScriptId:()=> 'unknown'};
+assert.throws(()=>ctx.getCrmEnv_(),/Unknown CRM environment/);
+// Dolphin has no BM status field: it is derived from the BM's accounts.
+assert.equal(ctx.summarizeBmStatus_(['POLICY','ACTIVE']),'ACTIVE');
+assert.equal(ctx.summarizeBmStatus_(['POLICY','CLOSED']),'POLICY');
+assert.equal(ctx.summarizeBmStatus_(['CLOSED','DISABLED']),'DISABLED');
+assert.equal(ctx.summarizeBmStatus_([]),'UNKNOWN');
+const derivedBm=ctx.deriveBmStatusesFromCabs_([
+  {_resolved_bm_id:'bm1',status:'POLICY'},{_resolved_bm_id:'bm1',status:'ACTIVE'},
+  {_resolved_bm_id:'bm2',account_status:101},{_resolved_bm_id:'',status:'ACTIVE'}]);
+assert.deepEqual(JSON.parse(JSON.stringify(derivedBm)),{bm1:'ACTIVE',bm2:'DISABLED'});
+assert.equal(ctx.resolveBmStatus_('bm1','UNKNOWN',derivedBm),'ACTIVE');
+assert.equal(ctx.resolveBmStatus_('bm1','POLICY',derivedBm),'POLICY');
+assert.equal(ctx.resolveBmStatus_('bm9','',derivedBm),'UNKNOWN');
 console.log(`PASS: ${files.length} modules; unique entry points; target, secret scan, history protection, error redaction`);

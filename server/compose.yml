@@ -1,0 +1,30 @@
+services:
+  collector:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    init: true
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      VAULT_KEY: ${VAULT_KEY:?Set VAULT_KEY in .env}
+    volumes:
+      - vault:/data
+    ports:
+      - '127.0.0.1:8080:8080'
+  tls:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      COLLECTOR_DOMAIN: ${COLLECTOR_DOMAIN:?Set COLLECTOR_DOMAIN in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:
+  vault:

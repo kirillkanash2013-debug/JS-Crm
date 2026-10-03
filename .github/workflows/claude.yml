@@ -1,0 +1,106 @@
+name: Claude sandbox deploy and check
+on:
+  push:
+    branches: [claude-code]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Upload the branch to the sandbox before the request
+        type: boolean
+        default: false
+      request:
+        description: Dev endpoint request JSON (without secret)
+        default: '{"action":"status"}'
+permissions:
+  contents: read
+env:
+  # Stable sandbox web-app deployment; deploy.mjs updates it in place.
+  SANDBOX_DEPLOYMENT_ID: 'AKfycbwVbmTp5VwpaBJVZ0X6MWXDHatYPYySCzXqp1qNZVuSZDBlL21iZkVEflrNddO73kYQ'
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+  worker:
+    # Instant Telegram delivery for the sandbox bot via its own Cloudflare Worker.
+    needs: check
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Deploy sandbox Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy --config wrangler.claude.toml
+  deploy:
+    needs: check
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only uploads are serialized; read requests may run side by side.
+    concurrency:
+      group: claude-sandbox-deploy
+      cancel-in-progress: false
+    outputs:
+      deployment_id: ${{ steps.deploy.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Push and verify sandbox source
+        id: deploy
+        run: node scripts/deploy.mjs
+        env:
+          CRM_TARGET: claude
+          CLASP_AUTH_JSON: ${{ secrets.CLASP_AUTH_JSON }}
+  request:
+    needs: [check, deploy]
+    if: always() && needs.check.result == 'success' && needs.deploy.result != 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Call sandbox dev endpoint
+        env:
+          DEV_SECRET: ${{ secrets.CRM_CLAUDE_DEV_SECRET }}
+          DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id || env.SANDBOX_DEPLOYMENT_ID }}
+          REQUEST: ${{ inputs.request || '{"action":"status"}' }}
+        run: |
+          if [ -z "$DEV_SECRET" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "Dev endpoint is not configured yet (secret or deployment missing); skipping."
+            exit 0
+          fi
+          body=$(jq -c --arg s "$DEV_SECRET" '. + {secret: $s}' <<< "$REQUEST")
+          url="https://script.google.com/macros/s/$DEPLOYMENT_ID/exec?dev=1"
+          # Apps Script intermittently drops the response after its redirect,
+          # returning a Drive 404 page. The action itself still ran, so retry
+          # the read a few times until valid JSON comes back.
+          for attempt in 1 2 3 4 5; do
+            curl -sS -L --max-time 400 -H 'Content-Type: application/json' --data "$body" \
+              -D headers.txt -o response.json "$url" || true
+            grep -iE '^(HTTP/|location:)' headers.txt | sed -E 's/\?.*$//' || true
+            if jq -e '.ok == true' response.json > /dev/null 2>&1; then
+              head -c 20000 response.json; echo; exit 0
+            fi
+            echo "Attempt $attempt: no valid JSON yet; retrying in 10s"
+            sleep 10
+          done
+          echo "Dev endpoint did not return valid JSON after retries:"
+          head -c 2000 response.json; echo
+          exit 1

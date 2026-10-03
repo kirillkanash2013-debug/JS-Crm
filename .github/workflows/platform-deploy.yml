@@ -1,0 +1,86 @@
+name: Provision & deploy JS Control platform (bot + D1)
+# Runs on push to the SaaS branch (workflow_dispatch needs the file on the
+# default branch, which we must not touch). Secrets are generated once and then
+# left alone, so repeated pushes redeploy the bot without rotating MASTER_KEY.
+#
+# One-time setup you do first (see docs/SAAS-ACCESS.md → "Запуск бота"):
+#   1. @BotFather: create a bot → token + @username.
+#   2. Cloudflare → D1 → create "js-control-platform" → id into the wrangler
+#      configs (Claude commits this).
+#   3. @userinfobot: your numeric Telegram id → ADMIN_CHAT_IDS (Claude commits).
+#   4. Repo → Settings → Secrets and variables → Actions → Secret
+#      TELEGRAM_BOT_TOKEN = <token>. (CLOUDFLARE_API_TOKEN / _ACCOUNT_ID exist.)
+on:
+  push:
+    branches: [claude-code, claude/saas-access]
+    paths:
+      - 'platform/**'
+      - '.github/workflows/platform-deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: js-control-cloud-collector
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci --prefix cloud-collector
+
+      - name: Check required secrets are set
+        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        run: |
+          test -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" || { echo "::error::Missing secret CLOUDFLARE_API_TOKEN"; exit 1; }
+          test -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" || { echo "::error::Missing secret CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+          test -n "${{ secrets.TELEGRAM_BOT_TOKEN }}" || { echo "::error::Add the TELEGRAM_BOT_TOKEN repository secret first (Settings → Secrets and variables → Actions)."; exit 1; }
+
+      - name: Check the D1 id is wired in
+        working-directory: platform
+        run: |
+          if grep -q 'REPLACE_AFTER_wrangler_d1_create' wrangler.jsonc; then
+            echo "::error::platform/wrangler.jsonc still has the D1 placeholder. Set the real database id first."; exit 1; fi
+
+      - name: Run the platform tests
+        working-directory: platform
+        run: npm test
+
+      - name: Apply D1 migrations (remote)
+        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        working-directory: platform
+        run: ../cloud-collector/node_modules/.bin/wrangler d1 migrations apply js-control-platform --remote
+
+      - name: Deploy the platform worker
+        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        working-directory: platform
+        run: ../cloud-collector/node_modules/.bin/wrangler deploy
+
+      - name: Wait until the worker resolves on workers.dev
+        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS https://js-control-platform.kirill-kanash2013.workers.dev/health >/dev/null 2>&1; then
+              echo "Worker is reachable."; exit 0
+            fi
+            echo "waiting for workers.dev DNS/propagation... ($i)"; sleep 6
+          done
+          echo "::error::Worker did not become reachable in time."; exit 1
+
+      - name: Preserve encryption keys and connect client webhook
+        if: vars.SAAS_AUTO_DEPLOY == 'true'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: node platform/bootstrap-secrets.mjs

@@ -1,0 +1,53 @@
+{
+  "name": "js-control-collector-claude",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  // Platform database with client tokens (same D1 as platform/). Lets the
+  // collector resolve client jsi_ tokens; without it only the owner key works.
+  "d1_databases": [{"binding": "DB", "database_name": "js-control-platform", "database_id": "2ea0f7c2-48b6-4f7e-892f-89eb637abf90"}],
+  // Push "social connected" notifications to the bot the moment a profile is
+  // connected in the plugin (collector → platform's BotNotify entrypoint).
+  "services": [{"binding": "PLATFORM", "service": "js-control-platform", "entrypoint": "BotNotify"}],
+  // Raw snapshot archive (gzip, one per social per hour). Create the bucket first:
+  // npx wrangler r2 bucket create js-control-archive
+  // "r2_buckets": [{"binding": "ARCHIVE", "bucket_name": "js-control-archive"}],
+  "containers": [
+    {
+      "class_name": "BrowserContainer",
+      "image": "../server/Dockerfile.cloudflare",
+      "max_instances": 10,
+      "instance_type": "standard-1",
+      "image_build_context": ".."
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {"name":"ADMISSION","class_name":"GlobalAdmission"},
+      {
+        "name": "CONTROL",
+        "class_name": "CollectorControl"
+      },
+      {
+        "name": "BROWSER",
+        "class_name": "BrowserContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "CollectorControl",
+        "BrowserContainer"
+      ]
+    },
+    {"tag":"v2-admission","new_sqlite_classes":["GlobalAdmission"]}
+  ],
+  "observability": {
+    "enabled": false
+  }
+}

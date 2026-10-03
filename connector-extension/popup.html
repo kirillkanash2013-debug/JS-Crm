@@ -1,0 +1,26 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>JS Control</title>
+<style>
+body{width:320px;margin:0;background:#0c111b;color:#edf2fa;font:14px system-ui}
+header{padding:14px 16px;border-bottom:1px solid #29364b;font-weight:800;color:#8fff8a;letter-spacing:1px}
+main{padding:16px}
+label{display:block;font-size:12px;color:#aab8cc;margin:10px 0 4px}
+input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #394c67;border-radius:8px;background:#0d1523;color:#fff;font:inherit}
+button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:8px;background:#8fff8a;color:#0c111b;font:700 14px system-ui;cursor:pointer}
+button:disabled{opacity:.5}
+.hint{font-size:11px;color:#8fa3bf;margin:8px 0 0}
+#status{margin-top:12px;font-size:13px;white-space:pre-wrap}
+.ok{color:#8fff8a}.err{color:#ff8b86}
+.ver{color:#55657a;font-size:10px;text-align:center;padding:6px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #394c67;border-top-color:#8fff8a;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style></head><body>
+<header>JS CONTROL</header>
+<main>
+<label for="key">Ключ доступа (из бота)</label>
+<input id="key" type="password" autocomplete="off" placeholder="jsi_… или js_srv_…">
+<button id="go">Подключить этот профиль</button>
+<p class="hint">Откройте в этом профиле Ads Manager нужного соца, вставьте ключ интеграции и нажмите кнопку.</p>
+<div id="status" role="status"></div>
+</main>
+<div class="ver">v0.9.0</div>
+<script src="popup.js"></script></body></html>

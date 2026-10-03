@@ -1,0 +1,8 @@
+const encoder=new TextEncoder(),decoder=new TextDecoder();
+export class EncryptedStore {
+ constructor(storage,base64){this.storage=storage;const bytes=Uint8Array.from(atob(base64||''),c=>c.charCodeAt(0));if(bytes.length!==32)throw new Error('Missing vault key');this.key=crypto.subtle.importKey('raw',bytes,'AES-GCM',false,['encrypt','decrypt']);}
+ async load(){const count=await this.storage.get('chunks');if(!count)return null;if(!Number.isInteger(count)||count<1||count>512)throw new Error('Invalid encrypted state');const chunks=[];let size=0;for(let i=0;i<count;i++){const b=await this.storage.get('part:'+i);if(!(b instanceof Uint8Array))throw new Error('Incomplete encrypted state');chunks.push(b);size+=b.length;}const payload=new Uint8Array(size);let at=0;for(const b of chunks){payload.set(b,at);at+=b.length;}const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:payload.slice(0,12)},await this.key,payload.slice(12));return JSON.parse(decoder.decode(plain));}
+ async save(data){const plain=encoder.encode(JSON.stringify(data));if(plain.length>32*1024*1024-64)throw new Error('State too large');const iv=crypto.getRandomValues(new Uint8Array(12)),cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await this.key,plain)),payload=new Uint8Array(12+cipher.length);payload.set(iv);payload.set(cipher,12);const count=Math.ceil(payload.length/65536);
+ await this.storage.transaction(async tx=>{const old=await tx.get('chunks')||0;for(let i=0;i<count;i++)await tx.put('part:'+i,payload.slice(i*65536,(i+1)*65536));for(let i=count;i<old;i++)await tx.delete('part:'+i);await tx.put('chunks',count);});
+ }
+}

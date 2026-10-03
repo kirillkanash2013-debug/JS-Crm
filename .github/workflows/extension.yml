@@ -1,0 +1,34 @@
+name: JS Control extension checks
+on:
+  push:
+    branches: [claude-code]
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JS syntax
+        run: |
+          for file in extension/*.mjs; do node --check "$file"; done
+      - name: Test extension
+        run: node --test extension/tests/*.test.mjs
+      - name: Package standalone extension
+        working-directory: extension
+        run: zip -r ../JS-Control-0.7.0.zip manifest.json core.mjs collector.mjs meta.mjs worker.mjs session.mjs network.mjs page-transport.mjs recorder.mjs structure.mjs server-link.mjs client.mjs panel.html panel.css panel.mjs README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JS-Control-0.7.0
+          path: JS-Control-0.7.0.zip
+          if-no-files-found: error

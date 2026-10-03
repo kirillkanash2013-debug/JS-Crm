@@ -1,0 +1,4 @@
+// Allowlist only: arbitrary exceptions can contain URLs, campaign names or tokens.
+const CODES=new Set(['proxy','proxy_failed','needs_auth','identity','rate_limited','failed','invalid_snapshot','invalid_action_result','import_failed','container_unavailable','capacity_busy','subscription_expired','notification_failed','archive_failed']);
+export function diagnosticCode(value){return typeof value==='number' && Number.isInteger(value) ? 'provider_'+value : CODES.has(value)||/^provider_\d+$/.test(String(value))?value:'failed';}
+export function diagnostic(job,error){return {id:crypto.randomUUID(),jobId:job.id,at:new Date().toISOString(),stage:job.action?'action':job.kind==='import'?'import':'collect',code:diagnosticCode(error?.code),socialId:job.userId};}

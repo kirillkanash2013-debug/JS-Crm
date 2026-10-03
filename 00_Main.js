@@ -81,7 +81,7 @@ function finalizeYesterday() {
 function migrateLegacyStorage() {
   return withRunLock_('migrateLegacyStorage', function () {
     assertTargetSpreadsheet_();
-    const central = SpreadsheetApp.openById(STORAGE_SPREADSHEET_IDS.CRM);
+    const central = SpreadsheetApp.openById(getStorageIds_().CRM);
     const names = [
       SHEETS.DB_CAMPAIGNS_TODAY, SHEETS.FB_HISTORY,
       SHEETS.DB_KEITARO_TODAY, SHEETS.KEITARO_HISTORY,
@@ -419,7 +419,7 @@ function assertCrmReady_() {
 
 function assertTargetSpreadsheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss || ss.getId() !== STORAGE_SPREADSHEET_IDS.CRM) {
+  if (!ss || ss.getId() !== getStorageIds_().CRM) {
     throw new Error('CRM target spreadsheet mismatch');
   }
 }

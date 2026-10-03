@@ -1,0 +1,139 @@
+// Builds the «Сейчас» report (FB spend ↔ Keitaro revenue/ROI) exactly like the
+// prod CRM: top totals + per-campaign block. Pure functions — the bot fetches
+// FB spend (collector) and Keitaro rows (KEITARO_BRIDGE) and passes them here.
+// Join key: the sub_id the client configured (settings.keitaroSub) carries the
+// Facebook campaign id, matched to the collector's campaignId.
+
+const num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const money = n => (n < 0 ? '-$' : '$') + (Math.abs(Math.round(n * 100) / 100)).toFixed(2);
+const round2 = n => Math.round(n * 100) / 100;
+const roiPct = (rev, spend) => spend > 0 ? (rev / spend - 1) * 100 : 0;
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const per = (total, count) => count > 0 ? (total / count).toFixed(2) : '—';
+
+// 'YYYY-MM-DD' → 'DD.MM.YYYY'
+function fmtDate(day) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || '')); return m ? m[3] + '.' + m[2] + '.' + m[1] : String(day || ''); }
+
+// Keitaro rows → per-FB-campaign metrics, keyed by the campaign id in sub_id_N.
+// Inst = unique clicks (report/build); Reg = status 'lead', Dep/Rev = status
+// 'sale' (conversions/log, authoritative). A sale whose click was on an earlier
+// day than `day` is a долёт, kept apart for the bracketed → Rev/ROI.
+export function aggregateKeitaro({report = [], conversions = []} = {}, {subIndex = 4, day} = {}) {
+  const sub = 'sub_id_' + subIndex;
+  const by = {};                                   // per FB campaign (sub_id)
+  const byOffer = {};                              // per (campaign, offer) — for the 🎯 block
+  const get = id => (by[id] = by[id] || {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0, name: '', offer: ''});
+  const getOffer = (id, offer) => { const k = id + '\u0000' + offer; return byOffer[k] = byOffer[k] || {campaignId: id, offer, inst: 0, reg: 0, dep: 0, rev: 0}; };
+  for (const r of report) {
+    const id = String(r[sub] ?? '').trim(); if (!id) continue;
+    const c = get(id), inst = num(r.campaign_unique_clicks ?? r.clicks);
+    c.inst += inst;
+    if (!c.name && r.campaign) c.name = String(r.campaign);
+    if (!c.offer && r.offer) c.offer = String(r.offer);
+    if (r.offer) getOffer(id, String(r.offer)).inst += inst;
+  }
+  for (const r of conversions) {
+    const id = String(r[sub] ?? '').trim(); if (!id) continue;
+    const c = get(id), offer = r.offer ? String(r.offer) : null;
+    const status = String(r.status ?? '').toLowerCase();
+    if (status === 'lead') { c.reg += 1; if (offer) getOffer(id, offer).reg += 1; }
+    else if (status === 'sale') {
+      const rev = num(r.revenue), clickDay = String(r.click_datetime ?? '').slice(0, 10);
+      if (day && clickDay && clickDay !== day) { c.doletDep += 1; c.doletRev += rev; }
+      else { c.dep += 1; c.rev += rev; }
+      if (offer) { const o = getOffer(id, offer); o.dep += 1; o.rev += rev; }
+    }
+  }
+  const totals = {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0};
+  for (const c of Object.values(by)) { c.rev = round2(c.rev); c.doletRev = round2(c.doletRev); for (const k of Object.keys(totals)) totals[k] += c[k]; }
+  totals.rev = round2(totals.rev); totals.doletRev = round2(totals.doletRev);
+  return {byCampaign: by, totals, offers: Object.values(byOffer)};
+}
+
+// GEO = first 2-letter token in the FB campaign name (KG, UZ, KG+UZ…), как в prod.
+const GEO = /^[A-Z]{2}(?:\+[A-Z]{2})*$/;
+function parseGeo(name) { for (const t of String(name || '').toUpperCase().split(/[\s|_\-]+/)) if (t && GEO.test(t)) return t; return ''; }
+const trim40 = s => { s = String(s || ''); return s.length > 40 ? s.slice(0, 39) + '…' : s; };
+
+// 🎯 Офферы по GEO: берутся только с кампаний, которые сегодня тратили; на
+// кампанию GEO из её названия. Строка: оффер · inst-reg-dep · $EPC (rev/inst).
+function offersBlock({offers = [], campaigns = []}) {
+  const geoByCamp = {}, spends = new Set();
+  for (const c of campaigns) { const id = String(c.campaignId); if (num(c.spend) > 0) spends.add(id); geoByCamp[id] = parseGeo(c.name); }
+  const byGeoOffer = {};
+  for (const o of offers) {
+    if (!spends.has(String(o.campaignId))) continue;
+    const geo = geoByCamp[String(o.campaignId)]; if (!geo) continue;
+    const key = geo + '\u0000' + o.offer, g = byGeoOffer[key] = byGeoOffer[key] || {geo, offer: o.offer, inst: 0, reg: 0, dep: 0, rev: 0};
+    g.inst += o.inst; g.reg += o.reg; g.dep += o.dep; g.rev += o.rev;
+  }
+  const geos = {};
+  for (const g of Object.values(byGeoOffer)) if (g.inst > 1) (geos[g.geo] = geos[g.geo] || []).push(g);
+  const out = [];
+  for (const geo of Object.keys(geos).sort()) {
+    out.push('🎯 <b>' + esc(geo) + '</b>');
+    for (const o of geos[geo].sort((a, b) => b.inst - a.inst))
+      out.push(esc(trim40(o.offer)) + ' · ' + Math.round(o.inst) + ' - ' + Math.round(o.reg) + ' - ' + Math.round(o.dep) +
+        ' · $' + (o.inst > 0 ? o.rev / o.inst : 0).toFixed(2));
+  }
+  return out;
+}
+
+function topBlock({day, times, spendTotal, totals}) {
+  const revAll = round2(totals.rev + totals.doletRev);
+  return ['<b>📊 Сейчас · ' + esc(fmtDate(day)) + (times?.updated ? ' · ' + esc(times.updated) : '') + '</b>',
+    '<i>JS Control ' + esc(times?.fb || '—') + ' · Keitaro ' + esc(times?.keitaro || '—') + '</i>', '',
+    'Spend <b>' + money(spendTotal) + '</b>',
+    'Inst <b>' + Math.round(totals.inst) + '</b> · Reg <b>' + Math.round(totals.reg) + '</b>',
+    'Dep <b>' + Math.round(totals.dep) + '</b>' + (totals.doletDep ? ' +' + Math.round(totals.doletDep) + ' долёт' : ''),
+    'Rev <b>' + money(totals.rev) + '</b>' + (totals.doletRev ? ' → <b>' + money(revAll) + '</b>' : ''),
+    'Profit <b>' + money(round2(totals.rev - spendTotal)) + '</b>' + (totals.doletRev ? ' → <b>' + money(round2(revAll - spendTotal)) + '</b>' : ''),
+    'ROI <b>' + Math.round(roiPct(totals.rev, spendTotal)) + '%</b>' + (totals.doletRev ? ' → <b>' + Math.round(roiPct(revAll, spendTotal)) + '%</b>' : '')].join('\n');
+}
+
+// Состояние кампании: 🟢 включена (есть расход) · ⚪ включена, без расхода ·
+// 🔴 выключена. ⚠️ — если есть ошибки в объявлениях.
+function campIcon(c) {
+  const active = !c.effectiveStatus || c.effectiveStatus === 'ACTIVE';
+  return (!active ? '🔴' : c.spend > 0 ? '🟢' : '⚪') + (c.errorAds ? ' ⚠️' : '');
+}
+
+// Numbered per-campaign card for the campaigns board: "N. <icon> name" + the
+// 💰/💸/🤑 and metrics lines. Reuses the same rendering as the «Сейчас» report.
+export function campaignCard(n, c, k = {inst: 0, reg: 0, dep: 0, rev: 0}) {
+  if(c.currency&&c.currency!=='USD')return '<b>'+n+'.</b> '+esc(c.name||c.campaignId)+'\nSpend '+num(c.spend).toFixed(2)+' '+esc(c.currency)+' · бюджет '+esc(c.dailyBudget||'—')+' ед. Meta\nДоход и ROI требуют согласования валют.';
+  return '<b>' + n + '.</b> ' + campaignLines(c, k);
+}
+
+// One campaign: name, 💰budget 💸spend 🤑rev, then inst/CPI − reg/CPR − dep/CPA (ROI%).
+function campaignLines(c, k) {
+  const budget = c.dailyBudget ? Math.round(num(c.dailyBudget) / 100) : 0;
+  const line1 = campIcon(c) + ' ' + esc(c.name || c.campaignId);
+  const line2 = '💰' + budget + '$ 💸' + Math.round(c.spend) + '$ 🤑' + Math.round(k.rev) + '$';
+  const line3 = Math.round(k.inst) + '/' + per(c.spend, k.inst) + '$ - ' +
+    Math.round(k.reg) + '/' + per(c.spend, k.reg) + '$ - ' +
+    Math.round(k.dep) + (k.dep ? '/' + per(c.spend, k.dep) + '$' : '') +
+    ' (' + Math.round(roiPct(k.rev, c.spend)) + '%)';
+  return line1 + '\n' + line2 + '\n' + line3;
+}
+
+// Full «Сейчас» text. campaigns: collector /v1/campaigns rows (campaignId, name,
+// effectiveStatus, dailyBudget, spend, errorAds?). keitaro: aggregateKeitaro().
+export function buildNow({day, times, campaigns = [], keitaro, subIndex = 4}) {
+  if(campaigns.some(c=>c.currency&&c.currency!=='USD')){
+    const totals={};for(const c of campaigns){const cur=c.currency||'UNKNOWN';totals[cur]=(totals[cur]||0)+num(c.spend);}
+    return '<b>📊 Сейчас · '+esc(fmtDate(day))+(times?.updated?' · '+esc(times.updated):'')+'</b>\n'+Object.entries(totals).map(([cur,v])=>'Spend <b>'+v.toFixed(2)+' '+esc(cur)+'</b>').join('\n')+'\n\n⚠️ Доход, прибыль и ROI не сведены: сначала нужно согласовать валюты источников.\n\n'+campaigns.slice(0,25).map(c=>esc(c.name||c.campaignId)+' · '+num(c.spend).toFixed(2)+' '+esc(c.currency||'UNKNOWN')).join('\n');
+  }
+  const agg = keitaro || {byCampaign: {}, totals: {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0}};
+  const empty = {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0};
+  const spendTotal = round2(campaigns.reduce((n, c) => n + num(c.spend), 0));
+  const out = [topBlock({day, times, spendTotal, totals: agg.totals})];
+  const offers = offersBlock({offers: agg.offers || [], campaigns});
+  if (offers.length) out.push('', offers.join('\n'));
+  const active = campaigns.filter(c => num(c.spend) > 0 || c.effectiveStatus === 'ACTIVE')
+    .sort((a, b) => num(b.spend) - num(a.spend)).slice(0, 25);
+  if (active.length) out.push('', 'Ⓜ️ <b>Кампании сейчас:</b>',
+    active.map(c => keitaro?campaignLines(c, agg.byCampaign[String(c.campaignId)] || empty):campIcon(c)+' '+esc(c.name||c.campaignId)+'\nSpend '+money(num(c.spend))+' · доход —').join('\n\n'));
+  if(!keitaro){const text=out.join('\n');return text.replace(/^Rev .*$/gm,'Rev —').replace(/^Profit .*$/gm,'Profit —').replace(/^ROI .*$/gm,'ROI —');}
+  return out.join('\n');
+}
