@@ -144,7 +144,10 @@ export class CollectorControl extends DurableObject {
   try{
    const work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare());
    executed=!!work;
-   if(work){const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));ok=!error;code=error?.code||null;collected=ok&&result?.snapshot?.complete;}
+   if(work){
+    const reportState=async phase=>{if(!work.job.action&&work.job.kind!=='import'&&tenant&&this.env.PLATFORM)try{await this.env.PLATFORM.statsStateChanged(tenant,phase);}catch{}};
+    await reportState('facebook');
+    const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));ok=!error;code=error?.code||null;collected=ok&&result?.snapshot?.complete;if(!collected&&!work.job.action&&work.job.kind!=='import')await reportState('failed');}
    else ok=true;
   }finally{await admission(this.env,{op:'release',permit,ok,code,record:executed}).catch(()=>{});}
 

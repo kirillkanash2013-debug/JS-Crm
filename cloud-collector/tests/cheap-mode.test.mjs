@@ -16,7 +16,8 @@ const range = id => ({userId: id, since: '2026-10-01', until: '2026-10-01'});
 function control(runner, limit = 10) {
   const c = new Control(initialState(), async () => {}, async () => {}, {validate: async x => x, ...runner});
   const add = async id => { await c.request('/v1/connections', 'POST', conn(id), limit); await c.request('/v1/jobs', 'POST', range(id), limit); };
-  const cycle = async () => { const w = await c.prepare(); const {result, error} = await c.execute(w); await c.finish(w, result, error); return w; };
+  // Transport tests run queued work as if its cooldown has elapsed.
+  const cycle = async () => { for(const j of c.state.jobs)if(j.state==='queued')j.retryAt=0; const w = await c.prepare(); const {result, error} = await c.execute(w); await c.finish(w, result, error); return w; };
   return {c, add, cycle};
 }
 

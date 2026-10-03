@@ -82,6 +82,7 @@ test('collector keeps only compact summaries in state; report via API; history s
   const c = new Control(initialState(), async () => {}, async () => {}, runner, archive);
   await c.request('/v1/connections', 'POST', {userId: '100', token: 'EA' + 'x'.repeat(30)}, 5);
   for (let i = 0; i < 2; i++) {
+    c.state.connections['100'].lastCollectedAt=Date.now()-16*60000; // next sampling interval
     await c.request('/v1/jobs', 'POST', {userId: '100', since: '2026-10-01', until: '2026-10-01'}, 5);
     const w = await c.prepare(); const {result, error} = await c.execute(w); await c.finish(w, result, error);
   }

@@ -36,10 +36,11 @@ export class Control {
  constructor(state,save,schedule,runner,archive=null){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;this.archive=archive;}
  async persist(){await this.save(this.state);await this.plan();}
  async plan(){let next=Infinity;if(this.state.pendingAnnounce?.length||this.state.pendingRefresh)next=this.state.notifyRetryAt||Date.now()+10000;for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,j.retryAt||Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(c.schedule)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
- status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).map(c=>{const sum=this.archive?.socialSummary?.(c.userId)||null;return {userId:c.userId,label:c.label||null,source:c.profileId?'antidetect':'manual',connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api',accounts:sum?.accounts??null,businesses:sum?.businesses??null,pages:sum?.pages??null,collectedAt:sum?.lastAt||null};}),antidetect:this.antidetectStatus(),jobs:this.state.jobs,results:this.state.results};}
+ status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).map(c=>{const sum=this.archive?.socialSummary?.(c.userId)||null;return {userId:c.userId,label:c.label||null,source:c.profileId?'antidetect':'manual',connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api',accounts:sum?.accounts??null,businesses:sum?.businesses??null,pages:sum?.pages??null,refreshAllowedAt:c.lastCollectedAt?c.lastCollectedAt+15*60000:null,collectedAt:sum?.lastAt||null};}),antidetect:this.antidetectStatus(),jobs:this.state.jobs,results:this.state.results};}
  antidetectStatus(){const a=this.state.antidetect;return a?{type:a.type,connectedAt:a.connectedAt,nextImportAt:a.nextAt,lastImport:a.lastImport}:null;}
  enqueue(b){const userId=String(b.userId||'');if(!this.state.connections[userId])throw new Error('Connect first');const range=period(b.since,b.until);const existing=this.state.jobs.find(j=>j.userId===userId&&['queued','running'].includes(j.state));if(existing)return existing;
- const j={id:crypto.randomUUID(),userId,range,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)).slice(-99));this.state.jobs.push(j);return j;}
+ const lastAt=Number(this.state.connections[userId].lastCollectedAt)||Date.parse(this.archive?.socialSummary?.(userId)?.lastAt||this.state.results[userId]?.observedAt)||0;
+ const j={id:crypto.randomUUID(),userId,range,retryAt:Math.max(Date.now(),lastAt+15*60000),state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)).slice(-99));this.state.jobs.push(j);return j;}
  async request(path,method,b){
   delete this.state.socialLimit;
   if(path==='/v1/antidetect'){
@@ -192,6 +193,7 @@ export class Control {
    // First successful collection for this social → queue a one-time "connected"
    // notification to the bot (with real accounts/БМ/pages counts). The DO sends
    // it outside the storage gate after the alarm finishes.
+   c.lastCollectedAt=Date.now();
    this.state.pendingRefresh=true;
    if(!j.action){this.state.announced=this.state.announced||{};this.state.pendingAnnounce=this.state.pendingAnnounce||[];if(!this.state.announced[j.userId]){this.state.announced[j.userId]=true;this.state.pendingAnnounce.push(j.userId);}}
    if(result.storageState)c.storageState=result.storageState;

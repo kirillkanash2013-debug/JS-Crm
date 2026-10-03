@@ -389,6 +389,7 @@ test('stats «Обновить»: triggers a collection at most once per 15 min'
   try {
     await h.tap('stats:refresh'); // stale → one collection
     assert.equal(jobs, 1); assert.match(h.last(), /Запрос принят/);
+    await h.store.setStatsPhase((await h.store.chat(1)).tenantId,'ready');
     collectedAt = new Date().toISOString(); // now fresh
     await h.tap('stats:refresh'); // within 15 min → no new collection
     assert.equal(jobs, 1); assert.match(h.last(), /свежие/);
