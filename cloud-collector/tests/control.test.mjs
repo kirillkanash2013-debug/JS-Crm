@@ -30,20 +30,20 @@ test('persisted alarm job runs without extension, verifies owner and retains las
  await c.request('/v1/connections','POST',connection);const queued=await body(await c.request('/v1/jobs','POST',range));assert.equal(queued.state,'queued');assert(alarm>Date.now());
  // Drop the control instance as if its runtime was evicted. All input is persisted.
  c=new Control(await v.load(),s=>v.save(s),time=>{alarm=time;},runner);const work=await c.prepare();await c.finish(work,await runner.collect(work.connection,work.job.range));assert.equal(calls,1);assert.equal(c.status().jobs[0].state,'done');assert(alarm>Date.now(),'server keeps the default schedule armed for the next run');assert(!JSON.stringify(c.status()).includes(connection.token));assert(!JSON.stringify(c.status()).includes('secret-cookie'));
- const previous=c.status().results[connection.userId];c.state.connections[connection.userId].lastCollectedAt=Date.now()-16*60000;await c.request('/v1/schedule','POST',{userId:connection.userId,minutes:15});await c.request('/v1/jobs','POST',range);const failed=await c.prepare();await c.finish(failed,null,{code:190});assert.equal(c.status().jobs.at(-1).state,'needs_auth');assert.deepEqual(c.status().results[connection.userId],previous);assert.equal(c.status().connections[0].schedule,null);
+ c.endCycle(c.currentCycle(),'published');const previous=c.status().results[connection.userId];c.state.connections[connection.userId].lastCollectedAt=Date.now()-16*60000;await c.request('/v1/schedule','POST',{userId:connection.userId,minutes:15});await c.request('/v1/jobs','POST',range);const failed=await c.prepare();await c.finish(failed,null,{code:190});assert.equal(c.status().jobs.at(-1).state,'needs_auth');assert.deepEqual(c.status().results[connection.userId],previous);assert.equal(c.status().connections[0].schedule,null);
 });
 test('deleting or replacing a session prevents late job results from being published',async()=>{
  const c=new Control(initialState(),async()=>{},async()=>{},{validate:async x=>x});await c.request('/v1/connections','POST',connection);await c.request('/v1/jobs','POST',range);const work=await c.prepare();await c.request('/v1/connections','DELETE',{userId:connection.userId});await c.finish(work,{snapshot:{complete:true,source:'facebook-server',social:{user:{id:connection.userId}}}});assert.deepEqual(c.status().results,{});assert.equal(c.status().jobs[0].state,'cancelled');
 });
 test('expired leases recover, schedules enqueue autonomously, wrong owner never replaces result',async()=>{
  const c=new Control(initialState(),async()=>{},async()=>{},{validate:async x=>x});await c.request('/v1/connections','POST',connection);await c.request('/v1/schedule','POST',{userId:connection.userId,minutes:15});c.state.connections[connection.userId].schedule.nextAt=0;const first=await c.prepare();assert.equal(first.job.state,'running');c.state.jobs[0].leaseUntil=0;const recovered=await c.prepare();assert.equal(recovered.job.recovered,true);assert.notEqual(recovered.job.attempt,first.job.attempt);
- await c.finish(first,{snapshot:{complete:true,source:'facebook-server',social:{user:{id:connection.userId}}}});assert.equal(c.state.jobs[0].state,'running');await c.finish(recovered,{snapshot:{complete:true,source:'facebook-server',social:{user:{id:'999999'}}}});assert.equal(c.state.jobs[0].state,'failed');assert.deepEqual(c.state.results,{});
+ await c.finish(first,{snapshot:{complete:true,source:'facebook-server',social:{user:{id:connection.userId}}}});assert.equal(c.state.jobs[0].state,'running');await c.finish(recovered,{snapshot:{complete:true,source:'facebook-server',social:{user:{id:'999999'}}}});assert.equal(c.state.jobs[0].state,'needs_auth');assert.equal(c.state.connections[connection.userId].auth_issue_reason,'wrong_identity');assert.deepEqual(c.state.results,{});
 });
 
 test('manual and scheduled collections wait at least 15 minutes after success, including restart',async()=>{
  const state=initialState(),c=new Control(state,async()=>{},async()=>{},{validate:async x=>x});
  await c.request('/v1/connections','POST',connection);
- c.state.jobs=[];c.state.connections[connection.userId].lastCollectedAt=Date.now();
+ c.state.jobs=[];c.state.cycles=[];c.state.connections[connection.userId].lifecycle_status='active';c.state.connections[connection.userId].lastCollectedAt=Date.now();
  c.state.connections[connection.userId].schedule.nextAt=0;
  assert.equal(await c.prepare(),null);
  const j=c.state.jobs[0];assert(j.retryAt>=c.state.connections[connection.userId].lastCollectedAt+15*60000);

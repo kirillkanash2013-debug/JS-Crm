@@ -17,7 +17,7 @@ function control(runner, limit = 10) {
   const c = new Control(initialState(), async () => {}, async () => {}, {validate: async x => x, ...runner});
   const add = async id => { await c.request('/v1/connections', 'POST', conn(id), limit); await c.request('/v1/jobs', 'POST', range(id), limit); };
   // Transport tests run queued work as if its cooldown has elapsed.
-  const cycle = async () => { for(const j of c.state.jobs)if(j.state==='queued')j.retryAt=0; const w = await c.prepare(); const {result, error} = await c.execute(w); await c.finish(w, result, error); return w; };
+  const cycle = async () => { for(const j of c.state.jobs)if(j.state==='queued')j.retryAt=0; const w = await c.prepare(); const {result, error} = await c.execute(w); await c.finish(w, result, error);if(c.currentCycle()?.phase==='keitaro')c.endCycle(c.currentCycle(),'published'); return w; };
   return {c, add, cycle};
 }
 
@@ -50,15 +50,12 @@ test('after 3 API rejections (code 1) the social uses the browser for a day, the
   assert.equal(api, 4); assert.equal(c.status().connections[0].collectMode, 'browser', 'still failing → stays in browser mode again later');
 });
 
-test('no browser fallback for proxy errors; rate limit pauses the schedule for an hour', async () => {
-  let browser = 0, code = 'proxy';
-  const {c, add, cycle} = control({collectApi: async () => { throw fail(code); }, collect: async x => { browser++; return snapshot(x.userId); }});
-  await add('103'); await cycle();
-  assert.equal(browser, 0); assert.equal(c.state.jobs[0].state, 'failed'); assert.equal(c.state.jobs[0].error.code, 'proxy');
-  await c.request('/v1/schedule', 'POST', {userId: '103', minutes: 15}, 10);
-  code = 17; await c.request('/v1/jobs', 'POST', range('103'), 10); await cycle();
-  assert.equal(c.state.jobs.at(-1).state, 'rate_limited');
-  assert(c.state.connections['103'].schedule.nextAt >= Date.now() + 59 * 60000);
+test('proxy and rate-limit errors retry without a browser or auth transition', async () => {
+ let browser=0,code='proxy';
+ const {c,add,cycle}=control({collectApi:async()=>{throw fail(code);},collect:async x=>{browser++;return snapshot(x.userId);}});
+ await add('103');await cycle();assert.equal(browser,0);assert.equal(c.state.jobs[0].state,'queued');
+ code=17;await cycle();await cycle();assert.equal(c.state.jobs[0].state,'failed');assert.equal(c.currentCycle(),undefined);
+ assert.notEqual(c.state.connections['103'].auth_issue_reason,'invalid_token');
 });
 
 test('up to 4 API jobs run in parallel; browser jobs run alone; connection count is unlimited', async () => {

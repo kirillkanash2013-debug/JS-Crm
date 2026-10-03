@@ -1,0 +1,23 @@
+name: Phase 1 implementation checks
+on:
+  pull_request:
+    branches: [claude-code]
+  push:
+    branches: [implementation/phase1-social-refresh]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix server
+      - run: cd server && npx playwright install --with-deps chromium --only-shell
+      - run: npm test
+      - run: node --test cloud-collector/tests/*.test.mjs platform/tests/*.test.mjs extension/tests/*.test.mjs server/tests/*.test.mjs
+        env:
+          REQUIRE_BROWSER: '1'

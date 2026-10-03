@@ -34,7 +34,7 @@ test('durable pairs: menus never fetch Keitaro; failed or partial FB/Keitaro kee
   at='2026-10-03T10:00:00Z';await bot().notifyStatsRefresh(tenant.id);assert.equal(events.length,0,'partial social refresh cannot fetch Keitaro');
   secondAt=at;failFB=true;await assert.rejects(bot().notifyStatsRefresh(tenant.id),/facebook_data_unavailable/);assert(!events.includes('keitaro'));assert.equal((await read()).text,first.text);
   assert(sent.at(-1).text.indexOf('Spend') < sent.at(-1).text.indexOf('Обновление не завершено'),'failure status appears below the report');
-  failFB=false;failKT=true;await assert.rejects(bot().notifyStatsRefresh(tenant.id),/keitaro_cycle_failed/);assert.equal((await read()).text,first.text);
+  failFB=false;failKT=true;assert.equal((await bot().notifyStatsRefresh(tenant.id)).result,'retry');assert.equal((await read()).text,first.text);
   failKT=false;changed=true;await assert.rejects(bot().notifyStatsRefresh(tenant.id),/facebook_cycle_changed/);assert.equal((await read()).text,first.text);
   changed=false;secondAt=at;spend=20;await bot().notifyStatsRefresh(tenant.id);assert.match((await read()).text,/Spend <b>\$40\.00/);
   events.length=0;jobs=[{userId:'a',state:'failed',finishedAt:'2026-10-03T11:00:00Z'}];at=secondAt='2026-10-03T10:30:00Z';await bot().notifyStatsRefresh(tenant.id);assert.equal(events.length,0,'failed FB cannot fetch Keitaro');

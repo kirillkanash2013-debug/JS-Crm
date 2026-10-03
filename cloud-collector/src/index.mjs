@@ -34,7 +34,7 @@ async function validateApi(b,{apiValidate,containerValidate}){
  if(lastError?.code===1&&c.cookies.length)return containerValidate(b);
  throw lastError;
 }
-const paths=new Map([['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/refresh-frequency','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
+const paths=new Map([['/v1/subscription/resume','POST'],['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/refresh-frequency','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
 export class GlobalAdmission extends DurableObject {
@@ -83,7 +83,7 @@ export class CollectorControl extends DurableObject {
     // error with a snippet, instead of leaking a raw JSON.parse SyntaxError.
     const text=await r.text();let value;
     try{value=text?JSON.parse(text):{};}catch{throw Object.assign(new Error('container_non_json'),{code:'container_unavailable',detail:'Коллектор ещё запускается, попробуйте ещё раз. ('+text.slice(0,120)+')'});}
-    if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail});return value;
+    if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail,transient:!!value.transient,subcode:value.subcode,httpStatus:r.status});return value;
    });
    this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,{apiValidate:x=>call('/api-validate',x),containerValidate:x=>call('/validate',x)}),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
     // Cheap path: with a proxy use the Node container (reliable SOCKS5+TLS);
@@ -130,13 +130,15 @@ export class CollectorControl extends DurableObject {
  // them outside the storage gate and records each result as soon as it ends.
  async alarm(){
   if(this.env.PAUSE_JOBS==='true'||this.env.RELEASE_HOLD==='true'){await this.ctx.storage.setAlarm(Date.now()+60000);return;}
+  await this.ctx.blockConcurrencyWhile(async()=>{this.control.expireCycle();await this.control.persist();});
   const tenant=this.control.state.tenantId;
   if(tenant&&this.env.DB){
    const t=await this.env.DB.prepare('SELECT status,paid_until FROM tenants WHERE id=?').bind(tenant).first();
    if(!t||t.status!=='active'||t.paid_until<new Date().toISOString().slice(0,10)){
-    await this.ctx.blockConcurrencyWhile(async()=>{for(const c of Object.values(this.control.state.connections))c.schedule=null;for(const j of this.control.state.jobs)if(j.state==='queued')j.state='cancelled';delete this.control.state.antidetect;await this.control.persist();});return;
+    await this.ctx.blockConcurrencyWhile(()=>this.control.subscription(false));await this.ctx.storage.setAlarm(Date.now()+60000);return;
    }
   }
+  if(this.control.state.subscriptionSuspended)await this.ctx.blockConcurrencyWhile(()=>this.control.subscription(true));
   let permit;
   try{({permit}=await admission(this.env,{op:'acquire',pool:'jobs',tenant:tenant||this.ctx.id.toString()}));}catch{}
   if(!permit){await this.ctx.storage.setAlarm(Date.now()+10000);return;}
@@ -154,8 +156,12 @@ export class CollectorControl extends DurableObject {
   await this.announcePending();
   // Once per refresh cycle, let the bot send the fresh report (if the client
   // turned that on). Fire-and-forget; the platform checks the setting.
-  if(this.control.state.pendingRefresh&&this.env.PLATFORM&&this.control.state.tenantId){try{await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId);this.control.state.pendingRefresh=false;}catch{}}
-  await this.ctx.blockConcurrencyWhile(async()=>{this.control.state.notifyRetryAt=Date.now()+60000;await this.control.persist();});
+  if(this.env.PLATFORM&&this.control.state.tenantId){
+   const work=await this.ctx.blockConcurrencyWhile(()=>this.control.preparePublication());
+   if(work){let outcome;try{outcome=await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId);}catch{outcome={result:'retry',reason:'platform_unavailable'};}
+    await this.ctx.blockConcurrencyWhile(()=>this.control.finishPublication(work,outcome));}
+  }
+  await this.ctx.blockConcurrencyWhile(async()=>{await this.control.persist();});
  }
 }
 export default {

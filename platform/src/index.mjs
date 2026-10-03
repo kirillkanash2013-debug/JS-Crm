@@ -1,3 +1,4 @@
+import {resumeCollection} from './refresh.mjs';
 import {operationsRoute,operationsTick} from './operations.mjs';
 // JS Control platform Worker: payments → integration token → bot onboarding
 // → plugin login → dashboard. One deployment serves every client (tenant).
@@ -64,6 +65,7 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
     if(Number(b.amount)!==price||b.currency!==(env.WEB_CURRENCY||'USD'))return json(400,{error:'invalid_payment_amount'});
     if (!PLANS[b.plan]) return json(400, {error: 'unknown_plan'});
     const result = await applyPayment(store, {paymentId: 'web:' + b.paymentId, provider: String(b.provider || 'web'), plan: b.plan, name: b.name, tenantId: b.tenantId, amount: b.amount, currency: b.currency, masterKey: env.MASTER_KEY});
+    if(b.tenantId)await resumeCollection(store,env,result.tenant.id);
     return json(200,{tenantId:result.tenant.id,paidUntil:result.tenant.paidUntil,duplicate:result.duplicate});
   }
 
