@@ -1,5 +1,6 @@
 // Run only during an explicitly enabled deployment. Never print credentials.
 import {randomBytes,createHmac} from 'node:crypto';
+import {verifyToken} from './verify-token.mjs';
 const {CLOUDFLARE_API_TOKEN:cf,CLOUDFLARE_ACCOUNT_ID:account,ADMIN_BOT_TOKEN:bot,TELEGRAM_BOT_TOKEN:clientBot}=process.env;
 if(!cf||!account||!bot)throw new Error('Missing deployment credentials or ADMIN_BOT_TOKEN');
 if(bot===clientBot)throw new Error('Administrative bot must have a separate BotFather token');
@@ -23,12 +24,22 @@ async function sharedKey(a,b){
  await put(...a,key);await put(...b,key);
  console.log('Configured shared key '+a[1]);
 }
-await telegram('getMe',{});
+await verifyToken({token:bot,clientToken:clientBot,username:process.env.EXPECTED_ADMIN_BOT_USERNAME});
 await sharedKey(['js-control-platform','ADMIN_API_KEY'],['js-control-admin','ADMIN_API_KEY']);
 await sharedKey(['js-control-collector-claude','OPERATIONS_KEY'],['js-control-platform','COLLECTOR_OPERATIONS_KEY']);
 // Stable for this bot token; unrelated to client encryption keys.
 const webhookSecret=createHmac('sha256',bot).update('js-control-admin-webhook-v1').digest('hex');
 await put('js-control-admin','ADMIN_BOT_TOKEN',bot);
 await put('js-control-admin','ADMIN_WEBHOOK_SECRET',webhookSecret);
+let ready=false;
+for(let i=0;i<12;i++){
+ try{
+  const r=await fetch(parsed.origin+'/internal/ready',{method:'POST',headers:{'x-admin-internal':webhookSecret},signal:AbortSignal.timeout(15000)});
+  if(r.ok&&(await r.json()).ok){ready=true;break;}
+ }catch{}
+ console.log('Waiting for administrative API and monitoring readiness');
+ await new Promise(resolve=>setTimeout(resolve,5000));
+}
+if(!ready)throw new Error('Administrative API or monitoring is not ready; webhook was not activated');
 await telegram('setWebhook',{url:parsed.origin+'/telegram',secret_token:webhookSecret,allowed_updates:['message','callback_query'],drop_pending_updates:false});
 console.log('Administrative bot webhook configured. Client encryption keys were preserved.');

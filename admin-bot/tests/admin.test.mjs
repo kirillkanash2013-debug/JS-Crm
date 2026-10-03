@@ -21,3 +21,10 @@ test('admin displays counters without claiming container milliseconds are CPU bi
  const sent=[];const bot=createAdminBot({tg:async(m,p)=>sent.push(p),api:async()=>({activeJobs:3,activeContainerCalls:2,waiting:9,usage:[{jobs:10,failed:1,jobMs:1000,containerCalls:5,containerMs:500}]})});
  await bot({message:{from:{id:7},text:'/load'}});assert(sent[0].text.includes('Активные задания: 3'));assert(sent[0].text.includes('не равно оплачиваемому CPU'));
 });
+test('readiness is authenticated and checks both dependencies without exposing client metadata',async()=>{
+ const calls=[],env={ADMIN_CHAT_IDS:'7',ADMIN_WEBHOOK_SECRET:'wh',ADMIN_API_KEY:'api',PLATFORM:{fetch:async r=>{calls.push(new URL(r.url).pathname);return Response.json({clients:[{name:'private-client'}],usage:[]});}}};
+ const call=(key='wh')=>adminRoute(new Request('https://admin/internal/ready',{method:'POST',headers:{'x-admin-internal':key}}),env);
+ assert.equal((await call('wrong')).status,401);assert.equal(calls.length,0);
+ const r=await call();assert.deepEqual(await r.json(),{ok:true});assert.equal(calls.length,2);
+ env.PLATFORM.fetch=async()=>new Response('',{status:503});assert.equal((await call()).status,503);
+});
