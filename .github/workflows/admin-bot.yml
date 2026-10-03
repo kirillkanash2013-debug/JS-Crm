@@ -1,0 +1,45 @@
+name: Check and deploy isolated administrative bot
+on:
+  push:
+    branches: [feature/admin-bot, claude-code]
+    paths: ['admin-bot/**', 'platform/src/operations.mjs', '.github/workflows/admin-bot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: js-control-cloud-collector
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix cloud-collector
+      - run: node --test admin-bot/tests/*.test.mjs platform/tests/hardening.test.mjs
+      - run: cloud-collector/node_modules/.bin/wrangler deploy --config admin-bot/wrangler.jsonc --dry-run
+      - name: Validate deployment inputs
+        if: vars.ADMIN_BOT_DEPLOY == 'true'
+        env:
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+        run: test -n "$ADMIN_BOT_TOKEN"
+      - name: Deploy admin worker
+        if: vars.ADMIN_BOT_DEPLOY == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: cloud-collector/node_modules/.bin/wrangler deploy --config admin-bot/wrangler.jsonc
+      - name: Preserve shared keys and connect separate Telegram bot
+        if: vars.ADMIN_BOT_DEPLOY == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_BOT_URL: ${{ vars.ADMIN_BOT_URL }}
+        run: node admin-bot/scripts/setup.mjs
