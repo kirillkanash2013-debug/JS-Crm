@@ -15,6 +15,7 @@ export class BotNotify extends WorkerEntrypoint {
   }
   async socialConnected(tenantId, social) { await this.#bot().notifySocialConnected(String(tenantId), social || {}); }
   async socialCollected(tenantId, social) { await this.#bot().notifySocialCollected(String(tenantId), social || {}); }
+  async statsStateChanged(tenantId,phase) { if(['facebook','failed'].includes(phase)) await this.#bot().notifyStatsPhase(String(tenantId),phase); }
   async statsRefreshed(tenantId) { await this.#bot().notifyStatsRefresh(String(tenantId)); }
 }
 

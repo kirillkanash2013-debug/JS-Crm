@@ -3,6 +3,8 @@ const now = () => new Date().toISOString();
 
 export class D1Store {
   constructor(db) { this.db = db; }
+  async statsPhase(tenantId){const r=await this.db.prepare('SELECT phase,updated_at FROM stats_refresh_state WHERE tenant_id=?').bind(tenantId).first();return r&&['queued','facebook','keitaro'].includes(r.phase)&&Date.now()-Date.parse(r.updated_at)>30*60000?'failed':r?.phase||'idle';}
+  async setStatsPhase(tenantId,phase){await this.db.prepare('INSERT INTO stats_refresh_state(tenant_id,phase,updated_at) VALUES(?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET phase=excluded.phase,updated_at=excluded.updated_at').bind(tenantId,phase,now()).run();}
   async statsSnapshot(tenantId){return this.db.prepare('SELECT enc,completed_at AS completedAt FROM stats_snapshots WHERE tenant_id=?').bind(tenantId).first();}
   async claimStatsCycle(tenantId,owner){const r=await this.db.prepare('INSERT INTO stats_snapshots(tenant_id,lock_owner,lease_until) VALUES(?,?,?) ON CONFLICT(tenant_id) DO UPDATE SET lock_owner=excluded.lock_owner,lease_until=excluded.lease_until WHERE stats_snapshots.lease_until<?').bind(tenantId,owner,Date.now()+600000,Date.now()).run();return r.meta?.changes===1;}
   async saveStatsSnapshot(tenantId,owner,enc,completedAt){const r=await this.db.prepare('UPDATE stats_snapshots SET enc=?,completed_at=? WHERE tenant_id=? AND lock_owner=? AND lease_until>?').bind(enc,completedAt,tenantId,owner,Date.now()).run();return r.meta?.changes===1;}
@@ -113,6 +115,8 @@ const socialRow = s => ({userId: s.userId, label: s.label, agentId: s.agentId, n
 
 export class MemoryStore {
   constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); this.agents = new Map(); this.socialsMap = new Map(); }
+  async statsPhase(tenantId){return this.phases?.get(tenantId)||'idle';}
+  async setStatsPhase(tenantId,phase){this.phases??=new Map();this.phases.set(tenantId,phase);}
   async statsSnapshot(tenantId){return this.snapshots?.get(tenantId)||null;}
   async claimStatsCycle(tenantId,owner){this.snapshots??=new Map();const r=this.snapshots.get(tenantId)||{};if(r.leaseUntil>Date.now())return false;this.snapshots.set(tenantId,{...r,owner,leaseUntil:Date.now()+600000});return true;}
   async saveStatsSnapshot(tenantId,owner,enc,completedAt){const r=this.snapshots.get(tenantId);if(r?.owner!==owner||r.leaseUntil<=Date.now())return false;Object.assign(r,{enc,completedAt});return true;}

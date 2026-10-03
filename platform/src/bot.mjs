@@ -268,11 +268,42 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Menu reads the last complete pair; it never fetches Keitaro independently.
   async function statsReportText(tenantId) {
     const saved = await savedStats(tenantId);
-    if (saved) return saved.text;
+    if (saved) return saved.text + await statsFooter(tenantId);
     const st = await collectorCall(tenantId, '/v1/status');
     const conns = st?.body?.connections || [];
     if (!conns.length) return null;
-    return '📊 Сейчас · сводка ещё не собрана. После следующего успешного сбора Facebook получим Keitaro и обновим это сообщение.';
+    return '📊 Сейчас · сводка ещё не собрана.' + await statsFooter(tenantId);
+  }
+
+  async function statsFooter(tenantId) {
+    let phase = await store.statsPhase(tenantId);
+    const s = await store.settings(tenantId), status = await collectorCall(tenantId,'/v1/status');
+    const jobs = (status?.body?.jobs || []).filter(j => !j.action && j.kind !== 'import');
+    if (phase !== 'keitaro') {
+      if (jobs.some(j => j.state === 'running')) phase='facebook';
+      else if (jobs.some(j => j.state === 'queued')) phase='queued';
+    }
+    const messages = {
+      partial:'🕓 Ожидаем успешный сбор всех соцов. Предыдущая сводка сохранена.',
+      queued:'⏳ Обновление в очереди. Сначала соберём Facebook, затем Keitaro.',
+      facebook:'⏳ Собираем Facebook. После успешного сбора получим Keitaro.',
+      keitaro:'⏳ Facebook собран. Получаем Keitaro.',
+      failed:'⚠️ Обновление не завершено. Предыдущая сводка сохранена. Повторим сбор в следующем плановом цикле.',
+      ready:'✅ Обновление завершено.',
+      idle:'🕓 Ожидаем следующий сбор Facebook и Keitaro.'
+    };
+    const retryAt=Math.min(...jobs.filter(j=>j.state==='queued'&&j.retryAt>Date.now()).map(j=>j.retryAt));
+    const wait=phase==='queued'&&Number.isFinite(retryAt)?'\nНачнём не раньше '+new Date(retryAt).toLocaleTimeString('ru-RU',{timeZone:s.timezone||'UTC',hour:'2-digit',minute:'2-digit'})+' — защита от повторного сбора в течение 15 минут.':'';
+    return '\n\n' + (messages[phase] || messages.idle) + wait + '\n🕓 Плановый сбор: каждые ' + (s.refreshMinutes || 60) + ' мин.';
+  }
+
+  async function publishStatsPhase(tenantId, phase) {
+    await store.setStatsPhase(tenantId,phase);
+    const s = await store.settings(tenantId), chatId = await store.chatForTenant(tenantId);
+    if (s.statsMsgId && chatId) {
+      const text = await statsReportText(tenantId);
+      if (text) { const msg=await edit(chatId,s.statsMsgId,text,statsMarkup);if(msg?.message_id)await store.setStatsMessage(tenantId,msg.message_id); }
+    }
   }
 
   async function collectStatsPair(tenantId) {
@@ -282,14 +313,14 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const st = await collectorCall(tenantId, '/v1/status');
       if (!st?.ok) throw new Error('facebook_status_unavailable');
       const conns = st.body.connections || [], jobs = st.body.jobs || [];
-      if (!conns.length || conns.some(c => !Number.isFinite(Date.parse(c.collectedAt)))) return null;
+      if (!conns.length || conns.some(c => !Number.isFinite(Date.parse(c.collectedAt)))) { await publishStatsPhase(tenantId,'partial'); return null; }
       if (jobs.some(j => ['queued','running'].includes(j.state))) throw new Error('facebook_cycle_pending');
       if (conns.some(c => jobs.some(j => String(j.userId) === String(c.userId) && !j.action &&
-          ['failed','needs_auth','rate_limited'].includes(j.state) && Date.parse(j.finishedAt) >= Date.parse(c.collectedAt)))) return null;
+          ['failed','needs_auth','rate_limited'].includes(j.state) && Date.parse(j.finishedAt) >= Date.parse(c.collectedAt)))) { await publishStatsPhase(tenantId,'failed'); return null; }
       const previous = await savedStats(tenantId);
       // Every social must advance before replacing a previously published pair.
       if (previous && conns.some(c => previous.sourceTimes[c.userId] &&
-          Date.parse(c.collectedAt) <= Date.parse(previous.sourceTimes[c.userId]))) return null;
+          Date.parse(c.collectedAt) <= Date.parse(previous.sourceTimes[c.userId]))) { await publishStatsPhase(tenantId,'partial'); return null; }
       const sourceTimes = Object.fromEntries(conns.map(c => [c.userId,c.collectedAt]));
       const s = await store.settings(tenantId), tz = s.timezone || 'UTC';
       const started = new Date(), day = todayIn(tz);
@@ -297,6 +328,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
         '/v1/campaigns?userId=' + encodeURIComponent(c.userId) + '&accountToday=1')));
       if (responses.some(r => !r?.ok || !Array.isArray(r.body.campaigns))) throw new Error('facebook_data_unavailable');
       const campaigns = responses.flatMap(r => r.body.campaigns);
+      await publishStatsPhase(tenantId,'keitaro');
       const kt = await loadKeitaro(tenantId, day, tz);
       if (s.keitaroUrl && s.keitaroKeyEnc && !kt.keitaro) throw new Error('keitaro_cycle_failed');
       // Reject a pair if Facebook changed while Keitaro was being fetched.
@@ -310,7 +342,11 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const snapshot = {text,day,timezone:tz,sourceTimes,keitaro:kt.keitaro,subIndex:kt.subIndex,startedAt:started.toISOString(),completedAt:completed.toISOString()};
       const enc = await sealSecret(env.MASTER_KEY,tenantId,JSON.stringify(snapshot));
       if (!await store.saveStatsSnapshot(tenantId,owner,enc,completed.toISOString())) throw new Error('stats_cycle_lease_lost');
+      await store.setStatsPhase(tenantId,'ready');
       return text;
+    } catch (e) {
+      await publishStatsPhase(tenantId,e.message==='facebook_cycle_pending'?'facebook':'failed');
+      throw e;
     } finally { await store.releaseStatsCycle(tenantId,owner); }
   }
 
@@ -326,19 +362,30 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Manual refresh queues Facebook first. The completion callback creates the pair.
   async function refreshStats(chatId, tenantId, mid) {
     const st = await collectorCall(tenantId, '/v1/status');
+    if (!st?.ok) { await store.setStatsPhase(tenantId,'failed'); return edit(chatId,mid,(await statsReportText(tenantId)) || '⚠️ Facebook недоступен. Попробуйте позже.',statsMarkup); }
     const conns = (st && st.body && st.body.connections) || [];
-    const recent = conns.length > 0 && conns.every(c => c.collectedAt && Date.now() - Date.parse(c.collectedAt) < 15 * 60000);
+    const saved = await savedStats(tenantId);
+    const lastAt = Math.max(0,Date.parse(saved?.completedAt)||0,...conns.map(c => Date.parse(c.collectedAt)||0));
+    const allowedAt = Math.max(lastAt + 15 * 60000,...conns.map(c => Number(c.refreshAllowedAt)||0)), recent = Date.now() < allowedAt;
+    const phase = await store.statsPhase(tenantId);
+    await store.setStatsMessage(tenantId,mid);
+    if (['queued','facebook','keitaro'].includes(phase) || (st?.body?.jobs || []).some(j => ['queued','running'].includes(j.state))) {
+      return edit(chatId,mid,(await statsReportText(tenantId)) || '⏳ Обновление уже выполняется.',statsMarkup);
+    }
     let note = '';
     if (!conns.length) { return edit(chatId, mid, '📊 Нет подключённых соцов.', statsMarkup); }
     if (recent) {
-      note = '\n\n✅ Данные уже свежие (сбор был недавно). Авто-сбор работает с интервалом, выбранным в «Профиль → Частота обновления».';
+      const settings = await store.settings(tenantId);
+      const next = new Date(allowedAt).toLocaleTimeString('ru-RU',{timeZone:settings.timezone||'UTC',hour:'2-digit',minute:'2-digit'});
+      note = '\n⏳ Данные свежие. Ручное обновление доступно в ' + next + ' (через ' + Math.ceil((allowedAt-Date.now())/60000) + ' мин.). Защита: не чаще одного раза в 15 минут.';
     } else {
+      await store.setStatsPhase(tenantId,'queued');
       const today = new Date().toISOString().slice(0, 10), yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       for (const c of conns) {
         const r = await collectorCall(tenantId, '/v1/jobs', {userId:c.userId,since:yest,until:today});
-        if (!r?.ok) return edit(chatId,mid,((await statsReportText(tenantId)) || '📊 Данных пока нет.') + '\n\nНе удалось запустить сбор Facebook. Предыдущая сводка сохранена.',statsMarkup);
+        if (!r?.ok) { await store.setStatsPhase(tenantId,'failed'); return edit(chatId,mid,((await statsReportText(tenantId)) || '📊 Данных пока нет.') + '\n\nНе удалось запустить сбор Facebook. Предыдущая сводка сохранена.',statsMarkup); }
       }
-      note = '\n\n⏳ Запрос принят. После успешного сбора это сообщение обновится автоматически.';
+      note = '\nЗапрос принят. Сообщение обновится автоматически.';
     }
     const text = await statsReportText(tenantId);
     await store.setStatsMessage(tenantId,mid);
@@ -1004,6 +1051,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   // Push 3 (optional, per «Профиль → Уведомления»): send the fresh «Сейчас»
   // report after a data refresh. Called by the collector once per refresh cycle.
+  handleUpdate.notifyStatsPhase = publishStatsPhase;
   handleUpdate.notifyStatsRefresh = async (tenantId) => {
     await collectStatsPair(tenantId);
     const s = await store.settings(tenantId);
