@@ -2,7 +2,7 @@ name: Check and deploy isolated administrative bot
 on:
   push:
     branches: [feature/admin-bot, claude-code]
-    paths: ['admin-bot/**', 'platform/src/operations.mjs', '.github/workflows/admin-bot.yml']
+    paths: ['admin-bot/**', 'platform/**', '.github/workflows/admin-bot.yml']
   workflow_dispatch:
 permissions:
   contents: read
