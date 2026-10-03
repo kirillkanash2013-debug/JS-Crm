@@ -221,7 +221,7 @@ if(session&&session.proxy&&session.proxy.server){try{
 var show=function(id,t,cls){var s=$(id);s.textContent=t;s.className='status '+(cls||'');};
 // c_user in the cookies export identifies the social; no bookmark needed.
 var userIdFromCookies=function(list){try{for(var i=0;i<list.length;i++){if(list[i].name==='c_user'&&/facebook\\.com$/.test(String(list[i].domain||''))&&/^\\d{3,30}$/.test(String(list[i].value||'')))return String(list[i].value);}}catch(e){}return '';};
-var ERR={401:'Токен не подошёл. Возьмите токен в боте JS Control.',402:'Подписка закончилась. Продлите её в боте.',409:'Достигнут лимит соцов по тарифу.',
+var ERR={401:'Токен не подошёл. Возьмите токен в боте JS Control.',402:'Подписка закончилась. Продлите её в боте.',409:'Подключение сейчас занято. Повторите попытку.',
   proxy_failed:'Не удалось подключиться через прокси. Проверьте адрес, порт, логин и пароль.',token_invalid:'Facebook не принял доступ. Обновите Ads Manager и нажмите закладку ещё раз.',
   wrong_user:'Доступ относится к другому соцу. Нажмите закладку в Ads Manager нужного соца.',cookies_owner:'Cookies относятся к другому соцу.',validation_failed:'Не удалось проверить соц. Повторите позже.'};
 var api=function(path,body,method){return fetch(path,{method:method||'POST',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(ERR[j.error]||ERR[r.status]||('Ошибка '+r.status));return j;});});};

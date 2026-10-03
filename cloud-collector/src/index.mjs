@@ -34,7 +34,7 @@ async function validateApi(b,{apiValidate,containerValidate}){
  if(lastError?.code===1&&c.cookies.length)return containerValidate(b);
  throw lastError;
 }
-const paths=new Map([['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
+const paths=new Map([['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/refresh-frequency','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
 export class GlobalAdmission extends DurableObject {
@@ -43,7 +43,7 @@ export class GlobalAdmission extends DurableObject {
   if(!await equal(request.headers.get('x-control-internal'),this.env.INTERNAL_KEY))return reply(401,{error:'unauthorized'});
   return this.ctx.blockConcurrencyWhile(async()=>{const b=await request.json();let out;
    if(b.op==='acquire'){const permit=this.gate.acquire(b.pool,String(b.tenant),Math.min(8,Math.max(1,Number(this.env.GLOBAL_PARALLEL)||8)));out={permit,slot:permit?this.gate.state.leases[permit].slot:null};}
-   else if(b.op==='release'){this.gate.release(b.permit,b.ok,b.code);out={ok:true};}
+   else if(b.op==='release'){this.gate.release(b.permit,b.ok,b.code,b.record!==false);out={ok:true};}
    else out=this.gate.summary(b.tenant||null);
    await this.ctx.storage.put('state',this.gate.state);return reply(200,out);
   });
@@ -108,7 +108,7 @@ export class CollectorControl extends DurableObject {
   // be addressed to the right bot chat (persisted whenever a request persists).
   const tid=request.headers.get('x-tenant-id');if(tid)this.control.state.tenantId=tid;
   try{return await this.ctx.blockConcurrencyWhile(async()=>{
-   const url=new URL(request.url),b=request.method==='GET'?Object.fromEntries(url.searchParams):await request.json();const limit=Number(request.headers.get('x-social-limit'))||1;return this.control.request(url.pathname,request.method,b,limit);
+   const url=new URL(request.url),b=request.method==='GET'?Object.fromEntries(url.searchParams):await request.json();return this.control.request(url.pathname,request.method,b);
   });}catch{return reply(400,{error:'invalid_request'});}
  }
  // Sends the queued "social connected" notifications (with real counts) to the
@@ -140,12 +140,13 @@ export class CollectorControl extends DurableObject {
   let permit;
   try{({permit}=await admission(this.env,{op:'acquire',pool:'jobs',tenant:tenant||this.ctx.id.toString()}));}catch{}
   if(!permit){await this.ctx.storage.setAlarm(Date.now()+10000);return;}
-  let collected=false,ok=false,code=null;
+  let collected=false,ok=false,code=null,executed=false;
   try{
    const work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare());
+   executed=!!work;
    if(work){const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));ok=!error;code=error?.code||null;collected=ok&&result?.snapshot?.complete;}
    else ok=true;
-  }finally{await admission(this.env,{op:'release',permit,ok,code}).catch(()=>{});}
+  }finally{await admission(this.env,{op:'release',permit,ok,code,record:executed}).catch(()=>{});}
 
   await this.announcePending();
   // Once per refresh cycle, let the bot send the fresh report (if the client
@@ -182,7 +183,7 @@ export default {
   if(!paths.get(url.pathname)?.split(',').includes(request.method))return reply(404,{error:'not_found'});
   if(!env.VAULT_KEY||!env.INTERNAL_KEY)return reply(503,{error:'setup_required'});
   // Owner key → the owner's space; client integration token (jsi_) → that client's
-  // own Durable Object, with the social limit of the client's plan.
+  // own Durable Object. Connection count is unlimited; work admission is bounded.
   const caller=await resolveCaller(request.headers.get('authorization'),env,equal);
   // Step 1 of the connect page: verify the token and show the account, before cookies/proxy.
   if(url.pathname==='/v1/me')return caller.error?reply(caller.status,{error:caller.error,account:caller.account||null}):reply(200,{account:caller.account});
@@ -194,7 +195,7 @@ export default {
    const bytes=new Uint8Array(size);let i=0;for(const c of chunks){bytes.set(c,i);i+=c.length;}request=new Request(request.url,{method:request.method,headers:request.headers,body:bytes});
   }
   const headers=new Headers(request.headers);headers.delete('authorization');headers.delete('x-tenant-id');headers.set('x-control-internal',env.INTERNAL_KEY);
-  headers.set('x-social-limit',String(caller.socialLimit));
+  headers.delete('x-social-limit');
   // Tell the DO which tenant it serves, so it can address the bot after the
   // first collection (the "loaded" card is sent there, with real counts).
   if(caller.space.startsWith('tenant:'))headers.set('x-tenant-id',caller.space.slice('tenant:'.length));

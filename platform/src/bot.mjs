@@ -595,7 +595,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   async function subscription(chatId, tenant) {
     const status = isActive(tenant) ? '🟢 активна до ' + tenant.paidUntil : '🔴 истекла ' + tenant.paidUntil;
-    await send(chatId, '💳 <b>Подписка ' + esc(planName(tenant.plan)) + '</b>\n' + status + '\nСоцов в тарифе: ' + tenant.socialLimit,
+    await send(chatId, '💳 <b>Подписка ' + esc(planName(tenant.plan)) + '</b>\n' + status + '\nПодключения соцов: без лимита',
       starsEnabled() ? {inline_keyboard: [[{text: 'Продлить на 30 дней', callback_data: 'buy:' + tenant.plan}]]} : undefined);
   }
 
@@ -641,8 +641,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
   // Apply the chosen refresh frequency to every connected social on the collector.
   async function applyFrequency(tenantId, minutes) {
-    const st = await collectorCall(tenantId, '/v1/status');
-    for (const c of (st && st.body && st.body.connections) || []) await collectorCall(tenantId, '/v1/schedule', {userId: c.userId, minutes});
+    const r=await collectorCall(tenantId,'/v1/refresh-frequency',{minutes});
+    if(!r?.ok||r.body?.minutes!==minutes)throw new Error('frequency_not_applied');
   }
 
   async function bind(chatId, tenant) {
@@ -850,7 +850,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (!(price > 0)) return;
       const chat=await store.chat(chatId),order={id:crypto.randomUUID(),chatId:String(chatId),tenantId:chat?.tenantId||null,plan,amount:price,expiresAt:Date.now()+864e5};
       await store.createStarsOrder(order);
-      return tg('sendInvoice', {chat_id: chatId, title: 'JS Control ' + PLANS[plan].name, description: '30 дней, до ' + PLANS[plan].socialLimit + ' соцов',
+      return tg('sendInvoice', {chat_id: chatId, title: 'JS Control ' + PLANS[plan].name, description: '30 дней, подключения соцов без лимита',
         payload: 'order:' + order.id, currency: 'XTR', prices: [{label: '30 дней', amount: price}]});
     }
     const chat = await store.chat(chatId);
@@ -890,7 +890,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     }
     if (data === 'pr:sub') { await store.setChat(chatId, chat.tenantId, 'profile_sub'); return send(chatId, '🔗 Введите номер <b>sub_id</b> (1–6), в котором лежит ID кампании Facebook — например <code>4</code>:'); }
     if (data === 'pr:freq') { const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
-    if (data.startsWith('pr:freq:')) { const m = Number(data.slice(8)); if ([30, 60, 120].includes(m)) { await store.saveSettings(chat.tenantId, {refreshMinutes: m}); try { await applyFrequency(chat.tenantId, m); } catch {} } const v = await freqView(chat.tenantId); return edit(chatId, mid, v.text, v.markup); }
+    if (data.startsWith('pr:freq:')) { const m = Number(data.slice(8)); if ([30,60,120].includes(m)) { try { await applyFrequency(chat.tenantId,m); await store.saveSettings(chat.tenantId,{refreshMinutes:m}); } catch { const v=await freqView(chat.tenantId); return edit(chatId,mid,'Не удалось подтвердить настройку в сборщике. Повторите попытку.\n\n'+v.text,v.markup); } } const v=await freqView(chat.tenantId); return edit(chatId,mid,v.text,v.markup); }
     if (data.startsWith('tz:') && chat.state === 'timezone' && validTimezone(data.slice(3))) return finish(chatId, chat.tenantId, data.slice(3));
     if (data === 'stats:refresh') return refreshStats(chatId, chat.tenantId, mid);
     // Борд кампаний.

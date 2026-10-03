@@ -46,7 +46,7 @@ test('admin issues codes; each code creates exactly one account; one account per
   assert(!h.sent.some(m => /jsi_[A-Za-z0-9_-]{20,}/.test(m.text || '')), 'token is not dumped into the chat');
   assert.match(h.last(), /Шаг 1 из 3/);
   const tenant = await h.store.tenant((await h.store.chat(201)).tenantId);
-  assert.equal(tenant.socialLimit, 3); assert.equal(tenant.name, 'u201');
+  assert.equal(tenant.socialLimit, 0); assert.equal(tenant.name, 'u201');
 
   await h.say(202, code); assert.match(h.last(), /уже использован/);
   assert.equal(await h.store.chat(202), null);

@@ -40,8 +40,8 @@ export class Control {
  antidetectStatus(){const a=this.state.antidetect;return a?{type:a.type,connectedAt:a.connectedAt,nextImportAt:a.nextAt,lastImport:a.lastImport}:null;}
  enqueue(b){const userId=String(b.userId||'');if(!this.state.connections[userId])throw new Error('Connect first');const range=period(b.since,b.until);const existing=this.state.jobs.find(j=>j.userId===userId&&['queued','running'].includes(j.state));if(existing)return existing;
  const j={id:crypto.randomUUID(),userId,range,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs=this.state.jobs.filter(x=>['queued','running'].includes(x.state)).concat(this.state.jobs.filter(x=>!['queued','running'].includes(x.state)).slice(-99));this.state.jobs.push(j);return j;}
- async request(path,method,b,limit=1){
-  this.state.socialLimit=limit;
+ async request(path,method,b){
+  delete this.state.socialLimit;
   if(path==='/v1/antidetect'){
    if(method==='GET')return reply(200,this.antidetectStatus());
    if(method==='DELETE'){delete this.state.antidetect;await this.persist();return reply(200,{ok:true});}
@@ -60,7 +60,6 @@ export class Control {
   if(method==='GET'&&path==='/v1/changes'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{changes:this.archive.changes({since:b?.since||'1970-01-01',objectId:b?.objectId||null})});}
   if(method==='GET'&&path==='/v1/campaigns'){if(!this.archive)return reply(404,{error:'not_found'});const accountToday=b?.accountToday==='1'||b?.accountToday===true;return reply(200,{campaigns:this.archive.campaigns({userId:b?.userId||null,date:accountToday?null:(b?.date||new Date().toISOString().slice(0,10)),accountToday})});}
   if(method==='POST'&&path==='/v1/connections'){
-   if(Object.keys(this.state.connections).length>=limit&&!this.state.connections[b?.userId])return reply(409,{error:'social_limit',limit});
    // Bookmark without a proxy: take proxy and name from the antidetect profile with the same User-Agent.
    if(!b?.proxy?.server&&this.state.antidetect&&this.runner.matchProfile){
     const p=await this.runner.matchProfile(this.state.antidetect,b?.userAgent).catch(()=>null);
@@ -74,7 +73,7 @@ export class Control {
    // The server owns the settings: a social gets the default schedule from the
    // server (not the client) and an immediate first collection. The plugin only
    // forwards credentials — it never sends a schedule or a collection job.
-   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:NEXT_SLOT(DEFAULT_SCHEDULE_MINUTES,this.state.tenantId||c.userId)},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
+   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,nextAt:NEXT_SLOT(this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,this.state.tenantId||c.userId)},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
    // Re-arm the one-time "collected" notification for this (re)connection, so the
    // fresh card gets its "✅ loaded" update even if the social was announced before.
    if(this.state.announced)delete this.state.announced[c.userId];
@@ -91,9 +90,15 @@ export class Control {
    if(this.state.jobs.filter(j=>j.action&&['queued','running'].includes(j.state)).length>=25)return reply(409,{error:'busy'});
    const j={id:crypto.randomUUID(),userId:b.userId,action,state:'queued',source:'facebook-server',createdAt:new Date().toISOString()};this.state.jobs.push(j);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
-  if(method==='POST'&&path==='/v1/schedule'){
+ if(method==='POST'&&path==='/v1/schedule'){
    const c=this.state.connections[b.userId];if(!c||!Number.isInteger(b.minutes)||b.minutes<0||b.minutes>1440||(b.minutes>0&&b.minutes<15))throw new Error('Invalid schedule');
    c.schedule=b.minutes?{minutes:b.minutes,nextAt:NEXT_SLOT(b.minutes,this.state.tenantId||b.userId)}:null;await this.persist();return reply(200,{ok:true});
+  }
+  if(method==='POST'&&path==='/v1/refresh-frequency'){
+   if(![30,60,120].includes(b?.minutes))return reply(422,{error:'invalid_frequency'});
+   this.state.refreshMinutes=b.minutes;
+   for(const c of Object.values(this.state.connections))if(c.schedule)c.schedule={minutes:b.minutes,nextAt:NEXT_SLOT(b.minutes,this.state.tenantId||c.userId)};
+   await this.persist();return reply(200,{ok:true,minutes:b.minutes});
   }
   if(method==='DELETE'&&path==='/v1/connections'){
    delete this.state.connections[b.userId];delete this.state.results[b.userId];this.archive?.forget(b.userId);for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
@@ -154,12 +159,11 @@ export class Control {
  applyImport(j,result,error){
   const a=this.state.antidetect;
   if(error||!result){j.state='failed';j.error={code:error?.code||'import_failed'};if(a)a.lastImport={at:new Date().toISOString(),error:j.error.code};return;}
-  const limit=this.state.socialLimit||1,skipped=[...result.skipped];let added=0,updated=0;
+  const skipped=[...result.skipped];let added=0,updated=0;
   for(const item of result.items){
    const old=this.state.connections[item.userId];
-   if(!old&&Object.keys(this.state.connections).length>=limit){skipped.push({name:item.label,reason:'limit'});continue;}
    this.state.connections[item.userId]={...old,...item,token:item.token||old?.token||null,mode:'api',apiFailures:0,
-    schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
+    schedule:old?.schedule||{minutes:this.state.refreshMinutes||DEFAULT_SCHEDULE_MINUTES,nextAt:Date.now()},revision:crypto.randomUUID(),connectedAt:old?.connectedAt||new Date().toISOString()};
    old?updated++:added++;
   }
   j.state='done';

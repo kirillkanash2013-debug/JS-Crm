@@ -6,6 +6,19 @@ const key=Buffer.alloc(32,7).toString('base64');
 function storage(){const data=new Map();return {data,get:async k=>data.get(k),put:async(k,v)=>data.set(k,v),delete:async k=>data.delete(k),transaction:async fn=>{const copy=new Map(data);try{return await fn({get:async k=>data.get(k),put:async(k,v)=>data.set(k,v),delete:async k=>data.delete(k)});}catch(e){data.clear();for(const [k,v] of copy)data.set(k,v);throw e;}}};}
 const connection={userId:'100123456',token:'EA'+'x'.repeat(30),cookies:[{name:'xs',value:'secret-cookie'}]};
 const body=async r=>r.json();
+test('refresh frequency updates all active schedules and becomes the default for future connections',async()=>{
+ const c=new Control(initialState(),async()=>{},async()=>{},{validate:async x=>x});
+ await c.request('/v1/connections','POST',connection);
+ await c.request('/v1/connections','POST',{...connection,userId:'100123457'});
+ c.state.connections['100123457'].schedule=null;
+ assert.equal((await c.request('/v1/refresh-frequency','POST',{minutes:30})).status,200);
+ assert.equal(c.state.connections[connection.userId].schedule.minutes,30);
+ assert.equal(c.state.connections['100123457'].schedule,null);
+ await c.request('/v1/connections','POST',{...connection,userId:'100123458'});
+ assert.equal(c.state.connections['100123458'].schedule.minutes,30);
+ assert.equal((await c.request('/v1/refresh-frequency','POST',{minutes:1})).status,422);
+ assert.equal(c.state.refreshMinutes,30);
+});
 const range={userId:connection.userId,since:'2026-10-01',until:'2026-10-01'};
 test('Durable Object vault survives new instance, chunks large snapshots, detects tampering and shrinks',async()=>{
  const db=storage(),v=new EncryptedStore(db,key),payload={cookie:'secret-cookie',large:'z'.repeat(200000)};await v.save(payload);assert(db.data.get('chunks')>1);for(const [k,b] of db.data)if(k.startsWith('part:'))assert(!Buffer.from(b).includes(Buffer.from('secret-cookie')));

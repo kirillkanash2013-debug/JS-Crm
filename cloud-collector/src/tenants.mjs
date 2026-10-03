@@ -2,7 +2,7 @@
 import {authenticate} from '../../platform/src/accounts.mjs';
 import {D1Store} from '../../platform/src/store.mjs';
 
-export const OWNER_SOCIAL_LIMIT = 100;
+export const OWNER_SOCIAL_LIMIT = 0; // unlimited
 
 export async function resolveCaller(authorization, env, equal) {
   const value = String(authorization || '');
@@ -15,5 +15,5 @@ export async function resolveCaller(authorization, env, equal) {
   const {tenant, error} = await authenticate(new D1Store(env.DB), token, 'integration');
   if (error === 'expired') return {error: 'subscription_expired', status: 402, account: {name: tenant.name, plan: tenant.plan, paidUntil: tenant.paidUntil}};
   if (error) return {error: 'unauthorized', status: 401};
-  return {space: 'tenant:' + tenant.id, socialLimit: tenant.socialLimit, account: {name: tenant.name, plan: tenant.plan, socialLimit: tenant.socialLimit, paidUntil: tenant.paidUntil}};
+  return {space: 'tenant:' + tenant.id, socialLimit: 0, account: {name: tenant.name, plan: tenant.plan, socialLimit: 0, paidUntil: tenant.paidUntil}};
 }

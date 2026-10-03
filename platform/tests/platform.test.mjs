@@ -98,7 +98,7 @@ test('client journey: token → Keitaro → timezone → plugin and dashboard', 
 
   const login = await h.call('/v1/extension/login', {method: 'POST', body: JSON.stringify({token})});
   assert.equal(login.status, 200);
-  assert.deepEqual(await login.json(), {tenant: {name: 'Agency <b>X</b>', plan: 'team', socialLimit: 15, paidUntil: (await h.store.tenant(tenantId)).paidUntil}, onboarded: true, collector: {origin: 'https://c.test'}});
+  assert.deepEqual(await login.json(), {tenant: {name: 'Agency <b>X</b>', plan: 'team', socialLimit: 0, paidUntil: (await h.store.tenant(tenantId)).paidUntil}, onboarded: true, collector: {origin: 'https://c.test'}});
 
   await h.say('/token');
   const fresh = h.last().match(/jsi_[A-Za-z0-9_-]{43}/)[0];
@@ -276,7 +276,8 @@ test('«👤 Профиль» hub: subscription + sub-screens edited in place', 
   await h.tap('pr:notify'); assert.match(h.last(), /Уведомления/);
   await h.tap('pr:notify:on'); assert.equal((await h.store.settings((await h.store.chat(1)).tenantId)).notifyOnUpdate, 1);
   await h.tap('pr:freq'); assert.match(h.last(), /Частота обновления/);
-  await h.tap('pr:freq:30'); assert.equal((await h.store.settings((await h.store.chat(1)).tenantId)).refreshMinutes, 30);
+  const oldFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({ok:true,minutes:30});
+  try { await h.tap('pr:freq:30'); assert.equal((await h.store.settings((await h.store.chat(1)).tenantId)).refreshMinutes,30); } finally { globalThis.fetch=oldFetch; }
 });
 
 test('«🔑 Ключ» shows the current token without rotating it', async () => {
@@ -286,6 +287,15 @@ test('«🔑 Ключ» shows the current token without rotating it', async () =
   await h.store.setChat(1, (await h.store.chat(1)).tenantId, 'ready');
   await h.say('🔑 Ключ');
   assert(h.last().includes(token), 'shows the same key, not a new one');
+});
+test('frequency settings remain unchanged when the collector refuses the change',async()=>{
+ const h=harness(),{tenant,integrationToken}=await applyPayment(h.store,{paymentId:'frequency-failed',provider:'test',plan:'team',masterKey:MASTER_KEY});
+ await h.say('/start '+integrationToken);await h.store.setChat(1,tenant.id,'ready');await h.store.saveSettings(tenant.id,{refreshMinutes:60});
+ const oldFetch=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>Response.json({error:'unavailable'},{status:503});
+  await h.tap('pr:freq:30');assert.equal((await h.store.settings(tenant.id)).refreshMinutes,60);assert.match(h.last(),/Не удалось подтвердить/);
+ }finally{globalThis.fetch=oldFetch;}
 });
 
 test('bot campaigns board: active-only numbered list, budget + toggle by text, pending→result', async () => {

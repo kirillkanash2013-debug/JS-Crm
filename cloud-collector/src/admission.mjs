@@ -16,7 +16,7 @@ export class Admission {
     const slot=Array.from({length:capacity},(_,i)=>i).find(i=>!live.some(l=>l.slot===i));
     this.state.leases[id]={pool,tenant,slot,at:now,until:now+20*60000};return id;
   }
-  release(id,ok=true,code=null){const l=this.state.leases[id];if(!l)return;delete this.state.leases[id];
+  release(id,ok=true,code=null,record=true){const l=this.state.leases[id];if(!l)return;delete this.state.leases[id];if(!record)return;
     const day=new Date(this.clock()).toISOString().slice(0,10),key=day+':'+l.tenant;
     const u=this.state.usage[key]??={tenant:l.tenant,day,jobs:0,containerCalls:0,failed:0,jobMs:0,containerMs:0};
     const ms=Math.max(0,this.clock()-l.at);
