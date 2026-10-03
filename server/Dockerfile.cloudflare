@@ -3,6 +3,7 @@ WORKDIR /app
 COPY server/package*.json ./server/
 RUN cd server && npm ci --omit=dev
 COPY extension/*.mjs ./extension/
+COPY shared/*.mjs ./shared/
 COPY server/*.mjs ./server/
 USER pwuser
 ENV HOST=0.0.0.0 PORT=8080

@@ -1,3 +1,4 @@
+import {diagnostic,diagnosticCode} from './diagnostics.mjs';
 import {REIMPORT_MS} from './importer.mjs';
 const API_PARALLEL=4;
 // Single server-side default for the collection interval. All settings live
@@ -12,7 +13,7 @@ const COLLECT_RANGE=()=>{const t=Date.now(),d=u=>new Date(u).toISOString().slice
 // Следующий слот сбора, выровненный по часам на :01 (минуты не зависят от пояса).
 // Для 60 мин — HH:01 каждый час, для 30 — :01/:31, для 120 — через 2 часа в :01.
 // Так сбор привязан к часам, а не «плавает» от момента подключения/ручного обновления.
-const NEXT_SLOT=(minutes)=>{const step=(minutes||60)*60000,now=Date.now();let next=Math.floor(now/step)*step+60000;while(next<=now)next+=step;return next;};
+const NEXT_SLOT=(minutes,seed='')=>{const step=(minutes||60)*60000,now=Date.now();let next=Math.floor(now/step)*step+60000+[...seed].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,0)%240000;while(next<=now)next+=step;return next;};
 const NEEDS_AUTH=['needs_auth','identity',190,102];
 const RATE_LIMIT=[4,17,32,613,80004];
 // Graph API rejected the cookie+token request (1) or the token died (190/102).
@@ -34,7 +35,7 @@ export class Control {
  // full snapshot is kept in state, as in the prototype.
  constructor(state,save,schedule,runner,archive=null){this.state=state;this.save=save;this.schedule=schedule;this.runner=runner;this.archive=archive;}
  async persist(){await this.save(this.state);await this.plan();}
- async plan(){let next=Infinity;for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(c.schedule)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
+ async plan(){let next=Infinity;if(this.state.pendingAnnounce?.length||this.state.pendingRefresh)next=this.state.notifyRetryAt||Date.now()+10000;for(const j of this.state.jobs){if(j.state==='queued')next=Math.min(next,j.retryAt||Date.now()+1000);if(j.state==='running')next=Math.min(next,j.leaseUntil);}for(const c of Object.values(this.state.connections))if(c.schedule)next=Math.min(next,c.schedule.nextAt);await this.schedule(Number.isFinite(next)?Math.max(Date.now()+1000,next):null);}
  status(){return {mode:'live',platformCheck:this.state.platformCheck||null,connections:Object.values(this.state.connections).map(c=>{const sum=this.archive?.socialSummary?.(c.userId)||null;return {userId:c.userId,label:c.label||null,source:c.profileId?'antidetect':'manual',connectedAt:c.connectedAt,schedule:c.schedule||null,collectMode:c.mode||'api',accounts:sum?.accounts??null,businesses:sum?.businesses??null,pages:sum?.pages??null,collectedAt:sum?.lastAt||null};}),antidetect:this.antidetectStatus(),jobs:this.state.jobs,results:this.state.results};}
  antidetectStatus(){const a=this.state.antidetect;return a?{type:a.type,connectedAt:a.connectedAt,nextImportAt:a.nextAt,lastImport:a.lastImport}:null;}
  enqueue(b){const userId=String(b.userId||'');if(!this.state.connections[userId])throw new Error('Connect first');const range=period(b.since,b.until);const existing=this.state.jobs.find(j=>j.userId===userId&&['queued','running'].includes(j.state));if(existing)return existing;
@@ -53,6 +54,7 @@ export class Control {
     await this.persist();return reply(201,{profiles:profiles.length});
    }
   }
+  if(method==='GET'&&path==='/v1/errors')return reply(200,{errors:this.state.errors||[]});
   if(method==='GET'&&path==='/v1/status')return reply(200,this.status());
   if(method==='GET'&&path==='/v1/report'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,this.archive.report({since:b?.since,until:b?.until,userId:b?.userId||null}));}
   if(method==='GET'&&path==='/v1/changes'){if(!this.archive)return reply(404,{error:'not_found'});return reply(200,{changes:this.archive.changes({since:b?.since||'1970-01-01',objectId:b?.objectId||null})});}
@@ -72,7 +74,7 @@ export class Control {
    // The server owns the settings: a social gets the default schedule from the
    // server (not the client) and an immediate first collection. The plugin only
    // forwards credentials — it never sends a schedule or a collection job.
-   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:NEXT_SLOT(DEFAULT_SCHEDULE_MINUTES)},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
+   const conn=this.state.connections[c.userId]={...c,label:b?.label||old?.label||null,mode:'api',apiFailures:0,schedule:old?.schedule||{minutes:DEFAULT_SCHEDULE_MINUTES,nextAt:NEXT_SLOT(DEFAULT_SCHEDULE_MINUTES,this.state.tenantId||c.userId)},revision:crypto.randomUUID(),connectedAt:new Date().toISOString()};
    // Re-arm the one-time "collected" notification for this (re)connection, so the
    // fresh card gets its "✅ loaded" update even if the social was announced before.
    if(this.state.announced)delete this.state.announced[c.userId];
@@ -80,6 +82,9 @@ export class Control {
    await this.persist();return reply(201,{userId:c.userId,label:conn.label,state:this.runner.validateApi?'verified':'unverified',schedule:conn.schedule});
   }
   if(method==='POST'&&path==='/v1/actions'){const action=validateAction(b);if(!this.state.connections[b.userId])throw new Error('Connect first');
+   if(this.archive&&!this.archive.ownsCampaign(b.userId,action.campaignId))return reply(403,{error:'campaign_forbidden'});
+   const duplicate=this.state.jobs.find(j=>j.userId===b.userId&&j.action&&JSON.stringify(j.action)===JSON.stringify(action)&&(['queued','running'].includes(j.state)||Date.now()-Date.parse(j.createdAt)<60000));
+   if(duplicate)return reply(202,duplicate);
    // Allow queuing several actions at once (bulk budget / on-off). prepare()
    // runs heavy/action jobs one at a time, so they apply sequentially; cap the
    // pending action queue to avoid abuse.
@@ -88,7 +93,7 @@ export class Control {
   if(method==='POST'&&path==='/v1/jobs'){const j=this.enqueue(b);await this.persist();return reply(202,j);}
   if(method==='POST'&&path==='/v1/schedule'){
    const c=this.state.connections[b.userId];if(!c||!Number.isInteger(b.minutes)||b.minutes<0||b.minutes>1440||(b.minutes>0&&b.minutes<15))throw new Error('Invalid schedule');
-   c.schedule=b.minutes?{minutes:b.minutes,nextAt:NEXT_SLOT(b.minutes)}:null;await this.persist();return reply(200,{ok:true});
+   c.schedule=b.minutes?{minutes:b.minutes,nextAt:NEXT_SLOT(b.minutes,this.state.tenantId||b.userId)}:null;await this.persist();return reply(200,{ok:true});
   }
   if(method==='DELETE'&&path==='/v1/connections'){
    delete this.state.connections[b.userId];delete this.state.results[b.userId];this.archive?.forget(b.userId);for(const j of this.state.jobs)if(j.userId===b.userId&&['queued','running'].includes(j.state))j.state='cancelled';await this.persist();return reply(200,{ok:true});
@@ -103,7 +108,7 @@ export class Control {
   for(const c of Object.values(this.state.connections)){
    // Daily retry of the cheap path; one more rejection sends it back to the browser.
    if(c.mode==='browser'&&c.apiRetryAt<=now){c.mode='api';c.apiFailures=2;}
-   if(c.schedule?.nextAt<=now){const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});c.schedule.nextAt=NEXT_SLOT(c.schedule.minutes);}
+   if(c.schedule?.nextAt<=now){const r=COLLECT_RANGE();this.enqueue({userId:c.userId,since:r.since,until:r.until});c.schedule.nextAt=NEXT_SLOT(c.schedule.minutes,this.state.tenantId||c.userId);}
   }
   const ad=this.state.antidetect;
   if(ad&&ad.nextAt<=now&&!this.state.jobs.some(j=>j.kind==='import'&&['queued','running'].includes(j.state))){
@@ -111,7 +116,7 @@ export class Control {
   }
   const running=this.state.jobs.filter(j=>j.state==='running');
   const exclusive=running.some(j=>j.action||j.kind==='import'||this.state.connections[j.userId]?.mode==='browser');
-  const j=this.state.jobs.find(x=>x.state==='queued'&&!running.some(r=>r.userId===x.userId));
+  const j=this.state.jobs.find(x=>x.state==='queued'&&(!x.retryAt||x.retryAt<=now)&&!running.some(r=>r.userId===x.userId));
   const isImport=j?.kind==='import';
   if(isImport&&!ad){j.state='cancelled';await this.persist();return null;}
   const c=j&&!isImport&&this.state.connections[j.userId];
@@ -166,7 +171,8 @@ export class Control {
   if(!c||c.revision!==work.connection.revision)j.state='cancelled';
   else if(error){
    j.state=NEEDS_AUTH.includes(error.code)?'needs_auth':RATE_LIMIT.includes(error.code)?'rate_limited':'failed';
-   j.error={code:typeof error.code==='number'?error.code:error.code==='proxy'?'proxy':j.state,message:error.message?String(error.message).slice(0,180):null};
+   j.error={code:diagnosticCode(error.code)};
+   if(error.code==='capacity_busy'){j.state='queued';j.retryAt=Date.now()+10000;}
    if(j.state==='needs_auth')c.schedule=null;
    // Meta asked us to slow down: skip the next hour of scheduled runs.
    if(j.state==='rate_limited'&&c.schedule)c.schedule.nextAt=Math.max(c.schedule.nextAt,Date.now()+60*60000);
@@ -182,6 +188,7 @@ export class Control {
    // First successful collection for this social → queue a one-time "connected"
    // notification to the bot (with real accounts/БМ/pages counts). The DO sends
    // it outside the storage gate after the alarm finishes.
+   this.state.pendingRefresh=true;
    if(!j.action){this.state.announced=this.state.announced||{};this.state.pendingAnnounce=this.state.pendingAnnounce||[];if(!this.state.announced[j.userId]){this.state.announced[j.userId]=true;this.state.pendingAnnounce.push(j.userId);}}
    if(result.storageState)c.storageState=result.storageState;
    if(typeof result.token==='string'&&/^EA[A-Za-z0-9_-]{18,4094}$/.test(result.token))c.token=result.token;
@@ -190,6 +197,7 @@ export class Control {
    // the browser for a day, then try the cheap path again.
    else if(result.apiError===1&&++c.apiFailures>=3){c.mode='browser';c.apiRetryAt=Date.now()+24*60*60000;}
   }
+  if(j.error){this.state.errors=(this.state.errors||[]).filter(e=>Date.parse(e.at)>Date.now()-90*864e5).slice(-199);this.state.errors.push(diagnostic(j,j.error));}
   delete j.leaseUntil;j.finishedAt=new Date().toISOString();await this.persist();
  }
 }

@@ -101,6 +101,7 @@ function campIcon(c) {
 // Numbered per-campaign card for the campaigns board: "N. <icon> name" + the
 // 💰/💸/🤑 and metrics lines. Reuses the same rendering as the «Сейчас» report.
 export function campaignCard(n, c, k = {inst: 0, reg: 0, dep: 0, rev: 0}) {
+  if(c.currency&&c.currency!=='USD')return '<b>'+n+'.</b> '+esc(c.name||c.campaignId)+'\nSpend '+num(c.spend).toFixed(2)+' '+esc(c.currency)+' · бюджет '+esc(c.dailyBudget||'—')+' ед. Meta\nДоход и ROI требуют согласования валют.';
   return '<b>' + n + '.</b> ' + campaignLines(c, k);
 }
 
@@ -119,6 +120,10 @@ function campaignLines(c, k) {
 // Full «Сейчас» text. campaigns: collector /v1/campaigns rows (campaignId, name,
 // effectiveStatus, dailyBudget, spend, errorAds?). keitaro: aggregateKeitaro().
 export function buildNow({day, times, campaigns = [], keitaro, subIndex = 4}) {
+  if(campaigns.some(c=>c.currency&&c.currency!=='USD')){
+    const totals={};for(const c of campaigns){const cur=c.currency||'UNKNOWN';totals[cur]=(totals[cur]||0)+num(c.spend);}
+    return '<b>📊 Сейчас · '+esc(fmtDate(day))+'</b>\n'+Object.entries(totals).map(([cur,v])=>'Spend <b>'+v.toFixed(2)+' '+esc(cur)+'</b>').join('\n')+'\n\n⚠️ Доход, прибыль и ROI не сведены: сначала нужно согласовать валюты источников.\n\n'+campaigns.slice(0,25).map(c=>esc(c.name||c.campaignId)+' · '+num(c.spend).toFixed(2)+' '+esc(c.currency||'UNKNOWN')).join('\n');
+  }
   const agg = keitaro || {byCampaign: {}, totals: {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0}};
   const empty = {inst: 0, reg: 0, dep: 0, rev: 0, doletDep: 0, doletRev: 0};
   const spendTotal = round2(campaigns.reduce((n, c) => n + num(c.spend), 0));
@@ -128,6 +133,7 @@ export function buildNow({day, times, campaigns = [], keitaro, subIndex = 4}) {
   const active = campaigns.filter(c => num(c.spend) > 0 || c.effectiveStatus === 'ACTIVE')
     .sort((a, b) => num(b.spend) - num(a.spend)).slice(0, 25);
   if (active.length) out.push('', 'Ⓜ️ <b>Кампании сейчас:</b>',
-    active.map(c => campaignLines(c, agg.byCampaign[String(c.campaignId)] || empty)).join('\n\n'));
+    active.map(c => keitaro?campaignLines(c, agg.byCampaign[String(c.campaignId)] || empty):campIcon(c)+' '+esc(c.name||c.campaignId)+'\nSpend '+money(num(c.spend))+' · доход —').join('\n\n'));
+  if(!keitaro){const text=out.join('\n');return text.replace(/^Rev .*$/gm,'Rev —').replace(/^Profit .*$/gm,'Profit —').replace(/^ROI .*$/gm,'ROI —');}
   return out.join('\n');
 }

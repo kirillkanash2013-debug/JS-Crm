@@ -26,6 +26,7 @@
   ],
   "durable_objects": {
     "bindings": [
+      {"name":"ADMISSION","class_name":"GlobalAdmission"},
       {
         "name": "CONTROL",
         "class_name": "CollectorControl"
@@ -43,7 +44,8 @@
         "CollectorControl",
         "BrowserContainer"
       ]
-    }
+    },
+    {"tag":"v2-admission","new_sqlite_classes":["GlobalAdmission"]}
   ],
   "observability": {
     "enabled": false

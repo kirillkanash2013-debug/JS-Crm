@@ -1,3 +1,4 @@
+import {fetchKeitaroReport} from '../shared/keitaro-report.mjs';
 import http from 'node:http';
 import https from 'node:https';
 import {lookup} from 'node:dns/promises';
@@ -62,6 +63,8 @@ function keitaroNodePost(u,ips,key,path,payload,transport){
    });
   });
   req.setTimeout(20000,()=>req.destroy());
+  const deadline=setTimeout(()=>req.destroy(),30000);
+  req.on('close',()=>clearTimeout(deadline));
   req.on('error',()=>done({result:'unreachable',reason:'network'}));
   req.write(bodyStr);req.end();
  });
@@ -79,21 +82,7 @@ export async function reportKeitaroNode(origin,key,{from,to,timezone,subIndex}={
   const ips=await resolve(u.hostname,{all:true,family:4});
   if(!ips.length||ips.some(a=>!publicIPv4(a.address)))return {result:'unreachable',reason:'private_address'};
   const transport=request||(u.protocol==='https:'?https.request:http.request);
-  const sub='sub_id_'+(subIndex||4);
-  const build=await keitaroNodePost(u,ips,key,'/admin_api/v1/report/build',{
-   range:{from,to,timezone},
-   columns:['campaign_id','campaign',sub,'offer'],
-   metrics:['clicks','campaign_unique_clicks','conversions','sales','sale_revenue'],
-   grouping:['campaign_id','campaign',sub,'offer'],filters:[]
-  },transport);
-  if(build.result!=='ok')return build;
-  const log=await keitaroNodePost(u,ips,key,'/admin_api/v1/conversions/log',{
-   range:{from,to,timezone},limit:10000,offset:0,
-   columns:['conversion_id','sub_id','campaign_id','campaign','offer','revenue','status','click_datetime','postback_datetime',sub],
-   filters:[],sort:[{name:'postback_datetime',order:'ASC'},{name:'conversion_id',order:'ASC'}]
-  },transport);
-  if(log.result!=='ok')return log;
-  return {result:'ok',report:normalizeRows(build.json),conversions:normalizeRows(log.json)};
+  return await fetchKeitaroReport((path,payload)=>keitaroNodePost(u,ips,key,path,payload,transport),{from,to,timezone,subIndex});
  }catch{return {result:'unreachable',reason:'network'};}
 }
 

@@ -10,7 +10,7 @@ import {hashToken} from '../src/tokens.mjs';
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 const env = {MASTER_KEY, PUBLIC_URL: 'https://p.test', PLUGIN_URL: 'https://p.test/plugin', IMPORT_URL: 'https://p.test/import', COLLECTOR_URL: 'https://c.test', BOT_USERNAME: 'jscontrol_bot',
-  TELEGRAM_WEBHOOK_SECRET: 'tg-secret-123', BILLING_WEBHOOK_SECRET: 'bill-secret', STARS_PRICE_START: '500', STARS_PRICE_TEAM: '0', STARS_PRICE_AGENCY: '0'};
+  TELEGRAM_WEBHOOK_SECRET: 'tg-secret-123', BILLING_WEBHOOK_SECRET: 'bill-secret',WEB_PRICE_START:'49', STARS_PRICE_START: '500', STARS_PRICE_TEAM: '0', STARS_PRICE_AGENCY: '0'};
 
 function harness(keitaro = 'ok') {
   const store = new MemoryStore(), sent = [], deleted = [];
@@ -39,12 +39,10 @@ test('payment webhook issues one token per payment; only hashes are stored', asy
   const body = JSON.stringify({paymentId: 'order-1', plan: 'start', name: 'Team A', amount: 49, currency: 'USD'});
   assert.equal((await h.call('/billing/webhook', {method: 'POST', headers: {'x-signature': 'bad'}, body})).status, 401);
   const first = await (await h.call('/billing/webhook', {method: 'POST', headers: {'x-signature': await sign(body)}, body})).json();
-  assert.match(first.integrationToken, /^jsi_/);
-  assert.equal(first.botLink, 'https://t.me/jscontrol_bot?start=' + first.integrationToken);
+  assert.equal(first.integrationToken,undefined);assert.equal(first.botLink,undefined);
   const again = await (await h.call('/billing/webhook', {method: 'POST', headers: {'x-signature': await sign(body)}, body})).json();
-  assert.equal(again.duplicate, true); assert.equal(again.integrationToken, null); assert.equal(again.tenantId, first.tenantId);
-  assert(!JSON.stringify([...h.store.tokens.keys()]).includes(first.integrationToken));
-  assert(h.store.tokens.has(await hashToken(first.integrationToken)));
+  assert.equal(again.duplicate, true); assert.equal(again.integrationToken, undefined); assert.equal(again.tenantId, first.tenantId);
+  assert.equal(h.store.tokens.size,1);
 });
 
 test('client journey: token → Keitaro → timezone → plugin and dashboard', async () => {
@@ -126,9 +124,9 @@ test('Telegram Stars: invoice, pre-checkout, payment creates tenant and starts o
   await h.tap('buy:start', 2);
   const invoice = h.sent.at(-1);
   assert.equal(invoice.method, 'sendInvoice'); assert.equal(invoice.currency, 'XTR'); assert.equal(invoice.prices[0].amount, 500);
-  await h.update({pre_checkout_query: {id: 'pc', invoice_payload: 'plan:start'}});
+  await h.update({pre_checkout_query: {id: 'pc', invoice_payload:invoice.payload,currency:'XTR',total_amount:500,from:{id:2}}});
   assert.equal(h.sent.at(-1).ok, true);
-  const paid = {message_id: 50, chat: {id: 2}, from: {username: 'buyer'}, successful_payment: {invoice_payload: 'plan:start', telegram_payment_charge_id: 'ch1', total_amount: 500, currency: 'XTR'}};
+  const paid = {message_id: 50, chat: {id: 2}, from: {username: 'buyer'}, successful_payment: {invoice_payload: invoice.payload, telegram_payment_charge_id: 'ch1', total_amount: 500, currency: 'XTR'}};
   await h.update({message: paid});
   assert(h.sent.some(m => /Поздравляем/.test(m.text || '')), 'congratulation after payment, no raw token dump');
   assert(!h.sent.some(m => /jsi_[A-Za-z0-9_-]{20,}/.test(m.text || '')), 'token is not dumped into the chat');
@@ -379,7 +377,7 @@ test('stats «Обновить»: triggers a collection at most once per 15 min'
   };
   try {
     await h.tap('stats:refresh'); // stale → one collection
-    assert.equal(jobs, 1); assert.match(h.last(), /Запустил свежий сбор/);
+    assert.equal(jobs, 1); assert.match(h.last(), /Запрос принят/);
     collectedAt = new Date().toISOString(); // now fresh
     await h.tap('stats:refresh'); // within 15 min → no new collection
     assert.equal(jobs, 1); assert.match(h.last(), /свежие/);

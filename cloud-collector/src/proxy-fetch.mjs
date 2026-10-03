@@ -190,13 +190,17 @@ export function cookieHeader(cookies) {
 
 // fetch-compatible adapter for extension/meta.mjs and structure.mjs.
 export function graphFetcher({connect, connection}) {
+  const deadline=Date.now()+4*60000;
   const cookies = cookieHeader(connection.storageState?.cookies || connection.cookies);
   const fetcher = async (url, options = {}) => {
+    if(Date.now()>=deadline)throw new ProxyError('Collection deadline exceeded');
+    const signals=[AbortSignal.timeout(Math.max(1,deadline-Date.now()))];
+    if(options.signal)signals.push(options.signal);
     const u = new URL(url);
     if (u.origin !== 'https://' + GRAPH_HOST || (options.method || 'GET') !== 'GET') throw new ProxyError('Only Graph API reads are allowed');
     const auth = options.headers?.Authorization || '';
     if (auth.startsWith('Bearer ')) u.searchParams.set('access_token', auth.slice(7));
-    const r = await graphGet(u.pathname + u.search, {connect, proxy: connection.proxy, signal: options.signal, headers: {
+    const r = await graphGet(u.pathname + u.search, {connect, proxy: connection.proxy, signal: AbortSignal.any(signals), headers: {
       'User-Agent': connection.userAgent, Accept: '*/*', Cookie: cookies,
       Origin: 'https://adsmanager.facebook.com', Referer: 'https://adsmanager.facebook.com/'
     }});

@@ -38,21 +38,13 @@ export async function applyPayment(store, {paymentId, provider, plan, name, tena
   const p = PLANS[plan];
   if (!p) throw new Error('Unknown plan');
   if (!paymentId) throw new Error('paymentId required');
-  const seen = await store.payment(paymentId);
-  if (seen) return {tenant: await store.tenant(seen.tenantId), integrationToken: null, duplicate: true};
-
-  if (tenantId) {
-    const t = await store.tenant(tenantId);
-    if (!t) throw new Error('Unknown tenant');
-    const from = t.paidUntil >= today() ? t.paidUntil : today();
-    await store.extendTenant(t.id, addDays(from, p.days));
-    await store.recordPayment({id: paymentId, tenantId: t.id, provider, amount, currency});
-    return {tenant: await store.tenant(t.id), integrationToken: null, duplicate: false};
-  }
-
-  const tenant = await store.createTenant({id: crypto.randomUUID(), name: String(name || 'Клиент').slice(0, 80), plan, socialLimit: p.socialLimit, paidUntil: addDays(today(), p.days)});
-  await store.recordPayment({id: paymentId, tenantId: tenant.id, provider, amount, currency});
-  return {tenant, integrationToken: await rotateIntegrationToken(store, tenant.id, masterKey), duplicate: false};
+  const existing = tenantId ? await store.tenant(tenantId) : null;
+  if(tenantId&&!existing)throw new Error('Unknown tenant');
+  const tenant=existing||{id:crypto.randomUUID(),name:String(name||'Клиент').slice(0,80),plan,socialLimit:p.socialLimit,paidUntil:addDays(today(),p.days)};
+  const raw=tenantId?null:newToken('integration');
+  const token=raw?{hash:await hashToken(raw),enc:masterKey?await sealSecret(masterKey,tenant.id,raw):null}:null;
+  const result=await store.commitPayment({id:paymentId,provider,amount,currency,renewal:!!tenantId,days:p.days,today:today()},tenant,token);
+  return {...result,integrationToken:result.duplicate?null:raw};
 }
 
 // Resolves a token to its tenant. Returns {tenant, error} so callers can

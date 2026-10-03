@@ -13,9 +13,9 @@ export class BotNotify extends WorkerEntrypoint {
     const store = new D1Store(this.env.DB);
     return createBot({store, tg: telegram(this.env), env: this.env, ...(this.env.KEITARO_BRIDGE ? {keitaro: containerKeitaro(this.env)} : {})});
   }
-  async socialConnected(tenantId, social) { try { await this.#bot().notifySocialConnected(String(tenantId), social || {}); } catch {} }
-  async socialCollected(tenantId, social) { try { await this.#bot().notifySocialCollected(String(tenantId), social || {}); } catch {} }
-  async statsRefreshed(tenantId) { try { await this.#bot().notifyStatsRefresh(String(tenantId)); } catch {} }
+  async socialConnected(tenantId, social) { await this.#bot().notifySocialConnected(String(tenantId), social || {}); }
+  async socialCollected(tenantId, social) { await this.#bot().notifySocialCollected(String(tenantId), social || {}); }
+  async statsRefreshed(tenantId) { await this.#bot().notifyStatsRefresh(String(tenantId)); }
 }
 
 export default worker;

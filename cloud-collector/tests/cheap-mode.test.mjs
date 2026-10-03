@@ -100,8 +100,8 @@ test('structure is re-read at most hourly; spend every run', async () => {
 
 test('collector access: owner key, client token with its plan limit, expired, unknown', async () => {
   const db = new DatabaseSync(':memory:');
-  for (const f of ['0001_init.sql', '0002_invites.sql']) db.exec(fs.readFileSync(new URL('../../platform/migrations/' + f, import.meta.url), 'utf8'));
-  const d1 = {prepare(sql) { let a = []; const st = {bind(...x) { a = x; return st; }, async run() { const r = db.prepare(sql).run(...a); return {meta: {changes: r.changes}}; }, async first() { return db.prepare(sql).get(...a) ?? null; }}; return st; }};
+  for (const f of fs.readdirSync(new URL('../../platform/migrations/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort()) db.exec(fs.readFileSync(new URL('../../platform/migrations/' + f, import.meta.url), 'utf8'));
+  const d1 = {async batch(stmts){db.exec('BEGIN');try{const out=[];for(const st of stmts)out.push(await st.run());db.exec('COMMIT');return out;}catch(e){db.exec('ROLLBACK');throw e;}},prepare(sql) { let a = []; const st = {bind(...x) { a = x; return st; }, async run() { const r = db.prepare(sql).run(...a); return {meta: {changes: r.changes}}; }, async first() { return db.prepare(sql).get(...a) ?? null; }}; return st; }};
   const store = new D1Store(d1);
   const {tenant, integrationToken} = await applyPayment(store, {paymentId: 'p', provider: 't', plan: 'start'});
   const owner = 'js_srv_' + 'o'.repeat(43), equal = async (a, b) => a === b;

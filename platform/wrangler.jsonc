@@ -4,6 +4,7 @@
   "main": "src/entry.mjs",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
+  "triggers":{"crons":["* * * * *"]},
   "services": [
     {"binding":"KEITARO_BRIDGE","service":"js-control-collector-claude","entrypoint":"KeitaroBridge"},
     // Internal calls to the collector go through this binding, not the public

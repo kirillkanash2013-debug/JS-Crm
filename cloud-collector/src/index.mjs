@@ -1,3 +1,4 @@
+import {Admission} from './admission.mjs';
 import {WorkerEntrypoint,DurableObject} from 'cloudflare:workers';
 import {Container,getContainer} from '@cloudflare/containers';
 import {EncryptedStore} from './crypto-store.mjs';
@@ -33,9 +34,31 @@ async function validateApi(b,{apiValidate,containerValidate}){
  if(lastError?.code===1&&c.cookies.length)return containerValidate(b);
  throw lastError;
 }
-const paths=new Map([['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
+const paths=new Map([['/v1/errors','GET'],['/v1/me','GET'],['/v1/status','GET'],['/v1/report','GET'],['/v1/changes','GET'],['/v1/campaigns','GET'],['/v1/connections','POST,DELETE'],['/v1/jobs','POST'],['/v1/schedule','POST'],['/v1/actions','POST'],['/v1/antidetect','GET,POST,DELETE']]);
 async function digest(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));}
 async function equal(a,b){if(!a||!b)return false;const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0;}
+export class GlobalAdmission extends DurableObject {
+ constructor(ctx,env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{this.gate=new Admission(await ctx.storage.get('state')||{});});}
+ async fetch(request){
+  if(!await equal(request.headers.get('x-control-internal'),this.env.INTERNAL_KEY))return reply(401,{error:'unauthorized'});
+  return this.ctx.blockConcurrencyWhile(async()=>{const b=await request.json();let out;
+   if(b.op==='acquire'){const permit=this.gate.acquire(b.pool,String(b.tenant),Math.min(8,Math.max(1,Number(this.env.GLOBAL_PARALLEL)||8)));out={permit,slot:permit?this.gate.state.leases[permit].slot:null};}
+   else if(b.op==='release'){this.gate.release(b.permit,b.ok,b.code);out={ok:true};}
+   else out=this.gate.summary(b.tenant||null);
+   await this.ctx.storage.put('state',this.gate.state);return reply(200,out);
+  });
+ }
+}
+async function admission(env,body){
+ if(!env.ADMISSION)throw Object.assign(new Error('Admission unavailable'),{code:'capacity_busy'});
+ const r=await env.ADMISSION.getByName('global').fetch(new Request('http://internal',{method:'POST',headers:{'x-control-internal':env.INTERNAL_KEY},body:JSON.stringify(body)}));
+ if(!r.ok)throw Object.assign(new Error('Admission unavailable'),{code:'capacity_busy'});return r.json();
+}
+async function withContainer(env,tenant,run){
+ const {permit,slot}=await admission(env,{op:'acquire',pool:'containers',tenant});
+ if(!permit)throw Object.assign(new Error('Capacity busy'),{code:'capacity_busy'});
+ let ok=false;try{const out=await run(slot);ok=true;return out;}finally{await admission(env,{op:'release',permit,ok}).catch(()=>{});}
+}
 export class BrowserContainer extends Container {
  defaultPort=8080;
  sleepAfter='1m';
@@ -50,18 +73,18 @@ export class CollectorControl extends DurableObject {
  constructor(ctx,env){super(ctx,env);
   ctx.blockConcurrencyWhile(async()=>{
    this.vault=new EncryptedStore(ctx.storage,env.VAULT_KEY);
-   const call=async(path,body)=>{
+   const call=async(path,body)=>withContainer(env,this.control?.state.tenantId||ctx.id.toString(),async(slot)=>{
     // Суффикс образа в имени контейнера: при смене версии кода контейнера меняем
     // его, чтобы запрос гарантированно поднял СВЕЖИЙ инстанс на новом образе, а не
     // переиспользовал старый (Cloudflare не перезапускает уже живой контейнер).
-    const c=getContainer(env.BROWSER,'browser-a3:'+ctx.id.toString());const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));
+    const c=getContainer(env.BROWSER,'browser-pool-v1:'+slot);const r=await c.fetch(new Request('http://localhost'+path,{method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify(body)}));
     // The container can return a non-JSON body when it is cold-starting or
     // crashed (e.g. a plain "Failed to ..." page). Surface that as a clean
     // error with a snippet, instead of leaking a raw JSON.parse SyntaxError.
     const text=await r.text();let value;
     try{value=text?JSON.parse(text):{};}catch{throw Object.assign(new Error('container_non_json'),{code:'container_unavailable',detail:'Коллектор ещё запускается, попробуйте ещё раз. ('+text.slice(0,120)+')'});}
     if(!r.ok)throw Object.assign(new Error(value.detail||'Collector failed'),{code:value.code,detail:value.detail});return value;
-   };
+   });
    this.control=new Control(await this.vault.load()||initialState(),s=>this.vault.save(s),time=>time?ctx.storage.setAlarm(time):ctx.storage.deleteAlarm(),{validate:b=>call('/validate',b),validateApi:b=>validateApi(b,{apiValidate:x=>call('/api-validate',x),containerValidate:x=>call('/validate',x)}),collect:(c,range)=>call('/collect',{connection:c,range}),action:(c,action)=>call('/action',{connection:c,action}),smoke:()=>call('/smoke',{}),
     // Cheap path: with a proxy use the Node container (reliable SOCKS5+TLS);
     // without a proxy, Graph API straight from the Durable Object socket.
@@ -74,7 +97,7 @@ export class CollectorControl extends DurableObject {
     importProfiles:config=>importProfiles(antidetectClient(config),{connect,browserAvailable:true}),
     matchProfile:async(config,userAgent)=>matchProfile(await antidetectClient(config).profiles(),userAgent)},
     // Client's own database (SQLite in this Durable Object) + raw archive in R2.
-    new SqlArchive(ctx.storage.sql,env.ARCHIVE||null));
+    new SqlArchive(ctx.storage.sql,null,ctx.id.toString()));
   });
  }
  async fetch(request){
@@ -106,19 +129,35 @@ export class CollectorControl extends DurableObject {
  // Takes every job that may run now (several cheap API jobs in parallel), runs
  // them outside the storage gate and records each result as soon as it ends.
  async alarm(){
-  const works=[];
-  for(let work;(work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare()));)works.push(work);
-  const collected=works.some(w=>!w.job?.action&&w.job?.kind!=='import');
-  await Promise.all(works.map(async work=>{const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));}));
+  if(this.env.PAUSE_JOBS==='true'){await this.ctx.storage.setAlarm(Date.now()+60000);return;}
+  const tenant=this.control.state.tenantId;
+  if(tenant&&this.env.DB){
+   const t=await this.env.DB.prepare('SELECT status,paid_until FROM tenants WHERE id=?').bind(tenant).first();
+   if(!t||t.status!=='active'||t.paid_until<new Date().toISOString().slice(0,10)){
+    await this.ctx.blockConcurrencyWhile(async()=>{for(const c of Object.values(this.control.state.connections))c.schedule=null;for(const j of this.control.state.jobs)if(j.state==='queued')j.state='cancelled';delete this.control.state.antidetect;await this.control.persist();});return;
+   }
+  }
+  let permit;
+  try{({permit}=await admission(this.env,{op:'acquire',pool:'jobs',tenant:tenant||this.ctx.id.toString()}));}catch{}
+  if(!permit){await this.ctx.storage.setAlarm(Date.now()+10000);return;}
+  let collected=false,ok=false,code=null;
+  try{
+   const work=await this.ctx.blockConcurrencyWhile(()=>this.control.prepare());
+   if(work){const {result,error}=await this.control.execute(work);await this.ctx.blockConcurrencyWhile(()=>this.control.finish(work,result,error));ok=!error;code=error?.code||null;collected=ok&&result?.snapshot?.complete;}
+   else ok=true;
+  }finally{await admission(this.env,{op:'release',permit,ok,code}).catch(()=>{});}
+
   await this.announcePending();
   // Once per refresh cycle, let the bot send the fresh report (if the client
   // turned that on). Fire-and-forget; the platform checks the setting.
-  if(collected&&this.env.PLATFORM&&this.control.state.tenantId){try{await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId);}catch{}}
+  if(this.control.state.pendingRefresh&&this.env.PLATFORM&&this.control.state.tenantId){try{await this.env.PLATFORM.statsRefreshed(this.control.state.tenantId);this.control.state.pendingRefresh=false;}catch{}}
+  await this.ctx.blockConcurrencyWhile(async()=>{this.control.state.notifyRetryAt=Date.now()+60000;await this.control.persist();});
  }
 }
 export default {
  async fetch(request,env,ctx){
   const url=new URL(request.url);
+  if(request.method==='POST'&&url.pathname==='/internal/metrics'){if(!env.OPERATIONS_KEY||!await equal(request.headers.get('authorization'),'Bearer '+env.OPERATIONS_KEY))return reply(401,{error:'unauthorized'});return reply(200,await admission(env,{op:'summary',tenant:String((await request.json()).tenant||'')||null}));}
   // FBacc-style connection without an extension: bookmark + connect page.
   if(request.method==='GET'&&url.pathname==='/bookmarklet')return new Response(bookmarkletPage(url.origin),{headers:PAGE_HEADERS});
   if(request.method==='GET'&&url.pathname==='/connect')return new Response(connectPage(),{headers:PAGE_HEADERS});
@@ -154,7 +193,7 @@ export default {
    for(;;){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>256000){await reader.cancel();return reply(413,{error:'too_large'});}chunks.push(value);}
    const bytes=new Uint8Array(size);let i=0;for(const c of chunks){bytes.set(c,i);i+=c.length;}request=new Request(request.url,{method:request.method,headers:request.headers,body:bytes});
   }
-  const headers=new Headers(request.headers);headers.delete('authorization');headers.set('x-control-internal',env.INTERNAL_KEY);
+  const headers=new Headers(request.headers);headers.delete('authorization');headers.delete('x-tenant-id');headers.set('x-control-internal',env.INTERNAL_KEY);
   headers.set('x-social-limit',String(caller.socialLimit));
   // Tell the DO which tenant it serves, so it can address the bot after the
   // first collection (the "loaded" card is sent there, with real counts).
@@ -176,10 +215,9 @@ async function keitaroContainerCheck(env,origin,key,profile=false) {
   try{if(publicIP(new URL(origin).hostname)){const r=await (profile?timezoneKeitaroSocket:checkKeitaroSocket)(origin,key,connect);if(r.result!=='unreachable')return r;}}catch{}
   if(!env.INTERNAL_KEY)return {result:'unreachable',reason:'setup_required'};
   try {
-   const c=getContainer(env.BROWSER,'keitaro-api');
-   const r=await c.fetch(new Request('http://localhost/'+(profile?'keitaro-timezone':'keitaro-check'),{
+   const r=await withContainer(env,'keitaro',slot=>getContainer(env.BROWSER,'browser-pool-v1:'+slot).fetch(new Request('http://localhost/'+(profile?'keitaro-timezone':'keitaro-check'),{
     method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify({origin,key})
-   }));
+   })));
    return r.ok?await r.json():{result:'unreachable',reason:'container'};
   }catch{return {result:'unreachable',reason:'container'};}
 }
@@ -189,15 +227,18 @@ async function keitaroContainerReport(env,origin,key,opts){
   try{if(publicIP(new URL(origin).hostname)){const r=await reportKeitaroSocket(origin,key,opts,connect);if(r.result!=='unreachable')return r;}}catch{}
   if(!env.INTERNAL_KEY)return {result:'unreachable',reason:'setup_required'};
   try {
-   const c=getContainer(env.BROWSER,'keitaro-api');
-   const r=await c.fetch(new Request('http://localhost/keitaro-report',{
+   const r=await withContainer(env,opts?.tenantId||'keitaro',slot=>getContainer(env.BROWSER,'browser-pool-v1:'+slot).fetch(new Request('http://localhost/keitaro-report',{
     method:'POST',headers:{Authorization:'Bearer '+env.INTERNAL_KEY,'content-type':'application/json'},body:JSON.stringify({origin,key,...opts})
-   }));
+   })));
    return r.ok?await r.json():{result:'unreachable',reason:'container'};
   }catch{return {result:'unreachable',reason:'container'};}
 }
 export class KeitaroBridge extends WorkerEntrypoint {
  async check(origin,key){return keitaroContainerCheck(this.env,origin,key);}
  async timezone(origin,key){return keitaroContainerCheck(this.env,origin,key,true);}
- async report(origin,key,opts){return keitaroContainerReport(this.env,origin,key,opts||{});}
+ async report(origin,key,opts){
+  const tenant=opts?.tenantId||'keitaro';let permit;
+  try{({permit}=await admission(this.env,{op:'acquire',pool:'reports',tenant}));if(!permit)return {result:'unreachable',reason:'capacity_busy'};return await keitaroContainerReport(this.env,origin,key,opts||{});}
+  finally{if(permit)await admission(this.env,{op:'release',permit,ok:true});}
+ }
 }

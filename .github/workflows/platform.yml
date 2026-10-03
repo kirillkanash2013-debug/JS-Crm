@@ -3,6 +3,7 @@ on:
   push:
     branches: [claude-code, claude/saas-access]
     paths:
+      - 'shared/**'
       - 'platform/**'
       - 'cloud-collector/**'
       - 'extension/**'

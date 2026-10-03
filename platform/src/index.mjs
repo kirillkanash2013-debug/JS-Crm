@@ -1,3 +1,4 @@
+import {operationsRoute,operationsTick} from './operations.mjs';
 // JS Control platform Worker: payments → integration token → bot onboarding
 // → plugin login → dashboard. One deployment serves every client (tenant).
 import {PLANS, applyPayment, authenticate} from './accounts.mjs';
@@ -25,7 +26,7 @@ function telegram(env) {
   return async (method, payload) => {
     const r = await fetch('https://api.telegram.org/bot' + env.TELEGRAM_BOT_TOKEN + '/' + method, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)});
     const body = await r.json().catch(() => ({}));
-    if (!body.ok) throw new Error('Telegram ' + method + ' failed');
+    if (!body.ok) {const e=new Error('Telegram request failed');e.code=/message is not modified/i.test(body.description||'')?'message_unchanged':/message to edit not found|message can.t be edited/i.test(body.description||'')?'message_missing':'telegram_failed';throw e;}
     return body.result;
   };
 }
@@ -34,13 +35,20 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
   const url = new URL(request.url);
   const path = url.pathname;
 
+  if(path.startsWith('/internal/admin/'))return operationsRoute(request,env,{store,tg});
+
   if (request.method === 'GET' && path === '/health') return json(200, {ok: true, service: 'js-control-platform', keitaroTransport: env.KEITARO_BRIDGE?'container':'worker'});
 
   // Telegram webhook. Secret header is set by setWebhook(secret_token=...).
   if (request.method === 'POST' && path === '/telegram') {
     if (!await sameSecret(request.headers.get('x-telegram-bot-api-secret-token'), env.TELEGRAM_WEBHOOK_SECRET)) return json(401, {error: 'unauthorized'});
     const update = await request.json();
-    await createBot({store, tg, env, ...(env.KEITARO_BRIDGE?{keitaro:containerKeitaro(env)}:{})})(update);
+    const msg=update.message||update.callback_query?.message;
+    if(msg?.chat?.type&&msg.chat.type!=='private')return json(200,{ok:true});
+    if(msg?.chat?.id&& (update.callback_query?.from?.id||update.message?.from?.id) && String(msg.chat.id)!==String(update.callback_query?.from?.id||update.message?.from?.id))return json(200,{ok:true});
+    if(update.update_id!==undefined&&!await store.claimUpdate(update.update_id))return json(200,{ok:true,duplicate:true});
+    try{await createBot({store, tg, env, ...(env.KEITARO_BRIDGE?{keitaro:containerKeitaro(env)}:{})})(update);if(update.update_id!==undefined)await store.finishUpdate(update.update_id,true);}
+    catch(e){if(update.update_id!==undefined)await store.finishUpdate(update.update_id,false);throw e;}
     return json(200, {ok: true});
   }
 
@@ -49,11 +57,14 @@ export async function route(request, env, {store, tg, collectorStatus = async ()
   if (request.method === 'POST' && path === '/billing/webhook') {
     const raw = await request.text();
     if (!env.BILLING_WEBHOOK_SECRET || raw.length > 16000 || !await sameSecret(request.headers.get('x-signature'), await hmacHex(env.BILLING_WEBHOOK_SECRET, raw))) return json(401, {error: 'unauthorized'});
-    const b = JSON.parse(raw);
+    let b;try{b=JSON.parse(raw);}catch{return json(400,{error:'invalid_json'});}
+    if(typeof b.paymentId!=='string'||!b.paymentId.trim()||b.paymentId.length>200)return json(400,{error:'payment_id_required'});
+    const price=Number(env['WEB_PRICE_'+String(b.plan).toUpperCase()]);
+    if(!(price>0))return json(503,{error:'billing_not_configured'});
+    if(Number(b.amount)!==price||b.currency!==(env.WEB_CURRENCY||'USD'))return json(400,{error:'invalid_payment_amount'});
     if (!PLANS[b.plan]) return json(400, {error: 'unknown_plan'});
     const result = await applyPayment(store, {paymentId: 'web:' + b.paymentId, provider: String(b.provider || 'web'), plan: b.plan, name: b.name, tenantId: b.tenantId, amount: b.amount, currency: b.currency, masterKey: env.MASTER_KEY});
-    return json(200, {tenantId: result.tenant.id, paidUntil: result.tenant.paidUntil, integrationToken: result.integrationToken, duplicate: result.duplicate,
-      botLink: env.BOT_USERNAME && result.integrationToken ? 'https://t.me/' + env.BOT_USERNAME + '?start=' + result.integrationToken : null});
+    return json(200,{tenantId:result.tenant.id,paidUntil:result.tenant.paidUntil,duplicate:result.duplicate});
   }
 
   // Plugin login with the integration token.
@@ -99,7 +110,8 @@ export async function collectorStatus(env, store, tenantId) {
   const connections = status && Array.isArray(status.connections) ? status.connections : [];
   if (!connections.length) return null;
   const observedAt = Object.values(status.results || {}).map(r => r && r.observedAt).filter(Boolean).sort().at(-1) || null;
-  const today = new Date().toISOString().slice(0, 10);
+  const settings=await store.settings(tenantId);
+  const today = new Date().toLocaleDateString('en-CA',{timeZone:settings.timezone||'UTC'});
   const report = await get('/v1/report?since=' + today + '&until=' + today);
   return {
     socials: connections.length,
@@ -115,6 +127,7 @@ export async function collectorStatus(env, store, tenantId) {
 export {telegram};
 
 export default {
+  scheduled(_event,env,ctx){ctx.waitUntil(operationsTick(env,telegram(env)));},
   fetch(request, env) {
     const store = new D1Store(env.DB);
     return route(request, env, {store, tg: telegram(env), collectorStatus: id => collectorStatus(env, store, id)}).catch(() => json(500, {error: 'internal'}));

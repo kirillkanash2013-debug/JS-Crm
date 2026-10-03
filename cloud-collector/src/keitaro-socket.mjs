@@ -1,3 +1,4 @@
+import {fetchKeitaroReport} from '../../shared/keitaro-report.mjs';
 import {batchProfileTimezone,profileReadBatch} from '../../server/keitaro-timezone.mjs';
 import {readResponse} from './proxy-fetch.mjs';
 export function publicIP(host){
@@ -72,24 +73,7 @@ const normalizeRows=raw=>Array.isArray(raw)?raw:Array.isArray(raw?.rows)?raw.row
 // conversions/log (status/revenue/click date, authoritative for reg/dep/rev).
 // The platform aggregates these and joins with FB spend.
 export async function reportKeitaroSocket(origin,key,{from,to,timezone,subIndex},connect){
- const sub='sub_id_'+(subIndex||4);
- const build=await socketPost(origin,key,'/admin_api/v1/report/build',{
-  range:{from,to,timezone},
-  columns:['campaign_id','campaign',sub,'offer'],
-  metrics:['clicks','campaign_unique_clicks','conversions','sales','sale_revenue'],
-  grouping:['campaign_id','campaign',sub,'offer'],
-  filters:[]
- },connect);
- if(build.result!=='ok')return build;
- const log=await socketPost(origin,key,'/admin_api/v1/conversions/log',{
-  range:{from,to,timezone},
-  limit:10000,offset:0,
-  columns:['conversion_id','sub_id','campaign_id','campaign','offer','revenue','status','click_datetime','postback_datetime',sub],
-  filters:[],
-  sort:[{name:'postback_datetime',order:'ASC'},{name:'conversion_id',order:'ASC'}]
- },connect);
- if(log.result!=='ok')return log;
- return {result:'ok',report:normalizeRows(build.json),conversions:normalizeRows(log.json)};
+ return fetchKeitaroReport((path,payload)=>socketPost(origin,key,path,payload,connect),{from,to,timezone,subIndex});
 }
 
 export const checkKeitaroSocket = (origin,key,connect) => socketGet(origin,key,connect);

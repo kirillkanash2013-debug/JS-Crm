@@ -69,7 +69,7 @@ test('history: only changes are written; change log; report; structure rebuilt f
   assert.deepEqual(prev.campaigns, s2.campaigns.map(c => ({...c, daily_budget: '2000'})));
   assert.deepEqual(prev.ads, s2.ads);
 
-  assert.equal(puts.at(-1).key, 'raw/100/2026-10-01/11.json.gz');
+  assert.equal(puts.at(-1).key, 'raw/local/100/2026-10-01/11.json.gz');
   assert.equal(JSON.parse(gunzipSync(Buffer.from(puts.at(-1).body))).observedAt, '2026-10-01T11:00:00.000Z');
   assert.throws(() => a.report({since: '2026-10-02', until: '2026-10-01'}), /Invalid period/);
 });
@@ -114,5 +114,5 @@ test('campaigns accountToday: spend is taken by the ad account timezone day', as
   const camps = a.campaigns({userId: '100', accountToday: true});
   assert.equal(camps.length, 1);
   assert.equal(camps[0].spend, 42); // account's own "today", not the 999 from another day
-  assert.equal(camps[0].accountTz, undefined); // internal field not leaked
+  assert.equal(camps[0].accountTz, 'Asia/Almaty'); // source timezone retained for period mismatch warnings
 });

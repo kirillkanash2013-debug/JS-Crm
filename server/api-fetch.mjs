@@ -12,7 +12,8 @@ function agentFor(proxy) {
   if (!proxy?.server) return undefined;
   const u = new URL(proxy.server);
   const auth = proxy.username ? encodeURIComponent(proxy.username) + ':' + encodeURIComponent(proxy.password || '') + '@' : '';
-  const url = u.protocol + '//' + auth + u.host;
+  const protocol=u.protocol==='socks5:'?'socks5h:':u.protocol;
+  const url = protocol + '//' + auth + u.host;
   return u.protocol.startsWith('socks') ? new SocksProxyAgent(url, {timeout: 20000}) : new HttpsProxyAgent(url, {timeout: 20000});
 }
 
@@ -22,9 +23,9 @@ export function cookieHeader(cookies) {
     .map(c => c.name + '=' + c.value).join('; ');
 }
 
-function once(agent, u, headers) {
+function once(agent, u, headers, signal) {
   return new Promise((resolve, reject) => {
-    const req = https.request(u, {method: 'GET', agent, headers, timeout: 20000}, res => {
+    const req = https.request(u, {method: 'GET', agent, headers, timeout: 20000, signal}, res => {
       const chunks = [];
       let size = 0;
       res.on('data', c => { size += c.length; if (size > 16 * 1024 * 1024) { req.destroy(); reject(err('too_large', 'response too large')); } else chunks.push(c); });
@@ -52,14 +53,16 @@ function err(code, detail) { return Object.assign(new Error(detail), {code, deta
 // the write-capable sibling used only by campaign actions.
 export function nodeGraphRequest(connection) {
   const agent = agentFor(connection.proxy);
+  const deadline=Date.now()+4*60000;
   const cookies = cookieHeader(connection.storageState?.cookies || connection.cookies);
   return (method, path, params = {}) => new Promise((resolve, reject) => {
+    if(Date.now()>=deadline)return reject(err('timeout','Истекло время выполнения запроса'));
     const u = new URL('https://' + GRAPH + '/v25.0/' + path);
     const form = new URLSearchParams({access_token: connection.token, ...params}).toString();
     if (method === 'GET') u.search = form;
     const headers = {'User-Agent': connection.userAgent, Accept: '*/*', ...(cookies ? {Cookie: cookies} : {}), Origin: 'https://adsmanager.facebook.com', Referer: 'https://adsmanager.facebook.com/'};
     if (method === 'POST') headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    const req = https.request(u, {method, agent, headers, timeout: 20000}, res => {
+    const req = https.request(u, {method, agent, headers, timeout: 20000, signal:AbortSignal.timeout(Math.max(1,Math.min(30000,deadline-Date.now())))}, res => {
       const chunks = []; let size = 0;
       res.on('data', c => { size += c.length; if (size > 8 * 1024 * 1024) { req.destroy(); reject(err('too_large', 'response too large')); } else chunks.push(c); });
       res.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); let body = {}; try { body = JSON.parse(text); } catch {} resolve({httpStatus: res.statusCode, body}); });
@@ -73,13 +76,17 @@ export function nodeGraphRequest(connection) {
 // fetch-compatible adapter for extension/meta.mjs and structure.mjs.
 export function nodeGraphFetcher(connection) {
   const agent = agentFor(connection.proxy);
+  const deadline=Date.now()+4*60000;
   const cookies = cookieHeader(connection.storageState?.cookies || connection.cookies);
   const fetcher = async (url, options = {}) => {
+    if(Date.now()>=deadline)throw err('timeout','Истекло время сбора');
+    const signals=[AbortSignal.timeout(Math.max(1,Math.min(30000,deadline-Date.now())))];
+    if(options.signal)signals.push(options.signal);
     const u = new URL(url);
     if (u.hostname !== GRAPH || (options.method || 'GET') !== 'GET') throw err('transport', 'Only Graph API reads are allowed');
     const auth = options.headers?.Authorization || '';
     if (auth.startsWith('Bearer ')) u.searchParams.set('access_token', auth.slice(7));
-    return once(agent, u, {'User-Agent': connection.userAgent, Accept: '*/*', ...(cookies ? {Cookie: cookies} : {}), Origin: 'https://adsmanager.facebook.com', Referer: 'https://adsmanager.facebook.com/'});
+    return once(agent, u, {'User-Agent': connection.userAgent, Accept: '*/*', ...(cookies ? {Cookie: cookies} : {}), Origin: 'https://adsmanager.facebook.com', Referer: 'https://adsmanager.facebook.com/'},AbortSignal.any(signals));
   };
   fetcher.pageContext = true; // no batch fallback; requests carry the session
   return fetcher;

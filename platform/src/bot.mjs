@@ -38,8 +38,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // Edit a message in place (one evolving screen, no chat spam). Falls back to a
   // fresh message if the edit fails (e.g. message too old or unchanged).
   const edit = async (chatId, messageId, text, markup) => {
-    try { await tg('editMessageText', {chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: markup || {inline_keyboard: []}}); }
-    catch { await send(chatId, text, markup); }
+    try { return await tg('editMessageText', {chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: markup || {inline_keyboard: []}}); }
+    catch(e) {if(e.code==='message_unchanged')return {};if(e.code==='message_missing')return send(chatId,text,markup);throw e;}
   };
   const forget = (chatId, messageId) => tg('deleteMessage', {chat_id: chatId, message_id: messageId}).catch(() => {});
   const starsEnabled = () => Number(env.STARS_PRICE_START) > 0;
@@ -249,16 +249,16 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // and the campaigns board). Returns {keitaro, subIndex, note}; keitaro is null
   // when Keitaro isn't set up or is unreachable, and note explains why.
   async function loadKeitaro(tenantId, day, tz, {force} = {}) {
-    const ck = tenantId + '|' + day + '|' + tz;
+    const s = await store.settings(tenantId);
+    const ck = JSON.stringify([tenantId,day,tz,s.keitaroUrl,s.keitaroKeyEnc,s.keitaroSub]);
     const hit = keitaroCache.get(ck);
     if (!force && hit && Date.now() - hit.at < 60000) return {keitaro: hit.keitaro, subIndex: hit.subIndex, note: ''};
-    const s = await store.settings(tenantId);
     const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
     let key = null;
     if (s.keitaroKeyEnc && env.MASTER_KEY) { try { key = await openSecret(env.MASTER_KEY, tenantId, s.keitaroKeyEnc); } catch {} }
     const subIndex = Number(String(s.keitaroSub || '').match(/\d+/)?.[0]) || 4;
     if (origin && key && env.KEITARO_BRIDGE) {
-      const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex});
+      const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex,tenantId});
       if (res && res.result === 'ok') { const keitaro = aggregateKeitaro(res, {subIndex, day}); keitaroCache.set(ck, {at: Date.now(), keitaro, subIndex}); return {keitaro, subIndex, note: ''}; }
       return {keitaro: null, subIndex, note: '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.'};
     }
@@ -289,7 +289,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const campaigns = [];
     for (const r of campaignsArrays) for (const cmp of (r && r.body && r.body.campaigns) || []) campaigns.push(cmp);
     const {keitaro, subIndex, note} = kt;
-    return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note;
+    const periods=new Set(campaigns.map(c=>c.accountTz).filter(Boolean));
+    const periodNote=[...periods].some(p=>p!==tz)?'\n\n⚠️ Периоды отличаются: расход — сутки рекламных кабинетов, доход — '+esc(tz)+'. ROI требует учета этой разницы.':'';
+    return buildNow({day, times: {fb: fbTime, keitaro: keitaro ? nowHHMM : '—'}, campaigns, keitaro, subIndex}) + note + periodNote;
   }
 
   const statsMarkup = {inline_keyboard: [[{text: '🔄 Обновить', callback_data: 'stats:refresh'}]]};
@@ -297,7 +299,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     await notifyNewSocials(chatId, tenantId);
     const text = await statsReportText(tenantId);
     if (!text) return send(chatId, '📊 Пока нет подключённых соцов или данных. Подключите соц через «👤 Профиль → Инструкции».', MENU);
-    await send(chatId, text, statsMarkup);
+    const msg = await send(chatId, text, statsMarkup);
+    if(msg?.message_id)await store.setStatsMessage(tenantId,msg.message_id);
   }
 
   // «🔄 Обновить» под «Сейчас»: тянем свежий Keitaro всегда, а повторный сбор FB
@@ -314,9 +317,10 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     } else {
       const today = new Date().toISOString().slice(0, 10), yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       for (const c of conns) await collectorCall(tenantId, '/v1/jobs', {userId: c.userId, since: yest, until: today});
-      note = '\n\n⏳ Запустил свежий сбор FB — через ~минуту нажмите «🔄 Обновить» ещё раз.';
+      note = '\n\n⏳ Запрос принят. После успешного сбора это сообщение обновится автоматически.';
     }
     const text = await statsReportText(tenantId, {force: true});
+    await store.setStatsMessage(tenantId,mid);
     await edit(chatId, mid, (text || '📊 Данных пока нет.') + note, statsMarkup);
   }
 
@@ -615,7 +619,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       [{text: '⚙️ Подключение Keitaro', callback_data: 'pr:keitaro'}],
       [{text: '🕒 Часовой пояс Keitaro', callback_data: 'pr:tz'}],
       [{text: '🔗 sub_id кампании Keitaro', callback_data: 'pr:sub'}],
-      [{text: '⏱ Частота обновления', callback_data: 'pr:freq'}]
+      [{text: '⏱ Частота обновления', callback_data: 'pr:freq'}],
+      [{text: '🛠 Журнал ошибок', callback_data: 'pr:errors'}],
+      [{text: '📢 Объявления сервиса', callback_data: 'pr:service'}]
     ]}};
   }
   async function showProfile(chatId, tenantId) {
@@ -640,6 +646,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
 
   async function bind(chatId, tenant) {
+    if(!await store.claimOwner(tenant.id,chatId))return send(chatId,'Доступ уже привязан к другому Telegram-аккаунту.');
     const s = await store.settings(tenant.id);
     await store.setChat(chatId, tenant.id, s.onboardedAt ? 'ready' : 'keitaro_url');
     if (s.onboardedAt) return send(chatId, '✅ С возвращением! Тариф <b>' + esc(planName(tenant.plan)) + '</b>, активен до ' + tenant.paidUntil + '.', MENU);
@@ -650,10 +657,13 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   async function onPaid(chatId, message) {
     const pay = message.successful_payment;
-    const plan = String(pay.invoice_payload || '').replace(/^plan:/, '');
+    const order=await store.starsOrder(String(pay.invoice_payload||'').replace(/^order:/,''));
+    if(!order||order.chatId!==String(chatId)||order.expiresAt<Date.now())throw new Error('Invalid order');
+    const plan=order.plan;
     const chat = await store.chat(chatId);
+    if(!pay.telegram_payment_charge_id||pay.currency!=='XTR'||!Number.isSafeInteger(pay.total_amount)||pay.total_amount!==order.amount||pay.total_amount<=0)throw new Error('Invalid payment');
     const result = await applyPayment(store, {paymentId: 'tg:' + pay.telegram_payment_charge_id, provider: 'telegram-stars', plan,
-      name: message.from?.username || message.from?.first_name, tenantId: chat?.tenantId || undefined, amount: pay.total_amount, currency: pay.currency, masterKey: env.MASTER_KEY});
+      name: message.from?.username || message.from?.first_name, tenantId: order.tenantId || undefined, amount: pay.total_amount, currency: pay.currency, masterKey: env.MASTER_KEY});
     if (result.duplicate) return;
     if (result.integrationToken) return bind(chatId, result.tenant);
     await send(chatId, '🎉 Подписка продлена до ' + result.tenant.paidUntil + '.', MENU);
@@ -681,6 +691,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       await forget(chatId, message.message_id); // the token must not stay in the chat history
       const {tenant, error} = await authenticate(store, token, 'integration');
       if (error === 'invalid') return send(chatId, '❌ Токен не найден. Проверьте, что скопировали его полностью.');
+      if(!await store.claimOwner(tenant.id,chatId))return send(chatId,'Доступ уже привязан к другому Telegram-аккаунту.');
+      const ownerChat = await store.chatForTenant(tenant.id);
+      if (ownerChat && String(ownerChat) !== String(chatId)) return send(chatId, 'Этот доступ уже привязан к другому Telegram-аккаунту. Обратитесь в поддержку.');
       // The user handed us the plaintext token — seal it so the dashboard can
       // read this tenant's data from the collector (covers tokens issued earlier).
       if (env.MASTER_KEY) await store.setIntegrationTokenEnc(tenant.id, await sealSecret(env.MASTER_KEY, tenant.id, token));
@@ -691,6 +704,8 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
     const tenant = await store.tenant(chat.tenantId);
     if (!isActive(tenant)) return subscription(chatId, tenant);
+
+    if(text==='/errors'){const r=await collectorCall(tenant.id,'/v1/errors');const list=r?.body?.errors||[];return send(chatId,'Журнал ошибок\n'+(list.slice(-15).map(e=>esc(e.at+' · '+e.stage+' · '+e.code+' · задача '+e.jobId)).join('\n')||'Ошибок нет.'));}
 
     // Key is retrievable at any point, even mid-onboarding.
     if (text === '🔑 Ключ' || text === '/key') return showKey(chatId, tenant.id);
@@ -763,7 +778,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
         const [nStr, vStr] = p.split('-');
         const n = Number(nStr.trim()), dollars = Number(vStr.trim().replace(',', '.'));
         const c = ordered[n - 1];
-        if (!c || !(dollars > 0)) { bad.push(p.replace(/\s+/g, '')); continue; }
+        if (!c || (c.currency&&c.currency!=='USD') || !(dollars > 0)) { bad.push(p.replace(/\s+/g, '')); continue; }
         const r = await collectorCall(tenant.id, '/v1/actions', {userId, campaignId: c.campaignId, dailyBudget: Math.round(dollars * 100)});
         if (r && r.ok) ok++; else bad.push(p.replace(/\s+/g, ''));
       }
@@ -833,14 +848,18 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (data.startsWith('buy:') && PLANS[data.slice(4)] && starsEnabled()) {
       const plan = data.slice(4), price = Number(env['STARS_PRICE_' + plan.toUpperCase()]);
       if (!(price > 0)) return;
+      const chat=await store.chat(chatId),order={id:crypto.randomUUID(),chatId:String(chatId),tenantId:chat?.tenantId||null,plan,amount:price,expiresAt:Date.now()+864e5};
+      await store.createStarsOrder(order);
       return tg('sendInvoice', {chat_id: chatId, title: 'JS Control ' + PLANS[plan].name, description: '30 дней, до ' + PLANS[plan].socialLimit + ' соцов',
-        payload: 'plan:' + plan, currency: 'XTR', prices: [{label: '30 дней', amount: price}]});
+        payload: 'order:' + order.id, currency: 'XTR', prices: [{label: '30 дней', amount: price}]});
     }
     const chat = await store.chat(chatId);
     if (!chat?.tenantId) return welcome(chatId);
     if (data === 'skip:keitaro') { await store.saveSettings(chat.tenantId, {keitaroUrl: null, keitaroKeyEnc: null, timezone: null}); return askTimezone(chatId, chat.tenantId); }
     // «Профиль» — всё в одном сообщении, переходы редактируют его.
     const mid = q.message.message_id;
+    if(data==='pr:service'||data.startsWith('pr:service:')){if(data.endsWith(':off')||data.endsWith(':on'))await store.setServiceMessages(chat.tenantId,data.endsWith(':on'));const s=await store.settings(chat.tenantId),on=s.serviceMessages!==0;return edit(chatId,mid,'Объявления об обновлениях: '+(on?'включены':'выключены'),{inline_keyboard:[[{text:on?'Выключить':'Включить',callback_data:'pr:service:'+(on?'off':'on')}],[{text:'Назад',callback_data:'pr:main'}]]});}
+    if(data==='pr:errors'){const r=await collectorCall(chat.tenantId,'/v1/errors');return edit(chatId,mid,'Журнал ошибок\n'+((r?.body?.errors||[]).slice(-15).map(e=>esc(e.at+' · '+e.stage+' · '+e.code+' · '+e.jobId)).join('\n')||'Ошибок нет.'),back('pr:main'));}
     if (data === 'pr:main') { const v = await profileView(await store.tenant(chat.tenantId)); return edit(chatId, mid, v.text, v.markup); }
     if (data === 'pr:key') { const k = await currentKey(chat.tenantId); return edit(chatId, mid, '🔑 <b>Ключ интеграции</b>\nВставьте в расширение JS Control:\n<code>' + k + '</code>\n\nНикому не передавайте. Перевыпуск: /token.', back('pr:main')); }
     if (data === 'pr:instr') return edit(chatId, mid, '📘 <b>Инструкции</b>\nВыберите раздел:', {inline_keyboard: [
@@ -923,9 +942,9 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
 
   const handleUpdate = async function handleUpdate(update) {
     if (update.pre_checkout_query) {
-      const plan = String(update.pre_checkout_query.invoice_payload || '').replace(/^plan:/, '');
-      return tg('answerPreCheckoutQuery', PLANS[plan] ? {pre_checkout_query_id: update.pre_checkout_query.id, ok: true}
-        : {pre_checkout_query_id: update.pre_checkout_query.id, ok: false, error_message: 'Тариф не найден'});
+      const q=update.pre_checkout_query,order=await store.starsOrder(String(q.invoice_payload||'').replace(/^order:/,''));
+      const valid=order&&order.expiresAt>=Date.now()&&order.chatId===String(q.from?.id)&&q.currency==='XTR'&&q.total_amount===order.amount;
+      return tg('answerPreCheckoutQuery',{pre_checkout_query_id:q.id,ok:!!valid,...(!valid?{error_message:'Счет недействителен. Создайте новый.'}:{})});
     }
     if (update.callback_query) return onCallback(update.callback_query);
     if (update.message) return onMessage(update.message);
@@ -958,7 +977,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (!chatId) return;
     await store.setSocialStats(tenantId, social.userId, {rk: social.rk ?? null, rkPersonal: social.rkPersonal ?? null, bm: social.bm ?? null, fp: social.fp ?? null, fbName: social.fbName ?? null, collectedAt: social.collectedAt || new Date().toISOString()});
     const s = await store.social(tenantId, social.userId), card = await socialCard(tenantId, social.userId);
-    if (s?.notifyMsgId) await edit(chatId, s.notifyMsgId, card.text, card.markup);
+    if (s?.notifyMsgId){const msg=await edit(chatId, s.notifyMsgId, card.text, card.markup);if(msg?.message_id)await store.setSocialNotifyMsg(tenantId,social.userId,msg.message_id);}
     else await sendSocialCard(chatId, tenantId, social.userId);
   };
 
@@ -966,11 +985,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   // report after a data refresh. Called by the collector once per refresh cycle.
   handleUpdate.notifyStatsRefresh = async (tenantId) => {
     const s = await store.settings(tenantId);
-    if (!s.notifyOnUpdate) return;
+    if (!s.notifyOnUpdate && !s.statsMsgId) return;
     const chatId = await store.chatForTenant(tenantId);
     if (!chatId) return;
     const text = await statsReportText(tenantId);
-    if (text) await send(chatId, '🔄 <b>Данные обновлены</b>\n\n' + text, MENU);
+    if(text&&s.statsMsgId){const msg=await edit(chatId,s.statsMsgId,text,statsMarkup);if(msg?.message_id)await store.setStatsMessage(tenantId,msg.message_id);}
+    else if(text&&s.notifyOnUpdate)await showStats(chatId,tenantId);
   };
   return handleUpdate;
 }

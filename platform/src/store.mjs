@@ -3,6 +3,24 @@ const now = () => new Date().toISOString();
 
 export class D1Store {
   constructor(db) { this.db = db; }
+  async createStarsOrder(o){await this.db.prepare('INSERT INTO stars_orders(id,chat_id,tenant_id,plan,amount,created_at,expires_at) VALUES(?,?,?,?,?,?,?)').bind(o.id,String(o.chatId),o.tenantId||null,o.plan,o.amount,now(),o.expiresAt).run();}
+  async starsOrder(id){return this.db.prepare('SELECT id,chat_id AS chatId,tenant_id AS tenantId,plan,amount,expires_at AS expiresAt FROM stars_orders WHERE id=?').bind(id).first();}
+  async claimOwner(id,chatId){const r=await this.db.prepare('UPDATE tenants SET owner_chat_id=? WHERE id=? AND (owner_chat_id IS NULL OR owner_chat_id=?)').bind(String(chatId),id,String(chatId)).run();return r.meta?.changes===1;}
+  async commitPayment(p,t,token){
+    const exists=await this.payment(p.id);if(exists)return {tenant:await this.tenant(exists.tenantId),duplicate:true};
+    const statements=[];
+    if(!p.renewal)statements.push(this.db.prepare("INSERT INTO tenants(id,name,plan,social_limit,status,paid_until,created_at,integration_token_enc) SELECT ?,?,?,?,'active',?,?,? WHERE NOT EXISTS(SELECT 1 FROM payments WHERE id=?)").bind(t.id,t.name,t.plan,t.socialLimit,t.paidUntil,now(),token?.enc??null,p.id));
+    statements.push(this.db.prepare('INSERT OR IGNORE INTO payments(id,tenant_id,provider,amount,currency,created_at,applied) VALUES(?,?,?,?,?,?,0)').bind(p.id,t.id,p.provider,String(p.amount??''),p.currency??null,now()));
+    if(p.renewal)statements.push(this.db.prepare("UPDATE tenants SET paid_until=date(CASE WHEN paid_until>=? THEN paid_until ELSE ? END, ?),status='active' WHERE id=? AND EXISTS(SELECT 1 FROM payments WHERE id=? AND tenant_id=? AND applied=0)").bind(p.today,p.today,'+'+p.days+' days',t.id,p.id,t.id));
+    if(token)statements.push(this.db.prepare("INSERT OR IGNORE INTO access_tokens(hash,tenant_id,kind,created_at) SELECT ?,?,'integration',? WHERE EXISTS(SELECT 1 FROM payments WHERE id=? AND tenant_id=? AND applied=0)").bind(token.hash,t.id,now(),p.id,t.id));
+    statements.push(this.db.prepare('UPDATE payments SET applied=1 WHERE id=? AND tenant_id=? AND applied=0').bind(p.id,t.id));
+    const results=await this.db.batch(statements),applied=results.at(-1).meta?.changes===1;
+    const payment=await this.payment(p.id);return {tenant:await this.tenant(payment.tenantId),duplicate:!applied};
+  }
+  async claimUpdate(id){const r=await this.db.prepare("INSERT INTO webhook_updates(id,state,lease_until,updated_at) VALUES(?,'processing',?,?) ON CONFLICT(id) DO UPDATE SET state='processing',lease_until=excluded.lease_until,updated_at=excluded.updated_at WHERE webhook_updates.state!='done' AND webhook_updates.lease_until<?").bind(String(id),Date.now()+300000,now(),Date.now()).run();return r.meta?.changes===1;}
+  async finishUpdate(id,success){await this.db.prepare('UPDATE webhook_updates SET state=?,lease_until=?,updated_at=? WHERE id=?').bind(success?'done':'retry',success?Date.now()+7*864e5:0,now(),String(id)).run();}
+  async setServiceMessages(tenantId,on){await this.saveSettings(tenantId,{});await this.db.prepare('UPDATE settings SET service_messages=? WHERE tenant_id=?').bind(on?1:0,tenantId).run();}
+  async setStatsMessage(tenantId,id){await this.saveSettings(tenantId,{});await this.db.prepare('UPDATE settings SET stats_msg_id=? WHERE tenant_id=?').bind(String(id),tenantId).run();}
   async createTenant(t) {
     await this.db.prepare('INSERT INTO tenants (id,name,plan,social_limit,status,paid_until,created_at) VALUES (?,?,?,?,?,?,?)')
       .bind(t.id, t.name, t.plan, t.socialLimit, 'active', t.paidUntil, now()).run();
@@ -33,10 +51,10 @@ export class D1Store {
       .bind(String(chatId), tenantId, state, now()).run();
   }
   async unbindChat(chatId) { await this.db.prepare('DELETE FROM chats WHERE chat_id=?').bind(String(chatId)).run(); }
-  async chatForTenant(tenantId) { const r = await this.db.prepare('SELECT chat_id FROM chats WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 1').bind(tenantId).first(); return r ? r.chat_id : null; }
+  async chatForTenant(tenantId) { const r = await this.db.prepare('SELECT c.chat_id FROM chats c JOIN tenants t ON t.id=c.tenant_id WHERE c.tenant_id=? AND (t.owner_chat_id IS NULL OR c.chat_id=t.owner_chat_id) ORDER BY c.updated_at DESC LIMIT 1').bind(tenantId).first(); return r ? r.chat_id : null; }
   async settings(tenantId) {
     const r = await this.db.prepare('SELECT * FROM settings WHERE tenant_id=?').bind(tenantId).first();
-    return r ? {keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at, notifyOnUpdate: r.notify_on_update ? 1 : 0, refreshMinutes: r.refresh_minutes ?? null} : {};
+    return r ? {statsMsgId:r.stats_msg_id??null,serviceMessages:r.service_messages??1,keitaroUrl: r.keitaro_url, keitaroKeyEnc: r.keitaro_key_enc, keitaroSub: r.keitaro_sub, timezone: r.timezone, currency: r.currency, onboardedAt: r.onboarded_at, notifyOnUpdate: r.notify_on_update ? 1 : 0, refreshMinutes: r.refresh_minutes ?? null} : {};
   }
   async saveSettings(tenantId, patch) {
     const s = {...await this.settings(tenantId), ...patch};
@@ -91,6 +109,20 @@ const socialRow = s => ({userId: s.userId, label: s.label, agentId: s.agentId, n
 
 export class MemoryStore {
   constructor() { this.tenants = new Map(); this.tokens = new Map(); this.chats = new Map(); this.prefs = new Map(); this.payments = new Map(); this.invites = new Map(); this.agents = new Map(); this.socialsMap = new Map(); }
+  async createStarsOrder(o){this.starsOrders??=new Map();this.starsOrders.set(o.id,{...o,chatId:String(o.chatId)});}
+  async starsOrder(id){return this.starsOrders?.get(id)||null;}
+  async claimOwner(id,chatId){const t=this.tenants.get(id);if(!t||(t.ownerChatId&&t.ownerChatId!==String(chatId)))return false;t.ownerChatId=String(chatId);return true;}
+  async commitPayment(p,t,token){
+    const exists=this.payments.get(p.id);if(exists)return {tenant:{...this.tenants.get(exists.tenantId)},duplicate:true};
+    if(p.renewal){const old=this.tenants.get(t.id);const d=new Date((old.paidUntil>=p.today?old.paidUntil:p.today)+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+p.days);old.paidUntil=d.toISOString().slice(0,10);old.status='active';}
+    else this.tenants.set(t.id,{...t,status:'active',integrationTokenEnc:token?.enc??null});
+    if(token)this.tokens.set(token.hash,{tenantId:t.id,kind:'integration',revoked:false});
+    this.payments.set(p.id,{tenantId:t.id});return {tenant:{...this.tenants.get(t.id)},duplicate:false};
+  }
+  async claimUpdate(id){this.updates??=new Map();const previous=this.updates.get(String(id));if(previous&&(previous.state==='done'||previous.until>Date.now()))return false;this.updates.set(String(id),{state:'processing',until:Date.now()+300000});return true;}
+  async finishUpdate(id,success){this.updates.set(String(id),{state:success?'done':'retry',until:0});}
+  async setServiceMessages(tenantId,on){await this.saveSettings(tenantId,{serviceMessages:on?1:0});}
+  async setStatsMessage(tenantId,id){await this.saveSettings(tenantId,{statsMsgId:String(id)});}
   async createTenant(t) { this.tenants.set(t.id, {id: t.id, name: t.name, plan: t.plan, socialLimit: t.socialLimit, status: 'active', paidUntil: t.paidUntil}); return this.tenant(t.id); }
   async tenant(id) { const t = this.tenants.get(id); return t ? {integrationTokenEnc: null, ...t} : null; }
   async extendTenant(id, paidUntil) { Object.assign(this.tenants.get(id), {paidUntil, status: 'active'}); }

@@ -7,9 +7,9 @@ import {D1Store} from '../src/store.mjs';
 
 // Minimal D1 API over SQLite so the real SQL and migration are exercised.
 function d1(db) {
-  return {prepare(sql) {
+  return {async batch(stmts){db.exec('BEGIN');try{const out=[];for(const st of stmts)out.push(await st.run());db.exec('COMMIT');return out;}catch(e){db.exec('ROLLBACK');throw e;}},prepare(sql) {
     let args = [];
-    const stmt = {bind(...a) { args = a; return stmt; }, async run() { db.prepare(sql).run(...args); return {success: true}; }, async first() { return db.prepare(sql).get(...args) ?? null; }, async all() { return {results: db.prepare(sql).all(...args)}; }};
+    const stmt = {bind(...a) { args = a; return stmt; }, async run() { const r=db.prepare(sql).run(...args); return {success: true,meta:{changes:r.changes}}; }, async first() { return db.prepare(sql).get(...args) ?? null; }, async all() { return {results: db.prepare(sql).all(...args)}; }};
     return stmt;
   }};
 }
@@ -29,8 +29,8 @@ test('D1Store works with the migration schema', async () => {
   assert.equal((await authenticate(store, d2Token, 'dashboard')).error, null);
   await store.setChat(5, tenant.id, 'keitaro_url'); await store.setChat(5, tenant.id, 'ready');
   assert.deepEqual(await store.chat(5), {tenantId: tenant.id, state: 'ready'});
-  await store.saveSettings(tenant.id, {keitaroUrl: 'https://k.test'}); await store.saveSettings(tenant.id, {timezone: 'UTC'});
-  assert.deepEqual(await store.settings(tenant.id), {keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null, notifyOnUpdate: 0, refreshMinutes: null});
+  await store.saveSettings(tenant.id, {serviceMessages:1,statsMsgId:null,keitaroUrl: 'https://k.test'}); await store.saveSettings(tenant.id, {timezone: 'UTC'});
+  assert.deepEqual(await store.settings(tenant.id), {serviceMessages:1,statsMsgId:null,keitaroUrl: 'https://k.test', keitaroKeyEnc: null, keitaroSub: null, timezone: 'UTC', currency: null, onboardedAt: null, notifyOnUpdate: 0, refreshMinutes: null});
 
   // Agents and socials.
   const ag = await store.createAgent(tenant.id, 'Иван');

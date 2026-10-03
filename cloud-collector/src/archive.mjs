@@ -25,9 +25,10 @@ const RUN_LOG_DAYS = 90;
 const rows = (sql, q, ...b) => sql.exec(q, ...b).toArray();
 
 export class SqlArchive {
-  constructor(sql, bucket = null) {
+  constructor(sql, bucket = null, namespace = 'local') {
     this.sql = sql;
     this.bucket = bucket;
+    this.namespace = namespace;
     for (const q of SCHEMA) sql.exec(q);
   }
 
@@ -98,13 +99,15 @@ export class SqlArchive {
     if (!this.bucket) return;
     const at = snapshot.observedAt;
     const body = new Response(new Blob([JSON.stringify(snapshot)]).stream().pipeThrough(new CompressionStream('gzip')));
-    await this.bucket.put('raw/' + userId + '/' + at.slice(0, 10) + '/' + at.slice(11, 13) + '.json.gz', await body.arrayBuffer(),
+    await this.bucket.put('raw/' + this.namespace + '/' + userId + '/' + at.slice(0, 10) + '/' + at.slice(11, 13) + '.json.gz', await body.arrayBuffer(),
       {httpMetadata: {contentType: 'application/json', contentEncoding: 'gzip'}});
   }
 
   summaries() {
     return Object.fromEntries(rows(this.sql, 'SELECT user_id, summary FROM socials').map(r => [r.user_id, JSON.parse(r.summary)]));
   }
+
+  ownsCampaign(userId,id) { return !!rows(this.sql,'SELECT o.id FROM objects o JOIN accounts a ON a.id=o.account_id WHERE o.id=? AND o.level=? AND a.user_id=?',id,'campaign',String(userId)).length; }
 
   forget(userId) { this.sql.exec('DELETE FROM socials WHERE user_id=?', userId); }
 
@@ -169,7 +172,7 @@ export class SqlArchive {
           for (const r of rows(this.sql, 'SELECT campaign_id, spend FROM daily_spend WHERE account_id=? AND date=?', c.accountId, day)) spend[r.campaign_id] = r.spend;
         }
       }
-      for (const c of camps) { c.spend = spend[c.campaignId] || 0; delete c.accountTz; }
+      for (const c of camps) { c.spend = spend[c.campaignId] || 0; }
       return camps;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Invalid date');
