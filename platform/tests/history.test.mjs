@@ -168,3 +168,12 @@ test('0015 upgrades existing normalized facts and observations without destroyin
 test('historical pagination accepts a full final page when authoritative total is reached',async()=>{
  const response=await fetchKeitaroReport(async()=>({result:'ok',json:{total:2,rows:[{conversion_id:1},{conversion_id:2}]}}),{conversionsOnly:true,pageLimit:2,maxPages:1});assert.equal(response.complete,true);
 });
+for(const mode of ['D1','memory'])test(mode+': payout correction postback cannot move the original event day; explicit source event-time correction can',async()=>{
+ const store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ const put=async(r,time,id)=>persistSourceConversions({store,tenantId:'t',source:'k',response:{conversions:[r]},context:{subIndex:7},masterKey:MASTER_KEY,knownCampaignIds:['777'],observedAt:time,observationId:id});
+ await put(row,at,'one');await put({...row,revenue:'90',postback_datetime:'2026-10-04 02:00:00'},'2026-10-04T01:00:00Z','two');
+ let facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'});assert.equal(facts.days[0].day,'2026-10-01');assert.equal(facts.days[0].revenue.amount,'90');assert.equal(facts.days[0].ftd,1);
+ const obs=await store.historicalObservations('t','k','id:c1');assert.equal(obs.find(o=>o.observation_id==='two').fact.postback_datetime,'2026-10-04 02:00:00');
+ await put({...row,revenue:'100',sale_datetime:'2026-09-30 22:00:00'},'2026-10-04T02:00:00Z','three');
+ facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'});assert.equal(facts.days.length,1);assert.equal(facts.days[0].day,'2026-09-30');assert.equal(facts.days[0].ftd,1);
+});

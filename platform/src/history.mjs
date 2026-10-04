@@ -21,7 +21,7 @@ export async function normalizeConversions(rows,{subIndex,ingestedAt}) {
   const eventKey=sourceId?'id:'+sourceId:'key:'+await digest({clickId,conversionAt,status,offer:text(r.offer_id??r.offer)});
   const amount=text(r.revenue??r.payout),currency=text(r.revenue!=null?(r.currency??r.revenue_currency):(r.currency??r.payout_currency));
   events.push({event_key:eventKey,source_id:sourceId,campaign_id:text(r['sub_id_'+subIndex]),ingested_at:ingestedAt,
-   fact:{status,kind:status==='lead'?'registration':status==='sale'?'ftd':'conversion',click_id:clickId,
+   fact:{status,kind:status==='lead'?'registration':status==='sale'?'ftd':'conversion',click_id:clickId,event_time_basis:text(status==='sale'?(r.ftd_at??r.sale_datetime??r.conversion_at):status==='lead'?(r.registration_at??r.conversion_at):r.conversion_at)?'explicit':'postback',
     first_click_at:firstClickAt,registration_at:text(r.registration_at)??(status==='lead'?conversionAt:null),
     postback_datetime:text(r.postback_datetime),sale_datetime:text(r.sale_datetime),ftd_at:text(r.ftd_at??r.sale_datetime)??(status==='sale'?conversionAt:null),conversion_at:conversionAt,
     amount:amount!==null&&Number.isFinite(Number(amount))?amount:null,currency,source_payout:{amount:text(r.payout),currency:text(r.payout_currency)},transaction_id:text(r.tid),
@@ -29,6 +29,9 @@ export async function normalizeConversions(rows,{subIndex,ingestedAt}) {
  }
  return events;
 }
+// A payout correction's new postback time is observation time, not a second FTD.
+const keepEventTimeSQL="keitaro_events.event_day IS NOT NULL AND json_extract(keitaro_events.fact,'$.kind')=json_extract(excluded.fact,'$.kind') AND json_extract(excluded.fact,'$.event_time_basis')='postback' AND json_extract(excluded.fact,'$.kind') IN ('ftd','registration')";
+const mergeFactSQL=`CASE WHEN ${keepEventTimeSQL} THEN json_set(excluded.fact,CASE json_extract(excluded.fact,'$.kind') WHEN 'ftd' THEN '$.ftd_at' ELSE '$.registration_at' END,CASE json_extract(excluded.fact,'$.kind') WHEN 'ftd' THEN json_extract(keitaro_events.fact,'$.ftd_at') ELSE json_extract(keitaro_events.fact,'$.registration_at') END,'$.event_time_basis',COALESCE(json_extract(keitaro_events.fact,'$.event_time_basis'),'first_observed_postback')) ELSE excluded.fact END`;
 export const d1History = {
  async recordKeitaroEvidence(tenantId,{source,evidenceId,ingestedAt,context,enc}) {
   await this.db.prepare('INSERT OR IGNORE INTO keitaro_evidence VALUES(?,?,?,?,?,?)').bind(tenantId,source,evidenceId,ingestedAt,JSON.stringify(context),enc).run();
@@ -39,7 +42,7 @@ export const d1History = {
   for(let i=0;i<events.length;i+=20){
    const statements=[];
    for(const e of events.slice(i,i+20)){
-    statements.push(this.db.prepare('INSERT INTO keitaro_events(tenant_id,source,event_key,source_id,evidence_id,ingested_at,fact,observed_at,event_day) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,source,event_key) DO UPDATE SET evidence_id=excluded.evidence_id,fact=excluded.fact,observed_at=excluded.observed_at,event_day=excluded.event_day WHERE (excluded.observed_at>=keitaro_events.observed_at OR keitaro_events.observed_at IS NULL) AND NOT EXISTS(SELECT 1 FROM keitaro_observation_history WHERE tenant_id=? AND source=? AND event_key=? AND observation_id=?)').bind(tenantId,source,e.event_key,e.source_id,evidenceId,e.ingested_at,JSON.stringify(e.fact),observedAt,eventDay(e.fact),tenantId,source,e.event_key,observationId));
+    statements.push(this.db.prepare(`INSERT INTO keitaro_events(tenant_id,source,event_key,source_id,evidence_id,ingested_at,fact,observed_at,event_day) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,source,event_key) DO UPDATE SET evidence_id=excluded.evidence_id,fact=${mergeFactSQL},observed_at=excluded.observed_at,event_day=CASE WHEN ${keepEventTimeSQL} THEN keitaro_events.event_day ELSE excluded.event_day END WHERE (excluded.observed_at>=keitaro_events.observed_at OR keitaro_events.observed_at IS NULL) AND NOT EXISTS(SELECT 1 FROM keitaro_observation_history WHERE tenant_id=? AND source=? AND event_key=? AND observation_id=?)`).bind(tenantId,source,e.event_key,e.source_id,evidenceId,e.ingested_at,JSON.stringify(e.fact),observedAt,eventDay(e.fact),tenantId,source,e.event_key,observationId));
     statements.push(this.db.prepare("INSERT INTO keitaro_attribution SELECT ?,?,?,?,CASE WHEN ? IS NULL THEN 'unattributed' WHEN EXISTS(SELECT 1 FROM keitaro_known_campaigns WHERE tenant_id=? AND campaign_id=?) THEN 'matched' ELSE 'unmatched' END,? ON CONFLICT(tenant_id,source,event_key) DO UPDATE SET campaign_id=excluded.campaign_id,state=excluded.state,updated_at=MAX(excluded.updated_at,keitaro_attribution.updated_at) WHERE excluded.campaign_id IS NOT NULL AND EXISTS(SELECT 1 FROM keitaro_events WHERE tenant_id=? AND source=? AND event_key=? AND observed_at=?) AND NOT EXISTS(SELECT 1 FROM keitaro_observation_history WHERE tenant_id=? AND source=? AND event_key=? AND observation_id=?)").bind(tenantId,source,e.event_key,e.campaign_id,e.campaign_id,tenantId,e.campaign_id,observedAt,tenantId,source,e.event_key,observedAt,tenantId,source,e.event_key,observationId));
     statements.push(this.db.prepare('INSERT OR IGNORE INTO keitaro_event_observations VALUES(?,?,?,?,?,?)').bind(tenantId,source,e.event_key,evidenceId,observedAt,JSON.stringify(e.fact)));
     statements.push(this.db.prepare('INSERT OR IGNORE INTO keitaro_observation_history VALUES(?,?,?,?,?,?,?,?)').bind(tenantId,source,e.event_key,observationId,evidenceId,observedAt,JSON.stringify(e.fact),e.campaign_id));
@@ -86,7 +89,7 @@ export const memoryHistory = {
    const k=JSON.stringify([tenantId,b.source,e.event_key]),old=this.events.get(k),ok=JSON.stringify([tenantId,b.source,e.event_key,observationId]);
    if(this.observations.has(ok))continue;
    if(!old)this.events.set(k,{tenant_id:tenantId,source:b.source,...structuredClone(e),evidence_id:b.evidenceId,observed_at:observedAt,event_day:eventDay(e.fact),updated_at:observedAt,...attribution(e.campaign_id,known)});
-   else if(observedAt>=old.observed_at){old.fact=structuredClone(e.fact);old.evidence_id=b.evidenceId;old.observed_at=observedAt;old.event_day=eventDay(e.fact);if(e.campaign_id){Object.assign(old,attribution(e.campaign_id,known));old.updated_at=observedAt;}}
+   else if(observedAt>=old.observed_at){const fact=structuredClone(e.fact);if(old.event_day&&old.fact.kind===fact.kind&&fact.event_time_basis==='postback'&&['ftd','registration'].includes(fact.kind)){const field=fact.kind==='ftd'?'ftd_at':'registration_at';fact[field]=old.fact[field];fact.event_time_basis=old.fact.event_time_basis||'first_observed_postback';}old.fact=fact;old.evidence_id=b.evidenceId;old.observed_at=observedAt;old.event_day=eventDay(old.fact);if(e.campaign_id){Object.assign(old,attribution(e.campaign_id,known));old.updated_at=observedAt;}}
    else if(observedAt===old.observed_at&&e.campaign_id){Object.assign(old,attribution(e.campaign_id,known));old.updated_at=observedAt;}
    if(!this.observations.has(ok))this.observations.set(ok,{tenant_id:tenantId,source:b.source,event_key:e.event_key,observation_id:observationId,evidence_id:b.evidenceId,observed_at:observedAt,fact:structuredClone(e.fact),campaign_id:e.campaign_id});
   }
