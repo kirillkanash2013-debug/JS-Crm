@@ -83,3 +83,20 @@ for(const kind of ['validation','action','import'])test(`legacy publication excl
  globalThis.fetch=async url=>url.endsWith('/v1/status')?Response.json({connections:[{userId:'a',lifecycle_status:'active',collectedAt:at}],jobs:[job]}):Response.json({campaigns:[]});
  try{assert.equal((await bot.notifyStatsRefresh(tenant.id)).result,'published');assert((await store.statsSnapshot(tenant.id)).enc);}finally{globalThis.fetch=real;}
 });
+
+test('history is deferred only after publication and history errors never invalidate the published pair',async()=>{
+ const store=new MemoryStore(),tasks=[];const {tenant}=await applyPayment(store,{paymentId:'history-isolation',provider:'test',plan:'team',masterKey:MASTER_KEY});
+ await store.saveSettings(tenant.id,{timezone:'UTC',keitaroUrl:'https://k.test',keitaroKeyEnc:await sealSecret(MASTER_KEY,tenant.id,'key'),keitaroSub:'7'});
+ let historicalCalls=0;
+ const env={MASTER_KEY,COLLECTOR_URL:'https://c.test',KEITARO_BRIDGE:{report:async(_o,_k,opts)=>{
+  if(opts.probe||opts.conversionsOnly){historicalCalls++;assert((await store.statsSnapshot(tenant.id))?.enc);return {result:'incomplete'};}
+  return {result:'ok',complete:true,report:[],conversions:[]};
+ }}};
+ const real=globalThis.fetch;globalThis.fetch=async url=>url.endsWith('/v1/status')?Response.json({connections:[{userId:'a',collectedAt:'2026-10-04T00:00:00Z'}],jobs:[]}):Response.json({campaigns:[{campaignId:'777',name:'test',spend:5}]});
+ try{
+  const bot=createBot({store,tg:async()=>({}),env,deferHistory:p=>tasks.push(p)});
+  assert.equal((await bot.notifyStatsRefresh(tenant.id)).result,'published');await Promise.all(tasks);
+  assert(historicalCalls>0);assert.equal(await store.statsPhase(tenant.id),'ready');
+  assert.equal((await store.keitaroHistoryState(tenant.id,'https://k.test')).last_result,'incomplete');
+ }finally{globalThis.fetch=real;}
+});

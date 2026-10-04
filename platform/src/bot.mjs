@@ -1,4 +1,4 @@
-import {digest,normalizeConversions} from './history.mjs';
+import {persistSourceConversions,runHistoricalIngestion} from './history-ingestion.mjs';
 import {isCollectionJob} from '../../shared/jobs.mjs';
 import {resumeCollection} from './refresh.mjs';
 // Telegram bot for clients: bind a chat with the integration token (or buy
@@ -36,7 +36,7 @@ const validTimezone = tz => { try { new Intl.DateTimeFormat('ru', {timeZone: tz}
 // и для Keitaro, чтобы на стыке суток они не разъезжались.
 const todayIn = tz => new Date().toLocaleDateString('en-CA', {timeZone: tz || 'UTC'});
 
-export function createBot({store, tg, env, keitaro = checkKeitaro}) {
+export function createBot({store, tg, env, keitaro = checkKeitaro, deferHistory}) {
   const send = (chatId, text, markup) => tg('sendMessage', {chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(markup ? {reply_markup: markup} : {})});
   // Edit a message in place (one evolving screen, no chat spam). Falls back to a
   // fresh message if the edit fails (e.g. message too old or unchanged).
@@ -251,14 +251,12 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     if (s.keitaroKeyEnc && env.MASTER_KEY) { try { key = await openSecret(env.MASTER_KEY, tenantId, s.keitaroKeyEnc); } catch {} }
     const subIndex = Number(String(s.keitaroSub || '').match(/\d+/)?.[0]) || 4;
     if (origin && key && env.KEITARO_BRIDGE) {
+      const observedAt=new Date().toISOString();
       const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex,tenantId});
       if (res && res.result === 'ok') {
-        const ingestedAt=new Date().toISOString(),source=origin,evidenceId=await digest({res,from:day,to:day,timezone:tz,subIndex});
-        await store.recordKeitaroEvidence(tenantId,{source,evidenceId,ingestedAt,context:{from:day,to:day,timezone:tz,subIndex},enc:await sealSecret(env.MASTER_KEY,tenantId,JSON.stringify(res))});
-        const events=await normalizeConversions(res.conversions||[],{subIndex,ingestedAt});
-        await store.ingestKeitaroEvents(tenantId,{source,evidenceId,events,knownCampaignIds:campaigns.map(c=>String(c.campaignId)),ingestedAt});
+        const {events,evidenceId,ingestedAt}=await persistSourceConversions({store,tenantId,source:origin,response:res,context:{from:day,to:day,timezone:tz,subIndex},masterKey:env.MASTER_KEY,knownCampaignIds:campaigns.map(c=>String(c.campaignId)),observedAt});
         const unique=[...new Map(events.map((e,i)=>[e.event_key,res.conversions[i]])).values()];
-        const keitaro = aggregateKeitaro({...res,conversions:unique}, {subIndex, day}); return {keitaro, subIndex, evidenceId, ingestedAt, note: ''}; }
+        const keitaro = aggregateKeitaro({...res,conversions:unique}, {subIndex, day}); return {keitaro, subIndex, evidenceId, ingestedAt, history:()=>runHistoricalIngestion({store,tenantId,source:origin,day,timezone:tz,subIndex,masterKey:env.MASTER_KEY,knownCampaignIds:campaigns.map(c=>String(c.campaignId)),fetchReport:opts=>keitaroReport(env)(origin,key,{...opts,tenantId})}), note: ''}; }
       return {keitaro: null, subIndex, failure:res?.result||'unreachable', note: '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.'};
     }
     if (!origin || !key) return {keitaro: null, subIndex, note: '\n\n💡 Подключите Keitaro в «👤 Профиль → Инструкции» — тогда увидите доход, прибыль и ROI.'};
@@ -365,6 +363,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
         if(outcome?.result!=='published')throw new Error(outcome?.reason||'publication_fence_rejected');
       }else if (!await store.commitStatsPublication(tenantId,{cycle_id:owner,owner,enc,completedAt:completed.toISOString(),sourceTimes})) throw new Error('stats_cycle_lease_lost');
       try{await store.setStatsPhase(tenantId,'ready');}catch{}
+      try{if(deferHistory&&kt.history)deferHistory(kt.history().catch(()=>{}));}catch{}
       return text;
     } catch (e) {
       await publishStatsPhase(tenantId,e.retryable?'keitaro':e.message==='facebook_cycle_pending'?'facebook':'failed');

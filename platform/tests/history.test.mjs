@@ -5,8 +5,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {D1Store,MemoryStore} from '../src/store.mjs';
 import {normalizeConversions} from '../src/history.mjs';
 import {aggregateKeitaro} from '../src/today.mjs';
-function setup(){
- const db=new DatabaseSync(':memory:');for(const f of fs.readdirSync(new URL('../migrations/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort())db.exec(fs.readFileSync(new URL('../migrations/'+f,import.meta.url),'utf8'));
+function setup(through){
+ const db=new DatabaseSync(':memory:');for(const f of fs.readdirSync(new URL('../migrations/',import.meta.url)).filter(f=>f.endsWith('.sql')&&(!through||f<=through)).sort())db.exec(fs.readFileSync(new URL('../migrations/'+f,import.meta.url),'utf8'));
  const api={prepare(sql){let a=[];const s={bind(...args){a=args;return s;},async run(){return {meta:{changes:db.prepare(sql).run(...a).changes}};},async first(){return db.prepare(sql).get(...a)||null;},async all(){return {results:db.prepare(sql).all(...a)};}};return s;},async batch(ss){db.exec('BEGIN');try{for(const s of ss)await s.run();db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}}};return {db,store:new D1Store(api)};
 }
 const row={conversion_id:'c1',sub_id:'click',sub_id_7:'777',status:'sale',click_datetime:'2026-09-29 23:00:00',postback_datetime:'2026-10-01 01:00:00',revenue:'45.10',currency:'EUR',country:'KG'};
@@ -14,10 +14,12 @@ const at='2026-10-04T00:00:00Z';
 for(const mode of ['D1','memory'])test(mode+': duplicate ingestion, late events, re-attribution and tenant/source isolation',async()=>{
  const store=mode==='D1'?setup().store:new MemoryStore();
  await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ let iteration=0;
  const ingest=async(rows,known=[],source='https://k.test')=>{
+  const evidenceId='ev'+iteration++;
   const events=await normalizeConversions(rows,{subIndex:7,ingestedAt:at});
-  await store.recordKeitaroEvidence('t',{source,evidenceId:'ev',ingestedAt:at,context:{subIndex:7},enc:'encrypted'});
-  await store.ingestKeitaroEvents('t',{source,evidenceId:'ev',events,knownCampaignIds:known,ingestedAt:at});
+  await store.recordKeitaroEvidence('t',{source,evidenceId,ingestedAt:at,context:{subIndex:7},enc:'encrypted'});
+  await store.ingestKeitaroEvents('t',{source,evidenceId,events,knownCampaignIds:known,ingestedAt:at});
   return store.historicalKeitaroEvents('t',source);
  };
  let events=await ingest([row,row]);assert.equal(events.length,1);assert.equal(events[0].state,'unmatched');assert.equal(events[0].fact.ftd_at,row.postback_datetime);assert.equal(events[0].fact.first_click_at,row.click_datetime);assert.equal(events[0].fact.amount,'45.10');assert.equal(events[0].fact.currency,'EUR');assert.equal(events[0].fact.country,'KG');
@@ -61,4 +63,108 @@ test('same stable conversion ID updates current knowledge while preserving sourc
  }
  const events=await store.historicalKeitaroEvents('t','k');assert.equal(events.length,1);assert.equal(events[0].fact.amount,'90.00');assert.equal(events[0].state,'matched');
  assert.equal(db.prepare('SELECT COUNT(*) n FROM keitaro_event_observations').get().n,2);
+});
+
+import {eventDay,projectDailyFacts} from '../src/history-projection.mjs';
+import {historyWindows,runHistoricalIngestion,persistSourceConversions} from '../src/history-ingestion.mjs';
+import {fetchKeitaroReport,probeKeitaroConversions} from '../../shared/keitaro-report.mjs';
+const MASTER_KEY=btoa('h'.repeat(32));
+for(const mode of ['D1','memory'])test(mode+': overlapping lookback/backfill discovers past events, corrections and out-of-window attribution',async()=>{
+ const store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ let ms=Date.parse(at),revision=0;const requests=[];
+ const seed=await normalizeConversions([{...row,conversion_id:'ancient',postback_datetime:'2026-03-01 00:00:00'}],{subIndex:7,ingestedAt:at});
+ await store.recordKeitaroEvidence('t',{source:'k',evidenceId:'seed',ingestedAt:at,context:{},enc:'encrypted'});
+ await store.ingestKeitaroEvents('t',{source:'k',evidenceId:'seed',events:seed,knownCampaignIds:[],ingestedAt:at});
+ const fetchReport=async opts=>{
+  requests.push(opts);ms+=10;
+  if(opts.probe)return {result:'ok',columns:{country_code:'accepted',currency:'unsupported'}};
+  const r={...row,revenue:revision?'90.20':'45.10'};
+  return {result:'ok',complete:true,report:[],conversions:opts.kind==='lookback'?[r,r]:[{...r,conversion_id:'archive',postback_datetime:'2026-09-21 01:00:00'}]};
+ };
+ const run=()=>runHistoricalIngestion({store,tenantId:'t',source:'k',day:'2026-10-04',timezone:'UTC',subIndex:7,masterKey:MASTER_KEY,knownCampaignIds:['777'],fetchReport,clock:()=>ms});
+ assert.equal((await run()).result,'complete');
+ let facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'});
+ assert.equal(facts.days.find(d=>d.day==='2026-10-01').ftd,1);assert.equal(facts.days.find(d=>d.day==='2026-10-01').revenue.amount,'45.1');
+ assert(!facts.days.some(d=>d.day==='2026-10-04'));
+ assert.equal((await store.historicalKeitaroEvents('t','k')).find(e=>e.source_id==='ancient').state,'matched');
+ assert.equal((await run()).result,'busy_or_cooldown');
+ revision=1;ms+=16*60000;assert.equal((await run()).result,'complete');
+ facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'});
+ assert.equal(facts.days.find(d=>d.day==='2026-10-01').ftd,1);assert.equal(facts.days.find(d=>d.day==='2026-10-01').revenue.amount,'90.2');
+ assert.equal(facts.days.find(d=>d.day==='2026-09-21').ftd,1);assert.equal(facts.days.find(d=>d.day==='2026-09-21').revenue.amount,'90.2');
+ const observations=await store.historicalObservations('t','k','id:c1');assert.equal(observations.length,2);assert.equal(observations[0].fact.amount,'45.10');
+ const state=await store.keitaroHistoryState('t','k');assert.equal(state.cursor_day,'2026-09-15');assert.equal(state.lease_owner,null);
+ assert(requests.filter(r=>!r.probe).every(r=>r.conversionsOnly&&r.maxPages===4&&r.pageLimit===250&&r.budgetMs<=10000));
+ assert.deepEqual(requests[1].extraColumns,['country_code']);
+});
+test('daily projection uses actual timestamps, separates currencies/states, exact decimals and unknown payouts',()=>{
+ const f={kind:'ftd',ftd_at:'2026-09-30 23:59:59',conversion_at:'2026-10-04 00:00:00',amount:'0.1',currency:'EUR'};
+ const e={campaign_id:'777',state:'matched',fact:f};
+ const result=projectDailyFacts([e,{...e,fact:{...f,amount:'0.2'}},{...e,fact:{...f,amount:'7',currency:'USD'}},{...e,fact:{...f,amount:null,currency:null}},{...e,fact:{...f,ftd_at:null}},{...e,fact:{kind:'registration',registration_at:'2026-09-29 01:02:03',currency:null}}]);
+ assert.equal(result.undated,1);assert.equal(result.days.find(d=>d.currency==='EUR').revenue.amount,'0.3');
+ assert.equal(result.days.find(d=>d.currency==='USD').revenue.amount,'7');
+ assert.equal(result.days.find(d=>d.day==='2026-09-30'&&d.currency===null).revenue.amount,null);
+ assert.equal(result.days.find(d=>d.day==='2026-09-29').reg,1);
+ assert(!result.days.some(d=>d.day==='2026-10-04'));
+ assert.equal(eventDay({...f,ftd_at:'2026-02-30 10:00:00'}),null);
+ assert.equal(eventDay({...f,ftd_at:'bad'}),null);
+});
+test('archive sweep is bounded, overlaps and wraps; failed window retries same cursor after reload',async()=>{
+ const {store}=setup();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ let ms=Date.parse(at),fail=true;const froms=[];
+ const run=()=>runHistoricalIngestion({store,tenantId:'t',source:'k',day:'2026-10-04',timezone:'UTC',subIndex:7,masterKey:MASTER_KEY,knownCampaignIds:[],clock:()=>ms,fetchReport:async o=>{
+  ms+=10;if(o.probe)return {result:'ok',columns:{}};froms.push([o.from,o.to]);
+  if(o.kind==='backfill'&&fail)return {result:'incomplete',reason:'pagination_limit'};
+  return {result:'ok',complete:true,report:[],conversions:[]};
+ }});
+ assert.equal((await run()).result,'incomplete');let state=await store.keitaroHistoryState('t','k');assert.equal(state.cursor_day,'2026-09-27');assert.equal(state.last_result,'incomplete');
+ fail=false;ms+=16*60000;assert.equal((await run()).result,'complete');assert.deepEqual(froms[1],froms[3]);
+ assert.equal((await store.keitaroHistoryState('t','k')).cursor_day,'2026-09-21');
+ const wrap=historyWindows('2026-10-04','2026-04-08');assert.equal(wrap[1].from,'2026-04-08');assert.equal(wrap[1].cursorDay,'2026-09-27');
+});
+test('D1 lease fencing and immutable A→B→A observations; stale read cannot replace new knowledge',async()=>{
+ const {store,db}=setup();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ const put=async(amount,time,id)=>persistSourceConversions({store,tenantId:'t',source:'k',response:{conversions:[{...row,revenue:amount}]},context:{subIndex:7},masterKey:MASTER_KEY,knownCampaignIds:['777'],observedAt:time,observationId:id});
+ await put('10',at,'A');await put('20','2026-10-04T00:01:00Z','B');await put('10','2026-10-04T00:02:00Z','C');await put('1','2026-10-03T00:00:00Z','stale');await put('999','2026-10-05T00:00:00Z','A');
+ assert.equal((await store.historicalKeitaroEvents('t','k'))[0].fact.amount,'10');
+ assert.equal((await store.historicalObservations('t','k','id:c1')).length,4);assert.equal(db.prepare('SELECT COUNT(*) n FROM keitaro_events').get().n,1);
+ assert.throws(()=>db.exec("UPDATE keitaro_observation_history SET fact='{}'"),/immutable/);
+ assert.throws(()=>db.exec('DELETE FROM keitaro_observation_history'),/immutable/);
+ const ms=Date.parse(at);assert.equal(await store.claimKeitaroHistory('t','k','one',ms),true);assert.equal(await store.claimKeitaroHistory('t','k','two',ms),false);
+ assert.equal(await store.claimKeitaroHistory('t','k','two',ms+60001),true);
+ assert.equal(await store.completeKeitaroHistoryWindow('t','k','one',{cursorDay:'2026-09-01',window:{},completedAt:at},ms+60002),false);
+ await store.releaseKeitaroHistory('t','k','one');assert.equal((await store.keitaroHistoryState('t','k')).lease_owner,'two');
+});
+test('source capability probe is read-only, handles unsupported currency and configured sub_id; historical pagination fails closed',async()=>{
+ const calls=[];
+ const probe=await probeKeitaroConversions(async(path,payload)=>{
+  calls.push({path,payload});assert.equal(path,'/admin_api/v1/conversions/log');assert.equal(payload.limit,1);
+  if(payload.columns.includes('currency'))return {result:'unreachable',status:406};
+  return {result:'ok',json:{rows:[{conversion_id:'1',sub_id_7:'777',click_datetime:row.click_datetime,postback_datetime:row.postback_datetime,country_code:'KG'}]}};
+ },{day:'2026-10-04',timezone:'UTC',subIndex:7});
+ assert.equal(probe.columns.currency,'unsupported');assert.equal(probe.columns.country_code,'accepted');assert.equal(probe.observed.fields.sub_id_7.returned,true);
+ assert(calls.every(c=>c.payload.columns.includes('sub_id_7')&&!c.payload.columns.includes('sub_id_4')));
+ let count=0;const report=await fetchKeitaroReport(async(path,payload)=>{count++;assert.equal(path,'/admin_api/v1/conversions/log');return {result:'ok',json:{rows:Array.from({length:2},(_,i)=>({conversion_id:payload.offset+i})),total:10}};},{from:'2026-09-01',to:'2026-09-07',timezone:'UTC',subIndex:7,conversionsOnly:true,pageLimit:2,maxPages:2,budgetMs:100});
+ assert.equal(report.result,'incomplete');assert.equal(report.reason,'pagination_limit');assert.equal(count,2);
+ const timeout=await fetchKeitaroReport(()=>new Promise(()=>{}),{conversionsOnly:true,budgetMs:5});assert.equal(timeout.reason,'report_deadline');
+});
+test('revenue is never mislabeled with original payout currency; explicit sale event time survives later postback',async()=>{
+ const [e]=await normalizeConversions([{...row,currency:null,payout_currency:'EUR',payout:'100',revenue:'110',sale_datetime:'2026-09-28 21:00:00',postback_datetime:'2026-10-04 00:00:00'}],{subIndex:7,ingestedAt:at});
+ assert.equal(e.fact.currency,null);assert.equal(e.fact.amount,'110');assert.equal(e.fact.source_payout.currency,'EUR');assert.equal(eventDay(e.fact),'2026-09-28');
+ assert.equal(eventDay({...e.fact,ftd_at:'2026-09-28 99:00:00'}),null);
+});
+test('0015 upgrades existing normalized facts and observations without destroying history',async()=>{
+ const {db,store}=setup('0014_historical_facts.sql');await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ const fact=JSON.stringify({kind:'ftd',ftd_at:'2026-09-28 01:00:00',amount:'10',currency:'EUR'});
+ db.prepare('INSERT INTO keitaro_events VALUES(?,?,?,?,?,?,?)').run('t','k','id:old','old','ev',at,fact);
+ db.prepare('INSERT INTO keitaro_attribution VALUES(?,?,?,?,?,?)').run('t','k','id:old','777','matched',at);
+ db.prepare('INSERT INTO keitaro_event_observations VALUES(?,?,?,?,?,?)').run('t','k','id:old','ev',at,fact);
+ db.exec(fs.readFileSync(new URL('../migrations/0015_history_completeness.sql',import.meta.url),'utf8'));
+ assert.equal((await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'})).days[0].revenue.amount,'10');
+ assert.equal((await store.historicalObservations('t','k','id:old')).length,1);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM keitaro_event_observations').get().n,1);
+ assert.equal(db.prepare('SELECT campaign_id FROM keitaro_known_campaigns').get().campaign_id,'777');
+});
+test('historical pagination accepts a full final page when authoritative total is reached',async()=>{
+ const response=await fetchKeitaroReport(async()=>({result:'ok',json:{total:2,rows:[{conversion_id:1},{conversion_id:2}]}}),{conversionsOnly:true,pageLimit:2,maxPages:1});assert.equal(response.complete,true);
 });

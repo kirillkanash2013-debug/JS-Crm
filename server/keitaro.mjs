@@ -1,4 +1,4 @@
-import {fetchKeitaroReport} from '../shared/keitaro-report.mjs';
+import {fetchKeitaroReport,probeKeitaroConversions} from '../shared/keitaro-report.mjs';
 import http from 'node:http';
 import https from 'node:https';
 import {lookup} from 'node:dns/promises';
@@ -74,7 +74,7 @@ const normalizeRows=raw=>Array.isArray(raw)?raw:Array.isArray(raw?.rows)?raw.row
 
 // Keitaro report via the container (proxy fallback when the Worker socket fails).
 // Returns the same raw {report,conversions} shape as reportKeitaroSocket.
-export async function reportKeitaroNode(origin,key,{from,to,timezone,subIndex}={},{resolve=lookup,request}={}) {
+export async function reportKeitaroNode(origin,key,opts={},{resolve=lookup,request}={}) {
  try{
   const u=new URL(origin);
   if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.pathname!=='/'||u.search||u.hash)return {result:'unreachable',reason:'invalid_address'};
@@ -82,7 +82,8 @@ export async function reportKeitaroNode(origin,key,{from,to,timezone,subIndex}={
   const ips=await resolve(u.hostname,{all:true,family:4});
   if(!ips.length||ips.some(a=>!publicIPv4(a.address)))return {result:'unreachable',reason:'private_address'};
   const transport=request||(u.protocol==='https:'?https.request:http.request);
-  return await fetchKeitaroReport((path,payload)=>keitaroNodePost(u,ips,key,path,payload,transport),{from,to,timezone,subIndex});
+  const post=(path,payload)=>keitaroNodePost(u,ips,key,path,payload,transport);
+  return opts.probe?await probeKeitaroConversions(post,opts):await fetchKeitaroReport(post,opts);
  }catch{return {result:'unreachable',reason:'network'};}
 }
 
