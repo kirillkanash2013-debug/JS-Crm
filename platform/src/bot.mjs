@@ -1,3 +1,4 @@
+import {digest,normalizeConversions} from './history.mjs';
 import {isCollectionJob} from '../../shared/jobs.mjs';
 import {resumeCollection} from './refresh.mjs';
 // Telegram bot for clients: bind a chat with the integration token (or buy
@@ -243,7 +244,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
   }
 
   // Only the collector completion path fetches a new Keitaro report.
-  async function loadKeitaro(tenantId, day, tz) {
+  async function loadKeitaro(tenantId, day, tz, campaigns = []) {
     const s = await store.settings(tenantId);
     const origin = s.keitaroUrl ? keitaroOrigin(s.keitaroUrl) : null;
     let key = null;
@@ -251,7 +252,13 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
     const subIndex = Number(String(s.keitaroSub || '').match(/\d+/)?.[0]) || 4;
     if (origin && key && env.KEITARO_BRIDGE) {
       const res = await keitaroReport(env)(origin, key, {from: day, to: day, timezone: tz, subIndex,tenantId});
-      if (res && res.result === 'ok') { const keitaro = aggregateKeitaro(res, {subIndex, day}); return {keitaro, subIndex, note: ''}; }
+      if (res && res.result === 'ok') {
+        const ingestedAt=new Date().toISOString(),source=origin,evidenceId=await digest({res,from:day,to:day,timezone:tz,subIndex});
+        await store.recordKeitaroEvidence(tenantId,{source,evidenceId,ingestedAt,context:{from:day,to:day,timezone:tz,subIndex},enc:await sealSecret(env.MASTER_KEY,tenantId,JSON.stringify(res))});
+        const events=await normalizeConversions(res.conversions||[],{subIndex,ingestedAt});
+        await store.ingestKeitaroEvents(tenantId,{source,evidenceId,events,knownCampaignIds:campaigns.map(c=>String(c.campaignId)),ingestedAt});
+        const unique=[...new Map(events.map((e,i)=>[e.event_key,res.conversions[i]])).values()];
+        const keitaro = aggregateKeitaro({...res,conversions:unique}, {subIndex, day}); return {keitaro, subIndex, evidenceId, ingestedAt, note: ''}; }
       return {keitaro: null, subIndex, failure:res?.result||'unreachable', note: '\n\n⚠️ Keitaro недоступен (' + esc(res?.result || 'нет ответа') + ') — доход не посчитан.'};
     }
     if (!origin || !key) return {keitaro: null, subIndex, note: '\n\n💡 Подключите Keitaro в «👤 Профиль → Инструкции» — тогда увидите доход, прибыль и ROI.'};
@@ -339,7 +346,7 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       if (responses.some(r => !r?.ok || !Array.isArray(r.body.campaigns))) throw new Error('facebook_data_unavailable');
       const campaigns = responses.flatMap(r => r.body.campaigns);
       await publishStatsPhase(tenantId,'keitaro');
-      const kt = await loadKeitaro(tenantId, day, tz);
+      const kt = await loadKeitaro(tenantId, day, tz, campaigns);
       if (s.keitaroUrl && s.keitaroKeyEnc && !kt.keitaro){const e=new Error('keitaro_cycle_failed');e.retryable=['unreachable','timeout','rate_limited','temporary_failure'].includes(kt.failure);throw e;}
       // Reject a pair if Facebook changed while Keitaro was being fetched.
       const after = await collectorCall(tenantId, '/v1/status');
@@ -350,13 +357,13 @@ export function createBot({store, tg, env, keitaro = checkKeitaro}) {
       const fbAt = conns.map(c => c.collectedAt).sort().pop();
       const times = {fb:format(new Date(fbAt)),keitaro:kt.keitaro?format(completed):'—',updated:format(completed)};
       const text = buildNow({day,times,campaigns,keitaro:kt.keitaro,subIndex:kt.subIndex}) + kt.note;
-      const snapshot = {cycle_id:cycle?.cycle_id||owner,text,day,timezone:tz,sourceTimes,keitaro:kt.keitaro,subIndex:kt.subIndex,startedAt:started.toISOString(),completedAt:completed.toISOString()};
+      const snapshot = {cycle_id:cycle?.cycle_id||owner,text,campaigns,sourceGenerations:cycle?.meta_generations||null,keitaroSource:{evidenceId:kt.evidenceId||null,ingestedAt:kt.ingestedAt||null},day,timezone:tz,sourceTimes,keitaro:kt.keitaro,subIndex:kt.subIndex,startedAt:started.toISOString(),completedAt:completed.toISOString()};
       const enc = await sealSecret(env.MASTER_KEY,tenantId,JSON.stringify(snapshot));
       if(cycle){
         if(!env.PUBLICATION_COMMIT)throw new Error('publication_binding_missing');
         let outcome;try{outcome=await env.PUBLICATION_COMMIT.commit(tenantId,{cycle_id:cycle.cycle_id,attempt:work?.attempt||cycle.keitaro_attempts.at(-1)?.attempt,meta_generations:cycle.meta_generations,sourceTimes,owner,enc,completedAt:completed.toISOString()});}catch{const receipt=await store.publicationReceipt(tenantId,cycle.cycle_id).catch(()=>null);if(receipt)outcome={result:'published'};else{const e=new Error('publication_commit_unavailable');e.retryable=true;throw e;}}
         if(outcome?.result!=='published')throw new Error(outcome?.reason||'publication_fence_rejected');
-      }else if (!await store.saveStatsSnapshot(tenantId,owner,enc,completed.toISOString())) throw new Error('stats_cycle_lease_lost');
+      }else if (!await store.commitStatsPublication(tenantId,{cycle_id:owner,owner,enc,completedAt:completed.toISOString(),sourceTimes})) throw new Error('stats_cycle_lease_lost');
       try{await store.setStatsPhase(tenantId,'ready');}catch{}
       return text;
     } catch (e) {

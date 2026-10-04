@@ -12,7 +12,7 @@ const conversions = [
   {sub_id_4: '100', status: 'lead', click_datetime: '2026-09-30 09:05:00'},
   {sub_id_4: '100', status: 'lead', click_datetime: '2026-09-30 09:06:00'},
   {sub_id_4: '100', status: 'sale', revenue: 50, click_datetime: '2026-09-30 10:00:00'},   // fresh
-  {sub_id_4: '100', status: 'sale', revenue: 420, click_datetime: '2026-09-29 22:00:00'}   // долёт
+  {status: 'sale', revenue: 420, click_datetime: '2026-09-29 22:00:00'}   // долёт
 ];
 
 test('aggregateKeitaro joins by sub_id and splits долёт', () => {

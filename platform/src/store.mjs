@@ -1,3 +1,4 @@
+import {d1History,memoryHistory} from './history.mjs';
 // Storage behind one small interface: D1 in production, memory in tests.
 const now = () => new Date().toISOString();
 
@@ -13,7 +14,8 @@ export class D1Store {
     const receipt=await this.publicationReceipt(tenantId,cycle_id);if(receipt)return receipt;
     await this.db.batch([
       this.db.prepare("UPDATE stats_snapshots SET enc=?,completed_at=?,cycle_id=? WHERE tenant_id=? AND lock_owner=? AND lease_until>? AND NOT EXISTS(SELECT 1 FROM stats_publication_receipts WHERE tenant_id=? AND cycle_id=?) AND EXISTS(SELECT 1 FROM tenants WHERE id=? AND status='active' AND paid_until>=?)").bind(enc,completedAt,cycle_id,tenantId,owner,Date.now(),tenantId,cycle_id,tenantId,now().slice(0,10)),
-      this.db.prepare('INSERT OR IGNORE INTO stats_publication_receipts(tenant_id,cycle_id,completed_at,source_times) SELECT tenant_id,cycle_id,completed_at,? FROM stats_snapshots WHERE tenant_id=? AND cycle_id=? AND lock_owner=?').bind(JSON.stringify(sourceTimes),tenantId,cycle_id,owner)
+      this.db.prepare('INSERT OR IGNORE INTO stats_publication_receipts(tenant_id,cycle_id,completed_at,source_times) SELECT tenant_id,cycle_id,completed_at,? FROM stats_snapshots WHERE tenant_id=? AND cycle_id=? AND lock_owner=?').bind(JSON.stringify(sourceTimes),tenantId,cycle_id,owner),
+      this.db.prepare('INSERT OR IGNORE INTO stats_snapshot_history SELECT s.tenant_id,s.cycle_id,s.completed_at,r.source_times,s.enc FROM stats_snapshots s JOIN stats_publication_receipts r ON r.tenant_id=s.tenant_id AND r.cycle_id=s.cycle_id WHERE s.tenant_id=? AND s.cycle_id=? AND s.lock_owner=?').bind(tenantId,cycle_id,owner)
     ]);
     return this.publicationReceipt(tenantId,cycle_id);
   }
@@ -134,7 +136,7 @@ export class MemoryStore {
     const receipt=await this.publicationReceipt(tenantId,cycle_id);if(receipt)return receipt;
     const r=this.snapshots?.get(tenantId),t=await this.tenant(tenantId);
     if(r?.owner!==owner||r.leaseUntil<=Date.now()||!t||t.status!=='active'||t.paidUntil<now().slice(0,10))return null;
-    Object.assign(r,{enc,completedAt,cycle_id});this.publicationReceipts??=new Map();const published={cycle_id,completed_at:completedAt,sourceTimes};this.publicationReceipts.set(tenantId+':'+cycle_id,published);return published;
+    this.snapshotHistory??=new Map();this.snapshotHistory.set(JSON.stringify([tenantId,cycle_id]),structuredClone({enc,completedAt,source_times:JSON.stringify(sourceTimes)}));Object.assign(r,{enc,completedAt,cycle_id});this.publicationReceipts??=new Map();const published={cycle_id,completed_at:completedAt,sourceTimes};this.publicationReceipts.set(tenantId+':'+cycle_id,published);return published;
   }
   async releaseStatsCycle(tenantId,owner){const r=this.snapshots.get(tenantId);if(r?.owner===owner){r.owner=null;r.leaseUntil=0;}}
   async createStarsOrder(o){this.starsOrders??=new Map();this.starsOrders.set(o.id,{...o,chatId:String(o.chatId)});}
@@ -192,3 +194,6 @@ export class MemoryStore {
   async listSocials(tenantId) { return [...this.socialsMap.values()].filter(s => s.tenantId === tenantId).map(socialRow); }
   async deleteSocial(tenantId, userId) { this.socialsMap.delete(tenantId + ':' + String(userId)); }
 }
+
+Object.assign(D1Store.prototype,d1History);
+Object.assign(MemoryStore.prototype,memoryHistory);

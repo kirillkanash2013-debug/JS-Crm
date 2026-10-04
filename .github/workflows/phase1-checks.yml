@@ -1,9 +1,9 @@
-name: Phase 1 implementation checks
+name: Implementation checks
 on:
   pull_request:
     branches: [claude-code]
   push:
-    branches: [implementation/phase1-social-refresh]
+    branches: [implementation/phase1-social-refresh, implementation/phase2-historical-data]
 permissions:
   contents: read
 jobs:
