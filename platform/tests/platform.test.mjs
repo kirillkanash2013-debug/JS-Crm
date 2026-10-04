@@ -404,3 +404,14 @@ test('dashboard renders collector spend and marks the social step done', () => {
   assert.match(html, /82\.29 USD/);
   assert.match(html, /Алина/);
 });
+
+test('statistics legend defines Долёт by attribution and excludes day rollover',async()=>{
+ const h=harness();
+ const {tenant}=await applyPayment(h.store,{paymentId:'legend-attribution',provider:'test',plan:'team',masterKey:MASTER_KEY});
+ await h.store.setChat(1,tenant.id,'ready');
+ await h.tap('pr:i:legend');
+ const text=h.last();
+ assert.match(text,/Dep «\+N долёт» — продажи без надёжного Meta Campaign ID \(unattributed\)/);
+ assert.match(text,/Переход события через сутки не является долётом/);
+ assert.doesNotMatch(text,/продажи сегодня по клику за прошлый день|по клику за прошлый день|клик[ау]? (?:за |с )?прошл/iu);
+});

@@ -96,3 +96,7 @@ LIVE VERIFIED: no; real schema check blocked by missing API credentials.
 ## ПРЕДЛОЖЕНИЕ — next review gate
 
 Architect / Control should review this incremental milestone on the new exact head in the same draft PR #8. Read-only authenticated capability/schema verification remains a Release/QA prerequisite; there is no merge/deploy authorization. Phase 2 is not declared fully accepted, and Phase 3 formulas, FX, strict timezone normalization, cohort UI and alerts remain out of scope.
+
+## Architect review follow-up — user-facing Долёт definition
+
+The remaining finding on head cb715c392932832714bd690bf5f6ea104e2d0c99 was the outdated legend defining Долёт by a previous-day click. Replaced only that legend sentence with missing reliable Meta Campaign ID / unattributed and an explicit statement that day rollover is not Долёт. Added a regression through the real Telegram instruction callback; it checks the attribution definition and rejects the legacy click-day explanation. No ingestion, formulas, migrations, controls or other UI changes. Final exact-head CI is reported in PR #8.
