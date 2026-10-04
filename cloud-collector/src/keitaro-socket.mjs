@@ -1,4 +1,4 @@
-import {fetchKeitaroReport} from '../../shared/keitaro-report.mjs';
+import {fetchKeitaroReport,probeKeitaroConversions} from '../../shared/keitaro-report.mjs';
 import {batchProfileTimezone,profileReadBatch} from '../../server/keitaro-timezone.mjs';
 import {readResponse} from './proxy-fetch.mjs';
 export function publicIP(host){
@@ -72,8 +72,9 @@ const normalizeRows=raw=>Array.isArray(raw)?raw:Array.isArray(raw?.rows)?raw.row
 // report/build (clicks/unique_clicks grouped by sub_id_4=FB campaign id) and
 // conversions/log (status/revenue/click date, authoritative for reg/dep/rev).
 // The platform aggregates these and joins with FB spend.
-export async function reportKeitaroSocket(origin,key,{from,to,timezone,subIndex},connect){
- return fetchKeitaroReport((path,payload)=>socketPost(origin,key,path,payload,connect),{from,to,timezone,subIndex});
+export async function reportKeitaroSocket(origin,key,opts,connect){
+ const post=(path,payload)=>socketPost(origin,key,path,payload,connect);
+ return opts.probe?probeKeitaroConversions(post,opts):fetchKeitaroReport(post,opts);
 }
 
 export const checkKeitaroSocket = (origin,key,connect) => socketGet(origin,key,connect);

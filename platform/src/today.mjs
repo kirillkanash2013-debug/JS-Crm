@@ -16,8 +16,8 @@ function fmtDate(day) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day ||
 
 // Keitaro rows → per-FB-campaign metrics, keyed by the campaign id in sub_id_N.
 // Inst = unique clicks (report/build); Reg = status 'lead', Dep/Rev = status
-// 'sale' (conversions/log, authoritative). A sale whose click was on an earlier
-// day than `day` is a долёт, kept apart for the bracketed → Rev/ROI.
+// 'sale' (conversions/log, authoritative). Долёт means no reliable campaign ID;
+// calendar rollover never changes attribution.
 export function aggregateKeitaro({report = [], conversions = []} = {}, {subIndex = 4, day} = {}) {
   const sub = 'sub_id_' + subIndex;
   const by = {};                                   // per FB campaign (sub_id)
@@ -33,13 +33,13 @@ export function aggregateKeitaro({report = [], conversions = []} = {}, {subIndex
     if (r.offer) getOffer(id, String(r.offer)).inst += inst;
   }
   for (const r of conversions) {
-    const id = String(r[sub] ?? '').trim(); if (!id) continue;
+    const id = String(r[sub] ?? '').trim();
     const c = get(id), offer = r.offer ? String(r.offer) : null;
     const status = String(r.status ?? '').toLowerCase();
     if (status === 'lead') { c.reg += 1; if (offer) getOffer(id, offer).reg += 1; }
     else if (status === 'sale') {
-      const rev = num(r.revenue), clickDay = String(r.click_datetime ?? '').slice(0, 10);
-      if (day && clickDay && clickDay !== day) { c.doletDep += 1; c.doletRev += rev; }
+      const rev = num(r.revenue);
+      if (!id) { c.doletDep += 1; c.doletRev += rev; }
       else { c.dep += 1; c.rev += rev; }
       if (offer) { const o = getOffer(id, offer); o.dep += 1; o.rev += rev; }
     }

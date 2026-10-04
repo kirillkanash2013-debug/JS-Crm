@@ -11,7 +11,7 @@ import worker, {telegram} from './index.mjs';
 export class BotNotify extends WorkerEntrypoint {
   #bot() {
     const store = new D1Store(this.env.DB);
-    return createBot({store, tg: telegram(this.env), env: this.env, ...(this.env.KEITARO_BRIDGE ? {keitaro: containerKeitaro(this.env)} : {})});
+    return createBot({store, deferHistory:task=>this.ctx.waitUntil(task), tg: telegram(this.env), env: this.env, ...(this.env.KEITARO_BRIDGE ? {keitaro: containerKeitaro(this.env)} : {})});
   }
   async socialConnected(tenantId, social) { await this.#bot().notifySocialConnected(String(tenantId), social || {}); }
   async socialCollected(tenantId, social) { await this.#bot().notifySocialCollected(String(tenantId), social || {}); }
