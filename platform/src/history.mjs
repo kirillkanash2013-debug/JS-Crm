@@ -36,10 +36,11 @@ export const d1History = {
  async recordKeitaroEvidence(tenantId,{source,evidenceId,ingestedAt,context,enc}) {
   await this.db.prepare('INSERT OR IGNORE INTO keitaro_evidence VALUES(?,?,?,?,?,?)').bind(tenantId,source,evidenceId,ingestedAt,JSON.stringify(context),enc).run();
  },
- async ingestKeitaroEvents(tenantId,{source,evidenceId,events,knownCampaignIds,ingestedAt,observedAt=ingestedAt,observationId=evidenceId}) {
-  for(let i=0;i<knownCampaignIds.length;i+=50)await this.db.batch(knownCampaignIds.slice(i,i+50).map(id=>this.db.prepare('INSERT OR IGNORE INTO keitaro_known_campaigns VALUES(?,?,?)').bind(tenantId,String(id),observedAt)));
+ async ingestKeitaroEvents(tenantId,{source,evidenceId,events,knownCampaignIds,ingestedAt,observedAt=ingestedAt,observationId=evidenceId,guard=()=>{}}) {
+  for(let i=0;i<knownCampaignIds.length;i+=50){guard();await this.db.batch(knownCampaignIds.slice(i,i+50).map(id=>this.db.prepare('INSERT OR IGNORE INTO keitaro_known_campaigns VALUES(?,?,?)').bind(tenantId,String(id),observedAt)));}
   // Transactions and bind counts are bounded. Overlapping windows never increment counters.
   for(let i=0;i<events.length;i+=20){
+   guard();
    const statements=[];
    for(const e of events.slice(i,i+20)){
     statements.push(this.db.prepare(`INSERT INTO keitaro_events(tenant_id,source,event_key,source_id,evidence_id,ingested_at,fact,observed_at,event_day) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,source,event_key) DO UPDATE SET evidence_id=excluded.evidence_id,fact=${mergeFactSQL},observed_at=excluded.observed_at,event_day=CASE WHEN ${keepEventTimeSQL} THEN keitaro_events.event_day ELSE excluded.event_day END WHERE (excluded.observed_at>=keitaro_events.observed_at OR keitaro_events.observed_at IS NULL) AND NOT EXISTS(SELECT 1 FROM keitaro_observation_history WHERE tenant_id=? AND source=? AND event_key=? AND observation_id=?)`).bind(tenantId,source,e.event_key,e.source_id,evidenceId,e.ingested_at,JSON.stringify(e.fact),observedAt,eventDay(e.fact),tenantId,source,e.event_key,observationId));
@@ -65,11 +66,14 @@ export const d1History = {
   return (r.results||[]).map(r=>({...r,fact:JSON.parse(r.fact)}));
  },
  async claimKeitaroHistory(tenantId,source,owner,nowMs) {
-  const r=await this.db.prepare('INSERT INTO keitaro_history_state(tenant_id,source,lease_owner,lease_until) VALUES(?,?,?,?) ON CONFLICT(tenant_id,source) DO UPDATE SET lease_owner=excluded.lease_owner,lease_until=excluded.lease_until WHERE keitaro_history_state.lease_until<? AND (keitaro_history_state.last_success_at IS NULL OR keitaro_history_state.last_success_at<?)').bind(tenantId,source,owner,nowMs+60000,nowMs,new Date(nowMs-15*60000).toISOString()).run();return r.meta?.changes===1;
+  const r=await this.db.prepare('INSERT INTO keitaro_history_state(tenant_id,source,lease_owner,lease_until) VALUES(?,?,?,?) ON CONFLICT(tenant_id,source) DO UPDATE SET lease_owner=excluded.lease_owner,lease_until=excluded.lease_until WHERE keitaro_history_state.lease_until<? AND (keitaro_history_state.continuation IS NOT NULL OR keitaro_history_state.last_success_at IS NULL OR keitaro_history_state.last_success_at<?)').bind(tenantId,source,owner,nowMs+60000,nowMs,new Date(nowMs-15*60000).toISOString()).run();return r.meta?.changes===1;
  },
  async keitaroHistoryState(tenantId,source) {return this.db.prepare('SELECT * FROM keitaro_history_state WHERE tenant_id=? AND source=?').bind(tenantId,source).first();},
- async completeKeitaroHistoryWindow(tenantId,source,owner,{cursorDay,window,completedAt},nowMs) {
-  const r=await this.db.prepare("UPDATE keitaro_history_state SET cursor_day=?,last_window=?,last_result='complete',last_error=NULL,last_success_at=? WHERE tenant_id=? AND source=? AND lease_owner=? AND lease_until>?").bind(cursorDay,JSON.stringify(window),completedAt,tenantId,source,owner,nowMs).run();return r.meta?.changes===1;
+ async completeKeitaroHistoryWindow(tenantId,source,owner,{cursorDay,window,completedAt,continuation=null},nowMs) {
+  const r=await this.db.prepare("UPDATE keitaro_history_state SET cursor_day=COALESCE(?,cursor_day),last_window=?,continuation=?,last_result=CASE WHEN ? IS NULL THEN 'complete' ELSE 'incomplete' END,last_error=NULL,last_success_at=CASE WHEN ? IS NULL THEN ? ELSE last_success_at END WHERE tenant_id=? AND source=? AND lease_owner=? AND lease_until>?").bind(cursorDay??null,JSON.stringify(window),continuation?JSON.stringify(continuation):null,continuation?1:null,continuation?1:null,completedAt,tenantId,source,owner,nowMs).run();return r.meta?.changes===1;
+ },
+ async checkpointKeitaroHistory(tenantId,source,owner,continuation,nowMs) {
+  const r=await this.db.prepare("UPDATE keitaro_history_state SET continuation=?,last_result='incomplete',last_error=NULL WHERE tenant_id=? AND source=? AND lease_owner=? AND lease_until>?").bind(JSON.stringify(continuation),tenantId,source,owner,nowMs).run();return r.meta?.changes===1;
  },
  async releaseKeitaroHistory(tenantId,source,owner,error=null) {
   await this.db.prepare("UPDATE keitaro_history_state SET lease_owner=NULL,lease_until=0,last_result=CASE WHEN ? IS NULL THEN last_result ELSE 'incomplete' END,last_error=? WHERE tenant_id=? AND source=? AND lease_owner=?").bind(error,error,tenantId,source,owner).run();
@@ -86,6 +90,7 @@ export const memoryHistory = {
   const known=this.knownCampaigns.get(tenantId)||new Set();b.knownCampaignIds.forEach(id=>known.add(String(id)));this.knownCampaigns.set(tenantId,known);
   const observedAt=b.observedAt||b.ingestedAt,observationId=b.observationId||b.evidenceId;
   for(const e of b.events){
+   b.guard?.();
    const k=JSON.stringify([tenantId,b.source,e.event_key]),old=this.events.get(k),ok=JSON.stringify([tenantId,b.source,e.event_key,observationId]);
    if(this.observations.has(ok))continue;
    if(!old)this.events.set(k,{tenant_id:tenantId,source:b.source,...structuredClone(e),evidence_id:b.evidenceId,observed_at:observedAt,event_day:eventDay(e.fact),updated_at:observedAt,...attribution(e.campaign_id,known)});
@@ -100,12 +105,15 @@ export const memoryHistory = {
  async historicalObservations(tenantId,source,eventKey) {return structuredClone([...this.observations?.values()||[]].filter(e=>e.tenant_id===tenantId&&e.source===source&&e.event_key===eventKey));},
  async claimKeitaroHistory(tenantId,source,owner,nowMs) {
   this.historyStates??=new Map();const k=JSON.stringify([tenantId,source]),s=this.historyStates.get(k)||{};
-  if(s.lease_until>=nowMs||s.last_success_at&&Date.parse(s.last_success_at)>=nowMs-15*60000)return false;
+  if(s.lease_until>=nowMs||!s.continuation&&s.last_success_at&&Date.parse(s.last_success_at)>=nowMs-15*60000)return false;
   this.historyStates.set(k,{...s,lease_owner:owner,lease_until:nowMs+60000});return true;
  },
  async keitaroHistoryState(tenantId,source) {return structuredClone(this.historyStates?.get(JSON.stringify([tenantId,source]))||null);},
- async completeKeitaroHistoryWindow(tenantId,source,owner,{cursorDay,window,completedAt},nowMs) {
-  const s=this.historyStates?.get(JSON.stringify([tenantId,source]));if(s?.lease_owner!==owner||s.lease_until<=nowMs)return false;Object.assign(s,{cursor_day:cursorDay,last_window:JSON.stringify(window),last_success_at:completedAt,last_result:'complete',last_error:null});return true;
+ async completeKeitaroHistoryWindow(tenantId,source,owner,{cursorDay,window,completedAt,continuation=null},nowMs) {
+  const s=this.historyStates?.get(JSON.stringify([tenantId,source]));if(s?.lease_owner!==owner||s.lease_until<=nowMs)return false;Object.assign(s,{...(cursorDay?{cursor_day:cursorDay}:{}),last_window:JSON.stringify(window),continuation:continuation?JSON.stringify(continuation):null,...(!continuation?{last_success_at:completedAt}:{}),last_result:continuation?'incomplete':'complete',last_error:null});return true;
+ },
+ async checkpointKeitaroHistory(tenantId,source,owner,continuation,nowMs) {
+  const s=this.historyStates?.get(JSON.stringify([tenantId,source]));if(s?.lease_owner!==owner||s.lease_until<=nowMs)return false;Object.assign(s,{continuation:JSON.stringify(continuation),last_result:'incomplete',last_error:null});return true;
  },
  async releaseKeitaroHistory(tenantId,source,owner,error=null) {const s=this.historyStates?.get(JSON.stringify([tenantId,source]));if(s?.lease_owner===owner)Object.assign(s,{lease_owner:null,lease_until:0,...error?{last_result:'incomplete',last_error:error}:{}});},
  async saveKeitaroCapabilities(tenantId,source,owner,profile,checkedAt,nowMs) {const s=this.historyStates?.get(JSON.stringify([tenantId,source]));if(s?.lease_owner!==owner||s.lease_until<=nowMs)return false;Object.assign(s,{capabilities:JSON.stringify(profile),capabilities_checked_at:checkedAt});return true;},

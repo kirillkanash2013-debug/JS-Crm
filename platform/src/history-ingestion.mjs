@@ -10,20 +10,26 @@ export function historyWindows(day,cursorDay) {
  const nextCursor=backfillFrom===floor?shift(recentFrom,-1):backfillFrom;
  return [{kind:'lookback',from:recentFrom,to:day,cursorDay:cursor},{kind:'backfill',from:backfillFrom,to:cursor,cursorDay:nextCursor}];
 }
-export async function persistSourceConversions({store,tenantId,source,response,context,masterKey,knownCampaignIds,observedAt,observationId=crypto.randomUUID()}) {
+export async function persistSourceConversions({store,tenantId,source,response,context,masterKey,knownCampaignIds,observedAt,observationId=crypto.randomUUID(),guard=()=>{}}) {
+ guard();
  const ingestedAt=new Date().toISOString(),evidenceId=await digest({response,context});
  await store.recordKeitaroEvidence(tenantId,{source,evidenceId,ingestedAt,context,enc:await sealSecret(masterKey,tenantId,JSON.stringify(response))});
  const events=await normalizeConversions(response.conversions||[],{subIndex:context.subIndex,ingestedAt});
- await store.ingestKeitaroEvents(tenantId,{source,evidenceId,events,knownCampaignIds,ingestedAt,observedAt:observedAt||ingestedAt,observationId});
+ await store.ingestKeitaroEvents(tenantId,{source,evidenceId,events,knownCampaignIds,ingestedAt,observedAt:observedAt||ingestedAt,observationId,guard});
  return {events,evidenceId,ingestedAt};
 }
-// Independent post-publication work. Failed/partial windows never advance their cursor.
+// Independent post-publication work. Partial batches checkpoint only persisted rows.
 export async function runHistoricalIngestion({store,tenantId,source,day,timezone,subIndex,masterKey,knownCampaignIds,fetchReport,clock=Date.now}) {
  const owner=crypto.randomUUID(),started=clock(),deadline=started+25000;
  if(!await store.claimKeitaroHistory(tenantId,source,owner,started))return {result:'busy_or_cooldown'};
  let error=null;
  try {
   let state=await store.keitaroHistoryState(tenantId,source);
+  // Pinned ranges survive day rollover and reload; never replace an unfinished archive.
+  let pending=state.continuation?JSON.parse(state.continuation):historyWindows(day,state.cursor_day).map(w=>({...w,timezone,subIndex,offset:0,anchor:null}));
+  // A changed join/timezone needs a fresh read of the same ranges, not a cursor skip.
+  pending=pending.map(w=>w.subIndex!==subIndex||w.timezone!==timezone?{...w,subIndex,timezone,offset:0,anchor:null}:w);
+  if(!await store.checkpointKeitaroHistory(tenantId,source,owner,pending,clock()))throw new Error('history_lease_lost');
   let profile=state.capabilities?JSON.parse(state.capabilities):null;
   if(!profile||profile.subIndex!==subIndex||!state.capabilities_checked_at||state.capabilities_checked_at.slice(0,10)!==day){
    const observedAt=new Date(clock()).toISOString();
@@ -33,19 +39,34 @@ export async function runHistoricalIngestion({store,tenantId,source,day,timezone
   }
   const extraColumns=Object.entries(profile?.columns||{}).filter(([field,status])=>status==='accepted'&&['sale_datetime','country_code','currency','revenue_currency','payout_currency','tid'].includes(field)).map(([field])=>field);
   const completed=[];
-  for(const window of historyWindows(day,state.cursor_day)){
-   const remaining=deadline-clock();if(remaining<=0)throw new Error('history_deadline');
-   const observedAt=new Date(clock()).toISOString(),context={from:window.from,to:window.to,timezone,subIndex,kind:window.kind};
-   const response=await fetchReport({...context,conversionsOnly:true,pageLimit:250,maxPages:4,budgetMs:Math.min(10000,remaining),extraColumns});
-   if(response?.result!=='ok'||response.complete!==true||!Array.isArray(response.conversions))throw new Error('history_source_incomplete');
-   await persistSourceConversions({store,tenantId,source,response,context,masterKey,knownCampaignIds,observedAt,observationId:owner+':'+window.kind});
+  // At most two bounded batches per invocation. Incomplete windows resume next refresh.
+  for(let batch=0;batch<2&&pending.length;batch++){
+   const window=pending[0],remaining=deadline-clock();if(remaining<=5000)throw new Error('history_deadline');
+   const observedAt=new Date(clock()).toISOString(),context={from:window.from,to:window.to,timezone:window.timezone,subIndex:window.subIndex,kind:window.kind,startOffset:window.offset};
+   const response=await fetchReport({...context,conversionsOnly:true,resume:true,anchor:window.anchor,pageLimit:250,maxPages:4,budgetMs:Math.min(10000,remaining-5000),extraColumns});
+   if(response?.complete===true&&response.result!=='ok'||!['ok','incomplete'].includes(response?.result)||!Array.isArray(response.conversions))throw new Error('history_source_incomplete');
+   if(response.reason==='checkpoint_boundary_changed'){
+    pending[0]={...window,offset:0,anchor:null};
+    if(!await store.checkpointKeitaroHistory(tenantId,source,owner,pending,clock()))throw new Error('history_lease_lost');
+    throw new Error('history_boundary_changed');
+   }
+   const nextOffset=response.nextOffset??(response.complete===true?window.offset+response.conversions.length:null);
+   if(!Number.isSafeInteger(nextOffset)||nextOffset!==window.offset+response.conversions.length||nextOffset<window.offset||response.conversions.length>1000||nextOffset>0&&response.complete!==true&&typeof response.anchor!=='string')throw new Error('history_invalid_checkpoint');
+   // Interrupted persistence may replay a batch, but its source identities never increment counters.
+   await persistSourceConversions({store,tenantId,source,response,context,masterKey,knownCampaignIds,observedAt,observationId:owner+':'+batch,guard:()=>{if(clock()>=deadline)throw new Error('history_deadline');}});
    if(clock()>=deadline)throw new Error('history_deadline');
-   if(!await store.completeKeitaroHistoryWindow(tenantId,source,owner,{cursorDay:window.cursorDay,window:context,completedAt:new Date(clock()).toISOString()},clock()))throw new Error('history_lease_lost');
+   if(response.complete!==true){
+    pending[0]={...window,offset:nextOffset,anchor:response.anchor??window.anchor};
+    if(!await store.checkpointKeitaroHistory(tenantId,source,owner,pending,clock()))throw new Error('history_lease_lost');
+    throw new Error(response.reason==='report_deadline'?'history_deadline':'history_source_incomplete');
+   }
+   pending=pending.slice(1);
+   if(!await store.completeKeitaroHistoryWindow(tenantId,source,owner,{cursorDay:window.kind==='backfill'?window.cursorDay:null,window:context,continuation:pending.length?pending:null,completedAt:new Date(clock()).toISOString()},clock()))throw new Error('history_lease_lost');
    completed.push(context);
   }
   return {result:'complete',windows:completed};
  }catch(e){
-  error=['history_deadline','history_lease_lost','history_source_incomplete','keitaro_event_identity_unavailable'].includes(e.message)?e.message:'history_ingestion_failed';
+  error=['history_deadline','history_lease_lost','history_source_incomplete','history_boundary_changed','history_invalid_checkpoint','keitaro_event_identity_unavailable'].includes(e.message)?e.message:'history_ingestion_failed';
   return {result:'incomplete',reason:error};
  }finally{await store.releaseKeitaroHistory(tenantId,source,owner,error);}
 }

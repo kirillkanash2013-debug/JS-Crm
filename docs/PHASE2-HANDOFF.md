@@ -1,4 +1,4 @@
-# Phase 2 — Historical ingestion completeness + event-time projection
+# Phase 2 — Historical ingestion, event-time projection and dense-window hardening
 
 First milestone APPROVED by Architect / Control at `14c3fdfd44665657d9c21653df8045e4f1617ce3`. This incremental milestone stays in `implementation/phase2-historical-data`, draft PR #8, stacked on approved Phase 1 (`2e05e15301a58e5a7b92622716769b7d0b648757`). PR #7, `claude-code`, Social Lifecycle / Refresh Cycle contracts, Campaign Actions, Telegram UI/formulas and alerts are unchanged. No merge, remote migration or deployment.
 
@@ -19,7 +19,7 @@ After a successful publication, BotNotify passes `ExecutionContext.waitUntil` to
 - At most one lookback window (today minus 6 days through today) and one archive window (up to 7 days) per successful refresh. Archive windows overlap by one day.
 - Bounded 180-day horizon; cursor walks backward, then wraps for another correction sweep. Dates follow the explicit source query timezone; no strict timezone/Meta-day normalization.
 - Each window requests conversions only, limit 250, maximum 4 pages, maximum 10-second response budget. A once-per-source/day/configured-sub probe has a 5-second budget within the same total budget.
-- Complete windows checkpoint durable cursor only after persistence. Pagination/time/identity errors and partial responses mark history incomplete. Failed archive window retains its cursor for a later retry. Cursor and lease survive Worker reload; expired-owner checkpoint/release cannot affect a new owner.
+- Complete archive windows advance the durable 180-day cursor only after persistence. Partial batches persist source facts and then checkpoint the next offset; the fixed query range remains pending/incomplete until completely covered. Cursor and lease survive Worker reload; expired-owner checkpoint/release cannot affect a new owner.
 - There is no additional cron, Telegram command, provider mutation or live deployment. Work resumes on subsequent successful refreshes. Sites/automations are not required.
 
 `fetchKeitaroReport` now accepts bounded historical options without changing existing current-report defaults. Both transports and container runner forward the same options. Deadline handling does not wait indefinitely for a transport Promise; the underlying transport still has its own socket/request cleanup timeout. Authoritative total permits a full last page to complete at the exact page limit.
@@ -47,7 +47,7 @@ New `0015_history_completeness.sql`:
 - keitaro_history_state: durable cursor, cooldown, fenced lease, last completed window/result/error and capability metadata.
 - keitaro_known_campaigns: durable identities actually observed from Meta; seeded from previously matched relationships. New conversions can match a historically known campaign even if temporarily absent from today's Meta list.
 
-No old history or aggregate is deleted. Production rollout must apply additive 0015 before new Worker code; no remote migration has run.
+No old history or aggregate is deleted. Production rollout must apply additive 0015 and 0016 before new Worker code; no remote migration has run.
 
 ## Idempotency and correction semantics
 
@@ -77,9 +77,9 @@ platform/migrations/0015_history_completeness.sql; platform/src/history.mjs; pla
 
 New regressions run through real SQLite/D1 SQL and MemoryStore: overlapping old windows / corrections, late conversion projected into its past event day, out-of-window unmatched→matched, durable archive checkpoint/retry, lease fencing, repeated A→B→A observations, replay/stale-read protection, exact decimals / mixed currencies / unknown payouts, explicit sale versus later postback timestamps, payout correction preserving original event day and explicit event-time correction moving its single fact, 0014→0015 populated migration upgrade, read-only capability classification and configured sub_id, bounded pagination/deadline and full last-page completion. Bot integration verifies that background requests see an already-published pair, and failures leave ready/publication unchanged. Accepted Phase 1 and first-milestone regressions remain in the full suite.
 
-Local full suite: 228 passed / 0 failed / 1 skipped (229 total; Chromium unavailable locally). Root npm test passed. Exact-head GitHub CI and commit are reported in PR #8 after checks finish, so this file does not introduce another unverified code head just to include its own hash.
+The previous milestone suite had 229 tests; the accepted legend follow-up had 230. Final-hardening local full suite: 242 passed / 0 failed / 1 skipped (243 total; Chromium unavailable locally). Exact-head CI and commit are reported in PR #8 and the final response. Root npm test passed. Exact-head GitHub CI and commit are reported in PR #8 after checks finish, so this file does not introduce another unverified code head just to include its own hash.
 
-CODED: yes (historical lookback/backfill and event-time projection milestone).
+CODED: yes (final code-side completeness milestone, pending Architect review).
 TESTED: local suite passed; exact-head CI reported in PR #8/final handoff.
 DEPLOYED: no.
 LIVE VERIFIED: no; real schema check blocked by missing API credentials.
@@ -89,14 +89,40 @@ LIVE VERIFIED: no; real schema check blocked by missing API credentials.
 - Real instance API schema, conversion_id uniqueness/correction semantics, currency/GEO availability and event-time semantics have not been authenticated/live verified. Stable ID and sale=FTD mapping follow the accepted existing contract, not a new inference from public docs.
 - Individual Inst/acquisition feed remains unverified; Inst is still the existing current-report aggregate. Do not invent individual source facts.
 - Coverage is explicitly bounded to 180 days and successful refresh opportunities. Older stored facts remain, but provider corrections beyond the horizon are not automatically rescanned. No deletion/tombstone feed has been verified; absence from a query is not treated as deletion.
-- Dense windows above 1,000 rows, repeated pagination, deadlines or Worker interruption can stay incomplete until a later successful bounded read. There is no adaptive subdivision or paginated cross-invocation offset checkpoint in this milestone; last_result/incomplete and unchanged cursor expose this limit. A terminated background task can leave its 60-second lease until expiry; completed facts are idempotent on retry.
+- Cross-invocation offset checkpoints now cover dense windows and bounded-deadline responses. Offset pagination is not a provider snapshot: boundary checks detect drift at the resume point, but cannot prove the absence of arbitrary concurrent reorder/deletion before it. Actual instance ordering/correction behavior is a LIVE Release/QA gap; ongoing overlapping sweeps re-read corrections. Detected boundary drift explicitly restarts only that fixed window, retaining its incomplete state and all existing facts. No deletion/tombstone semantics are inferred.
 - Missing stable IDs require fallback source fields to remain stable. Indistinguishable repeated conversions cannot be safely separated. Changes to fallback timestamp/status/offer without a stable ID cannot be inferred reliably as corrections.
 - No verified provider revision ordering; latest acquired observation is current knowledge. Observations retain all fetched versions, but events never returned by this API cannot be reconstructed.
 
 ## ПРЕДЛОЖЕНИЕ — next review gate
 
-Architect / Control should review this incremental milestone on the new exact head in the same draft PR #8. Read-only authenticated capability/schema verification remains a Release/QA prerequisite; there is no merge/deploy authorization. Phase 2 is not declared fully accepted, and Phase 3 formulas, FX, strict timezone normalization, cohort UI and alerts remain out of scope.
+Architect / Control should perform final review of all Phase 2 code on the new exact head in the same draft PR #8. Read-only authenticated capability/schema verification remains a Release/QA prerequisite; there is no merge/deploy authorization. Phase 2 is not declared fully accepted, and Phase 3 formulas, FX, strict timezone normalization, cohort UI and alerts remain out of scope.
 
 ## Architect review follow-up — user-facing Долёт definition
 
 The remaining finding on head cb715c392932832714bd690bf5f6ea104e2d0c99 was the outdated legend defining Долёт by a previous-day click. Replaced only that legend sentence with missing reliable Meta Campaign ID / unattributed and an explicit statement that day rollover is not Долёт. Added a regression through the real Telegram instruction callback; it checks the attribution definition and rejects the legacy click-day explanation. No ingestion, formulas, migrations, controls or other UI changes. Final exact-head CI is reported in PR #8.
+
+
+## РЕШЕНО — final code-side completeness: dense/incomplete windows
+
+Accepted predecessor head: `a440b7d962a61a066555855334337136236259e4`. Same branch `implementation/phase2-historical-data`, same draft PR #8. Authenticated schema verification was not attempted in this milestone; it remains a separate Release/QA gate.
+
+Additive `0016_history_continuation.sql` adds nullable JSON `keitaro_history_state.continuation`. It holds a queue of at most two fixed windows: kind, from/to, query timezone, configured subIndex, target archive cursor, next persisted offset and boundary anchor. Existing facts, observations, aggregates, snapshots, cursor and last-result history are preserved. A join/timezone setting change restarts the same pending ranges with the new query configuration, without skipping archive coverage. Day rollover does not replace a pending range.
+
+The queue is saved and marked incomplete before any provider read. Completed pages in a partial historical response are retained, normalized and persisted; only then is the fenced next offset saved. The archive cursor stays unchanged until its entire window completes. Lookback completion alone cannot move the archive cursor or report complete coverage. The 15-minute successful-work cooldown starts after the pending queue is empty; pending work can resume at the next successful refresh without that cooldown blocking it.
+
+Resume requests overlap one boundary row and validate its source identity/order fields (money and Campaign ID are excluded). Boundary drift/ignored offset fails closed and restarts the affected window explicitly. Offset and partial rows are exposed only for opt-in conversions-only historical reads; current financial reports still reject truncated responses. Server/container and socket paths use the shared implementation and forward the same continuation options.
+
+Bounds remain: 25-second invocation deadline, 60-second fenced lease, no more than two batches per invocation, 250 rows/page, four pages/batch, at most 10 seconds per response, 180-day sweep, daily probe at most five seconds. Fetches reserve five seconds of remaining invocation time for persistence; D1 fact batches check the invocation deadline between transactions. An interrupted persistence/checkpoint can replay the last bounded batch, never the already-checkpointed beginning of the window. Event identity and current-fact projection prevent duplicate FTD/Revenue; observations remain append-only. A hard termination leaves durable incomplete state until lease expiry and resume.
+
+Changed files for this final milestone: `platform/migrations/0016_history_continuation.sql`, `platform/src/history-ingestion.mjs`, `platform/src/history.mjs`, `shared/keitaro-report.mjs`, `server/container-runner.mjs`, `platform/tests/history.test.mjs`, this handoff. No Phase 1 lifecycle, refresh/publication ownership, Telegram UX, formulas or alerts were changed.
+
+Regression coverage: real D1/SQLite and MemoryStore dense 2,105-event archive across reload/day rollover; unchanged cursor while incomplete; continuation offsets and exact FTD/Revenue totals; deadline retains completed pages and resumes from checkpoint; interrupted persistence before checkpoint safely replays only pending batch; lease expiry and stale-owner fencing; boundary drift rejection; current-report fail-closed behavior; populated 0015→0016 migration preserving facts, observations, snapshots and source state. All prior Phase 1/Phase 2 tests remain in the full suite.
+
+## НЕИЗВЕСТНО — remaining LIVE-only Release/QA gates
+
+- Authenticated installed-instance schema: stable conversion_id semantics, configured sub_id_N, timestamp semantics, GEO/country and amount/currency availability.
+- Real provider pagination/order/total behavior under dense traffic and concurrent source corrections; offset pagination has no verified snapshot/revision guarantee.
+- Individual acquisition/Inst feed, provider tombstone/deletion semantics and fallback identity stability remain unverified.
+- Production D1 migration/runtime performance and safe resume after real Worker termination must be verified during authorized Release/QA. No remote migrations or deployment occurred; no live coverage claim is made.
+
+CODED: yes. TESTED: full local suite and exact-head CI reported in PR #8/final response. DEPLOYED: no. LIVE VERIFIED: no.

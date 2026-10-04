@@ -117,8 +117,8 @@ test('archive sweep is bounded, overlaps and wraps; failed window retries same c
   if(o.kind==='backfill'&&fail)return {result:'incomplete',reason:'pagination_limit'};
   return {result:'ok',complete:true,report:[],conversions:[]};
  }});
- assert.equal((await run()).result,'incomplete');let state=await store.keitaroHistoryState('t','k');assert.equal(state.cursor_day,'2026-09-27');assert.equal(state.last_result,'incomplete');
- fail=false;ms+=16*60000;assert.equal((await run()).result,'complete');assert.deepEqual(froms[1],froms[3]);
+ assert.equal((await run()).result,'incomplete');let state=await store.keitaroHistoryState('t','k');assert.equal(state.cursor_day,null);assert.equal(state.last_result,'incomplete');
+ fail=false;ms+=16*60000;assert.equal((await run()).result,'complete');assert.deepEqual(froms[1],froms[2]);
  assert.equal((await store.keitaroHistoryState('t','k')).cursor_day,'2026-09-21');
  const wrap=historyWindows('2026-10-04','2026-04-08');assert.equal(wrap[1].from,'2026-04-08');assert.equal(wrap[1].cursorDay,'2026-09-27');
 });
@@ -176,4 +176,106 @@ for(const mode of ['D1','memory'])test(mode+': payout correction postback cannot
  const obs=await store.historicalObservations('t','k','id:c1');assert.equal(obs.find(o=>o.observation_id==='two').fact.postback_datetime,'2026-10-04 02:00:00');
  await put({...row,revenue:'100',sale_datetime:'2026-09-30 22:00:00'},'2026-10-04T02:00:00Z','three');
  facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'});assert.equal(facts.days.length,1);assert.equal(facts.days[0].day,'2026-09-30');assert.equal(facts.days[0].ftd,1);
+});
+
+for(const mode of ['D1','memory'])test(mode+': dense archive resumes durable offset across reload/day rollover without duplicate FTD/Revenue',async()=>{
+ let store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ let ms=Date.parse(at),day='2026-10-04';const calls=[];
+ const rows=Array.from({length:2105},(_,i)=>({...row,conversion_id:String(i),revenue:'1',postback_datetime:'2026-09-23 01:00:00'}));
+ const fetchReport=opts=>opts.probe?Promise.resolve({result:'ok',columns:{}}):fetchKeitaroReport(async(path,p)=>{
+  calls.push({kind:opts.kind,offset:p.offset,from:p.range.from,to:p.range.to});
+  const data=opts.kind==='backfill'?rows:[];return {result:'ok',json:{rows:data.slice(p.offset,p.offset+p.limit),total:data.length}};
+ },opts);
+ const run=()=>runHistoricalIngestion({store,tenantId:'t',source:'k',day,timezone:'UTC',subIndex:7,masterKey:MASTER_KEY,knownCampaignIds:[],fetchReport,clock:()=>ms});
+ assert.equal((await run()).result,'incomplete');
+ let state=await store.keitaroHistoryState('t','k');assert.equal(state.cursor_day??null,null);assert.equal(state.last_result,'incomplete');assert.equal(JSON.parse(state.continuation)[0].offset,1000);
+ if(mode==='D1')store=new D1Store(store.db); // Same durable database, fresh Worker store.
+ day='2026-10-05';ms+=60001;
+ assert.equal((await run()).result,'incomplete');state=await store.keitaroHistoryState('t','k');assert.equal(JSON.parse(state.continuation)[0].offset,1999);assert.equal(state.cursor_day??null,null);
+ ms+=1;assert.equal((await run()).result,'complete');state=await store.keitaroHistoryState('t','k');assert.equal(state.continuation,null);assert.equal(state.cursor_day,'2026-09-21');
+ const archive=calls.filter(c=>c.kind==='backfill');assert.equal(archive[4].offset,999);assert.equal(archive[8].offset,1998);assert(archive.every(c=>c.from==='2026-09-21'&&c.to==='2026-09-27'));
+ const facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:day});assert.equal(facts.days[0].ftd,2105);assert.equal(facts.days[0].revenue.amount,'2105');assert.equal(facts.days[0].day,'2026-09-23');
+ assert.equal((await run()).result,'busy_or_cooldown');
+});
+
+test('bounded response deadline retains completed pages and continuation validates the boundary',async()=>{
+ const data=Array.from({length:6},(_,i)=>({...row,conversion_id:String(i)}));
+ const first=await fetchKeitaroReport(async(path,p)=>p.offset===0?{result:'ok',json:{rows:data.slice(0,2),total:6}}:new Promise(()=>{}),{conversionsOnly:true,resume:true,pageLimit:2,maxPages:4,budgetMs:10});
+ assert.equal(first.reason,'report_deadline');assert.equal(first.complete,false);assert.equal(first.conversions.length,2);assert.equal(first.nextOffset,2);
+ const offsets=[];const next=await fetchKeitaroReport(async(path,p)=>{offsets.push(p.offset);return {result:'ok',json:{rows:data.slice(p.offset,p.offset+p.limit),total:6}};},{conversionsOnly:true,resume:true,startOffset:first.nextOffset,anchor:first.anchor,pageLimit:2,maxPages:4});
+ assert.equal(next.complete,true);assert.deepEqual(offsets,[1,3,5]);assert.deepEqual(next.conversions.map(r=>r.conversion_id),['2','3','4','5']);
+ const drift=await fetchKeitaroReport(async()=>({result:'ok',json:{rows:[data[0],data[1]],total:6}}),{conversionsOnly:true,resume:true,startOffset:2,anchor:first.anchor,pageLimit:2,maxPages:1});assert.equal(drift.reason,'checkpoint_boundary_changed');assert.equal(drift.nextOffset,2);assert.deepEqual(drift.conversions,[]);
+ const normal=await fetchKeitaroReport(async()=>({result:'ok',json:{rows:data.slice(0,2),total:6}}),{conversionsOnly:true,pageLimit:2,maxPages:1});assert.equal(normal.result,'incomplete');assert.equal(normal.conversions,undefined); // Publication remains fail-closed.
+});
+
+for(const mode of ['D1','memory'])test(mode+': interruption after facts before checkpoint and expired owner replay safely',async()=>{
+ const store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ let ms=Date.parse(at);const pending=[{kind:'backfill',from:'2026-09-21',to:'2026-09-27',cursorDay:'2026-09-21',timezone:'UTC',subIndex:7,offset:250,anchor:'saved-boundary'}];
+ assert.equal(await store.claimKeitaroHistory('t','k','terminated',ms),true);await store.checkpointKeitaroHistory('t','k','terminated',pending,ms);
+ await persistSourceConversions({store,tenantId:'t',source:'k',response:{conversions:[row]},context:{subIndex:7},masterKey:MASTER_KEY,knownCampaignIds:[],observedAt:at,observationId:'before-interruption'});
+ const requests=[];const run=()=>runHistoricalIngestion({store,tenantId:'t',source:'k',day:'2026-10-04',timezone:'UTC',subIndex:7,masterKey:MASTER_KEY,knownCampaignIds:['777'],clock:()=>ms,fetchReport:async o=>{requests.push(o);return o.probe?{result:'ok',columns:{}}:{result:'ok',complete:true,nextOffset:251,conversions:[row]};}});
+ assert.equal((await run()).result,'busy_or_cooldown');assert.equal((await store.keitaroHistoryState('t','k')).last_result,'incomplete');
+ ms+=60001;assert.equal((await run()).result,'complete');assert.equal(requests.find(o=>!o.probe).startOffset,250);
+ assert.equal(await store.checkpointKeitaroHistory('t','k','terminated',pending,ms),false);assert.equal(await store.completeKeitaroHistoryWindow('t','k','terminated',{cursorDay:'bad',window:{},completedAt:at},ms),false);await store.releaseKeitaroHistory('t','k','terminated','bad');
+ const state=await store.keitaroHistoryState('t','k');assert.equal(state.continuation,null);assert.equal(state.cursor_day,'2026-09-21');assert.equal(state.last_result,'complete');
+ const facts=await store.historicalDailyFacts('t','k',{from:'2026-09-01',to:'2026-10-04'});assert.equal(facts.days[0].ftd,1);assert.equal(facts.days[0].revenue.amount,'45.1');assert.equal(facts.days[0].attribution,'matched');
+});
+
+test('0016 populated additive upgrade preserves facts, snapshots and an incomplete source state',async()=>{
+ const {db,store}=setup('0015_history_completeness.sql');
+ await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ const fact=JSON.stringify({kind:'ftd',ftd_at:row.postback_datetime,amount:'45.10',currency:'EUR'});
+ db.prepare('INSERT INTO keitaro_events(tenant_id,source,event_key,source_id,evidence_id,ingested_at,fact,observed_at,event_day) VALUES(?,?,?,?,?,?,?,?,?)').run('t','k','id:c1','c1','ev',at,fact,at,'2026-10-01');
+ db.prepare('INSERT INTO keitaro_observation_history VALUES(?,?,?,?,?,?,?,?)').run('t','k','id:c1','obs','ev',at,fact,'777');
+ db.prepare('INSERT INTO stats_snapshot_history(tenant_id,cycle_id,enc,completed_at,source_times) VALUES(?,?,?,?,?)').run('t','cycle','encrypted',at,'{}');
+ db.exec("INSERT INTO keitaro_history_state(tenant_id,source,cursor_day,last_result,last_error) VALUES('t','k','2026-09-21','incomplete','history_deadline')");
+ const tables=['keitaro_events','keitaro_observation_history','stats_snapshot_history'];const before=tables.map(t=>db.prepare('SELECT COUNT(*) n FROM '+t).get().n);
+ db.exec(fs.readFileSync(new URL('../migrations/0016_history_continuation.sql',import.meta.url),'utf8'));
+ const state=db.prepare('SELECT * FROM keitaro_history_state').get();assert.equal(state.cursor_day,'2026-09-21');assert.equal(state.last_result,'incomplete');assert.equal(state.continuation,null);assert.deepEqual(tables.map(t=>db.prepare('SELECT COUNT(*) n FROM '+t).get().n),before);
+ assert.throws(()=>db.exec("UPDATE keitaro_history_state SET continuation='broken json'"),/CHECK/);
+});
+
+for(const mode of ['D1','memory'])test(mode+': deadline partial batch checkpoints facts; retry finishes rather than starting over',async()=>{
+ const store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ const rows=Array.from({length:300},(_,i)=>({...row,conversion_id:String(i),revenue:'1'}));let timeout=true,ms=Date.parse(at);const offsets=[];
+ const run=()=>runHistoricalIngestion({store,tenantId:'t',source:'k',day:'2026-10-04',timezone:'UTC',subIndex:7,masterKey:MASTER_KEY,knownCampaignIds:[],clock:()=>ms,fetchReport:async opts=>{
+  if(opts.probe)return {result:'ok',columns:{}};
+  return fetchKeitaroReport(async(path,p)=>{offsets.push(p.offset);if(opts.kind==='backfill')return {result:'ok',json:{rows:[],total:0}};if(timeout&&p.offset>0)return new Promise(()=>{});return {result:'ok',json:{rows:rows.slice(p.offset,p.offset+p.limit),total:300}};},{...opts,budgetMs:timeout?20:10000});
+ }});
+ assert.deepEqual(await run(),{result:'incomplete',reason:'history_deadline'});
+ const state=await store.keitaroHistoryState('t','k');assert.equal(JSON.parse(state.continuation)[0].offset,250);assert.equal(state.last_result,'incomplete');assert.equal(state.cursor_day??null,null);
+ assert.equal((await store.historicalDailyFacts('t','k',{})).days[0].ftd,250);
+ timeout=false;ms+=30;assert.equal((await run()).result,'complete');assert.equal(offsets[2],249);
+ const facts=await store.historicalDailyFacts('t','k',{});assert.equal(facts.days[0].ftd,300);assert.equal(facts.days[0].revenue.amount,'300');
+});
+
+for(const mode of ['D1','memory'])test(mode+': persistence before failed checkpoint replays only pending batch and keeps one business event',async()=>{
+ const store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ let ms=Date.parse(at),fail=true;const checkpoint=store.checkpointKeitaroHistory.bind(store),offsets=[];
+ store.checkpointKeitaroHistory=async(...args)=>{if(args[3][0]?.offset===1&&fail){fail=false;throw new Error('simulated_interruption');}return checkpoint(...args);};
+ const run=()=>runHistoricalIngestion({store,tenantId:'t',source:'k',day:'2026-10-04',timezone:'UTC',subIndex:7,masterKey:MASTER_KEY,knownCampaignIds:[],clock:()=>ms,fetchReport:async o=>{
+  if(o.probe)return {result:'ok',columns:{}};offsets.push(o.startOffset);
+  return o.kind==='lookback'&&o.startOffset===0?{result:'incomplete',complete:false,reason:'pagination_limit',conversions:[row],nextOffset:1,anchor:'one'}:{result:'ok',complete:true,conversions:[],nextOffset:o.startOffset};
+ }});
+ assert.equal((await run()).result,'incomplete');assert.equal(JSON.parse((await store.keitaroHistoryState('t','k')).continuation)[0].offset,0);assert.equal((await store.historicalKeitaroEvents('t','k')).length,1);
+ ms+=1;assert.equal((await run()).result,'incomplete');assert.equal(JSON.parse((await store.keitaroHistoryState('t','k')).continuation)[0].offset,1);
+ ms+=1;assert.equal((await run()).result,'complete');assert.deepEqual(offsets,[0,0,1,0]);assert.equal((await store.historicalDailyFacts('t','k',{})).days[0].ftd,1);assert.equal((await store.historicalDailyFacts('t','k',{})).days[0].revenue.amount,'45.1');
+});
+
+for(const mode of ['D1','memory'])test(mode+': expired lease cannot overwrite or release successor continuation',async()=>{
+ const store=mode==='D1'?setup().store:new MemoryStore();await store.createTenant({id:'t',name:'test',plan:'start',socialLimit:3,paidUntil:'2099-01-01'});
+ const ms=Date.parse(at),one=[{offset:250}],two=[{offset:500}];
+ await store.claimKeitaroHistory('t','k','one',ms);await store.checkpointKeitaroHistory('t','k','one',one,ms);
+ assert.equal(await store.checkpointKeitaroHistory('t','k','one',two,ms+60001),false);
+ assert.equal(await store.claimKeitaroHistory('t','k','two',ms+60001),true);await store.checkpointKeitaroHistory('t','k','two',two,ms+60002);
+ assert.equal(await store.checkpointKeitaroHistory('t','k','one',one,ms+60002),false);await store.releaseKeitaroHistory('t','k','one','stale');
+ const state=await store.keitaroHistoryState('t','k');assert.equal(state.lease_owner,'two');assert.equal(state.last_result,'incomplete');assert.deepEqual(JSON.parse(state.continuation),two);
+});
+
+test('historical transport exception retains completed pages, invalid continuation makes no provider call',async()=>{
+ let calls=0;const response=await fetchKeitaroReport(async()=>{if(calls++)throw new Error('transport interrupted');return {result:'ok',json:{rows:[row],total:2}};},{conversionsOnly:true,resume:true,pageLimit:1,maxPages:2});
+ assert.equal(response.reason,'source_request_failed');assert.equal(response.nextOffset,1);assert.deepEqual(response.conversions,[row]);
+ for(const opts of [{startOffset:-1},{startOffset:1,anchor:null},{startOffset:1,anchor:'x',resume:false},{conversionsOnly:false,resume:true}]){
+  const bad=await fetchKeitaroReport(async()=>{assert.fail('invalid checkpoint must not reach provider');},{conversionsOnly:true,resume:true,...opts});assert.equal(bad.reason,'invalid_report_checkpoint');
+ }
 });
